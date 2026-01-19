@@ -1,0 +1,8 @@
+# Mark template files as documentation to exclude from language stats
+templates/* linguist-documentation
+
+# Ensure Python is detected as the primary language
+*.py linguist-language=Python
+
+# Exclude migration scripts from stats if needed
+migrations/* linguist-vendored
