@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - VCore{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-white">
+                <h4 class="mb-0">{{ title }}</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {{ form.hidden_tag() }}
+
+                    <div class="mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {{ form.name(class="form-control" + (" is-invalid" if form.name.errors else "")) }}
+                        {% if form.name.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.name.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.owner_id.label(class="form-label") }}
+                        {{ form.owner_id(class="form-select" + (" is-invalid" if form.owner_id.errors else "")) }}
+                        {% if form.owner_id.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.owner_id.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.start_date.label(class="form-label") }}
+                            {{ form.start_date(class="form-control" + (" is-invalid" if form.start_date.errors else ""))
+                            }}
+                            {% if form.start_date.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.start_date.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.expected_end_date.label(class="form-label") }}
+                            {{ form.expected_end_date(class="form-control" + (" is-invalid" if
+                            form.expected_end_date.errors else "")) }}
+                            {% if form.expected_end_date.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.expected_end_date.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.actual_end_date.label(class="form-label") }}
+                            {{ form.actual_end_date(class="form-control" + (" is-invalid" if form.actual_end_date.errors
+                            else "")) }}
+                            {% if form.actual_end_date.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.actual_end_date.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                            <small class="text-muted">Leave empty if not completed</small>
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.status.label(class="form-label") }}
+                            {{ form.status(class="form-select" + (" is-invalid" if form.status.errors else "")) }}
+                            {% if form.status.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.status.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.comments.label(class="form-label") }}
+                        {{ form.comments(class="form-control", rows="4") }}
+                        {% if form.comments.errors %}
+                        <div class="text-danger small mt-1">
+                            {% for error in form.comments.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('projects_list') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle"></i> Save Project
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

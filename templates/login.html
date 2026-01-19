@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Login - VCore{% endblock %}
+
+{% block login_content %}
+<div class="container">
+    <div class="row justify-content-center align-items-center min-vh-100">
+        <div class="col-md-5">
+            <div class="card shadow-lg">
+                <div class="card-body p-5">
+                    <div class="text-center mb-4">
+                        <h1 class="h3 mb-3 fw-bold"
+                            style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                            <i class="bi bi-graph-up-arrow"></i> VCore
+                        </h1>
+                        <p class="text-muted">Glassy Project Tracking System</p>
+                    </div>
+
+                    <!-- Flash Messages -->
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                    {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                    {% endfor %}
+                    {% endif %}
+                    {% endwith %}
+
+                    <form method="POST" action="{{ url_for('login') }}">
+                        {{ form.hidden_tag() }}
+
+                        <div class="mb-3">
+                            {{ form.username.label(class="form-label") }}
+                            {{ form.username(class="form-control form-control-lg", placeholder="Enter username or
+                            email") }}
+                            {% if form.username.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.username.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="mb-3">
+                            {{ form.password.label(class="form-label") }}
+                            {{ form.password(class="form-control form-control-lg", placeholder="Enter password") }}
+                            {% if form.password.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.password.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="mb-3 form-check">
+                            {{ form.remember_me(class="form-check-input") }}
+                            {{ form.remember_me.label(class="form-check-label") }}
+                        </div>
+
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-box-arrow-in-right"></i> Login
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="text-center mt-4">
+                        <small class="text-muted">
+                            <i class="bi bi-shield-check"></i> Secure access for authorized users only
+                        </small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-center mt-3">
+                <small class="text-muted">© 2026 Glassy India. All rights reserved.</small>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

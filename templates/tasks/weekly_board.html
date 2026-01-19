@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}Weekly Tasks - VCore{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2><i class="bi bi-calendar-week"></i> Weekly Tasks</h2>
+        <p class="text-muted mb-0">Week {{ week }}, {{ year }} ({{ date_range.start }} to {{ date_range.end }})</p>
+    </div>
+    {% if current_user.is_manager_or_admin() %}
+    <a href="{{ url_for('task_assign') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> Assign Task
+    </a>
+    {% endif %}
+</div>
+
+<!-- Week Navigation -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center">
+            <a href="{{ url_for('tasks_weekly', week=week-1 if week > 1 else 52, year=year if week > 1 else year-1) }}"
+                class="btn btn-outline-primary">
+                <i class="bi bi-chevron-left"></i> Previous Week
+            </a>
+            <h5 class="mb-0">Week {{ week }}, {{ year }}</h5>
+            <a href="{{ url_for('tasks_weekly', week=week+1 if week < 52 else 1, year=year if week < 52 else year+1) }}"
+                class="btn btn-outline-primary">
+                Next Week <i class="bi bi-chevron-right"></i>
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Kanban Board -->
+<div class="row">
+    {% for status, color in [('Pending', 'secondary'), ('In Progress', 'primary'), ('Overdue', 'danger'), ('Completed',
+    'success')] %}
+    <div class="col-md-3 mb-3">
+        <div class="card">
+            <div class="card-header bg-{{ color }} text-white">
+                <h6 class="mb-0">{{ status }} ({{ tasks_by_status[status]|length }})</h6>
+            </div>
+            <div class="card-body p-2" style="min-height: 400px; max-height: 600px; overflow-y: auto;">
+                {% for task in tasks_by_status[status] %}
+                <div class="card mb-2 shadow-sm">
+                    <div class="card-body p-3">
+                        <h6 class="card-title mb-2">{{ task.template.name if task.template else 'N/A' }}</h6>
+                        <p class="card-text small text-muted mb-2">
+                            <i class="bi bi-person"></i> {{ task.promotor.username if task.promotor else 'N/A' }}
+                        </p>
+                        {% if task.project %}
+                        <p class="card-text small text-muted mb-2">
+                            <i class="bi bi-folder"></i> {{ task.project.name }}
+                        </p>
+                        {% endif %}
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span
+                                class="badge bg-{{ 'danger' if task.priority == 'High' else 'warning' if task.priority == 'Medium' else 'secondary' }}">
+                                {{ task.priority }}
+                            </span>
+                            {% if task.lag_weeks > 0 %}
+                            <span class="badge bg-{{ task.get_lag_badge_class() }}">
+                                Lag: {{ task.lag_weeks }}w
+                            </span>
+                            {% endif %}
+                        </div>
+                        <p class="card-text small mb-2">
+                            <i class="bi bi-calendar"></i> Due: {{ task.due_date.strftime('%Y-%m-%d') }}
+                        </p>
+                        {% if task.comments %}
+                        <p class="card-text small text-muted mb-2">{{ task.comments[:50] }}{% if task.comments|length >
+                            50 %}...{% endif %}</p>
+                        {% endif %}
+                        <a href="{{ url_for('task_update', id=task.id) }}" class="btn btn-sm btn-outline-primary w-100">
+                            <i class="bi bi-pencil"></i> Update
+                        </a>
+                    </div>
+                </div>
+                {% else %}
+                <p class="text-muted text-center mt-3">No tasks</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

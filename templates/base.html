@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}VCore - Glassy Project Tracking{% endblock %}</title>
+
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #64748b;
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f8fafc;
+        }
+
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.5rem;
+        }
+
+        .sidebar {
+            min-height: calc(100vh - 56px);
+            background-color: #fff;
+            box-shadow: 2px 0 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .sidebar .nav-link {
+            color: #64748b;
+            padding: 0.75rem 1rem;
+            margin: 0.25rem 0;
+            border-radius: 0.5rem;
+            transition: all 0.3s;
+        }
+
+        .sidebar .nav-link:hover,
+        .sidebar .nav-link.active {
+            background-color: #f1f5f9;
+            color: #2563eb;
+        }
+
+        .sidebar .nav-link i {
+            margin-right: 0.5rem;
+            width: 20px;
+        }
+
+        .card {
+            border: none;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .stat-card {
+            border-left: 4px solid;
+        }
+
+        .stat-card.primary {
+            border-left-color: var(--primary-color);
+        }
+
+        .stat-card.success {
+            border-left-color: var(--success-color);
+        }
+
+        .stat-card.warning {
+            border-left-color: var(--warning-color);
+        }
+
+        .stat-card.danger {
+            border-left-color: var(--danger-color);
+        }
+
+        .badge-lag-0 {
+            background-color: var(--success-color);
+        }
+
+        .badge-lag-1 {
+            background-color: var(--warning-color);
+        }
+
+        .badge-lag-2 {
+            background-color: var(--danger-color);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #5568d3 0%, #63408b 100%);
+        }
+
+        .table th {
+            background-color: #f8fafc;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.5px;
+        }
+    </style>
+
+    {% block extra_css %}{% endblock %}
+</head>
+
+<body>
+    {% if current_user.is_authenticated %}
+    <!-- Navigation Bar -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="{{ url_for('dashboard') }}">
+                <i class="bi bi-graph-up-arrow"></i> VCore
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> {{ current_user.username }}
+                            <span class="badge bg-light text-dark ms-1">{{ current_user.role }}</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{{ url_for('logout') }}">
+                                    <i class="bi bi-box-arrow-right"></i> Logout
+                                </a></li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <nav class="col-md-2 d-md-block sidebar p-3">
+                <div class="position-sticky">
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}"
+                                href="{{ url_for('dashboard') }}">
+                                <i class="bi bi-speedometer2"></i> Dashboard
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'projects' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('projects_list') }}">
+                                <i class="bi bi-folder"></i> Projects
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'tasks_weekly' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('tasks_weekly') }}">
+                                <i class="bi bi-calendar-week"></i> Weekly Tasks
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'daily_update' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('daily_updates_list') }}">
+                                <i class="bi bi-journal-text"></i> Daily Updates
+                            </a>
+                        </li>
+                        {% if current_user.is_manager_or_admin() %}
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'task_assign' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('task_assign') }}">
+                                <i class="bi bi-plus-circle"></i> Assign Task
+                            </a>
+                        </li>
+                        {% endif %}
+                        {% if current_user.is_admin() %}
+                        <li class="nav-item mt-3">
+                            <h6 class="text-muted px-3 mb-2" style="font-size: 0.75rem; text-transform: uppercase;">
+                                Admin</h6>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'task_templates' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('task_templates_list') }}">
+                                <i class="bi bi-clipboard-check"></i> Task Templates
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'users' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('users_list') }}">
+                                <i class="bi bi-people"></i> Users
+                            </a>
+                        </li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </nav>
+
+            <!-- Main Content -->
+            <main class="col-md-10 ms-sm-auto px-md-4 py-4">
+                <!-- Flash Messages -->
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                {% endfor %}
+                {% endif %}
+                {% endwith %}
+
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+    {% else %}
+    <!-- Login Page Content -->
+    {% block login_content %}{% endblock %}
+    {% endif %}
+
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    {% block extra_js %}{% endblock %}
+</body>
+
+</html>

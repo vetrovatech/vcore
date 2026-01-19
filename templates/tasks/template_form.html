@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - VCore{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-white">
+                <h4 class="mb-0">{{ title }}</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {{ form.hidden_tag() }}
+
+                    <div class="mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {{ form.name(class="form-control" + (" is-invalid" if form.name.errors else "")) }}
+                        {% if form.name.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.name.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.description.label(class="form-label") }}
+                        {{ form.description(class="form-control", rows="3") }}
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.category.label(class="form-label") }}
+                            {{ form.category(class="form-control", placeholder="e.g., Sales, Marketing, Field Work") }}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.priority.label(class="form-label") }}
+                            {{ form.priority(class="form-select" + (" is-invalid" if form.priority.errors else "")) }}
+                            {% if form.priority.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.priority.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="mb-3 form-check">
+                        {{ form.is_active(class="form-check-input") }}
+                        {{ form.is_active.label(class="form-check-label") }}
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('task_templates_list') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle"></i> Save Template
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

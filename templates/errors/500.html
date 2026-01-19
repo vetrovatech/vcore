@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}500 - Server Error{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center align-items-center" style="min-height: 60vh;">
+        <div class="col-md-6 text-center">
+            <i class="bi bi-exclamation-octagon-fill text-danger" style="font-size: 6rem;"></i>
+            <h1 class="display-4 mt-4">500</h1>
+            <h3 class="mb-4">Internal Server Error</h3>
+            <p class="text-muted mb-4">Something went wrong on our end. Please try again later.</p>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-primary">
+                <i class="bi bi-house"></i> Go to Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Assign Task - VCore{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-white">
+                <h4 class="mb-0">Assign Task to User</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {{ form.hidden_tag() }}
+
+                    <div class="mb-3">
+                        {{ form.template_id.label(class="form-label") }}
+                        {{ form.template_id(class="form-select" + (" is-invalid" if form.template_id.errors else "")) }}
+                        {% if form.template_id.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.template_id.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.task_name.label(class="form-label") }}
+                        {{ form.task_name(class="form-control" + (" is-invalid" if form.task_name.errors else ""),
+                        placeholder="Optional: Custom task name") }}
+                        {% if form.task_name.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.task_name.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                        <small class="text-muted">Leave empty to use template name</small>
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.promotor_id.label(class="form-label") }}
+                        {{ form.promotor_id(class="form-select" + (" is-invalid" if form.promotor_id.errors else "")) }}
+                        {% if form.promotor_id.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.promotor_id.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.project_id.label(class="form-label") }}
+                        {{ form.project_id(class="form-select") }}
+                        <small class="text-muted">Optional: Link this task to a project</small>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.due_date.label(class="form-label") }}
+                            {{ form.due_date(class="form-control" + (" is-invalid" if form.due_date.errors else "")) }}
+                            {% if form.due_date.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.due_date.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.priority.label(class="form-label") }}
+                            {{ form.priority(class="form-select" + (" is-invalid" if form.priority.errors else "")) }}
+                            {% if form.priority.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.priority.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.comments.label(class="form-label") }}
+                        {{ form.comments(class="form-control", rows="3") }}
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('tasks_weekly') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle"></i> Assign Task
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
