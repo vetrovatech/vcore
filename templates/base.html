@@ -167,32 +167,32 @@
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {% if 'projects' in request.endpoint %}active{% endif %}"
+                            <a class="nav-link {% if request.endpoint and 'projects' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('projects_list') }}">
                                 <i class="bi bi-folder"></i> Projects
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {% if 'tasks_weekly' in request.endpoint %}active{% endif %}"
+                            <a class="nav-link {% if request.endpoint and 'tasks_weekly' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('tasks_weekly') }}">
                                 <i class="bi bi-calendar-week"></i> Weekly Tasks
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {% if 'daily_update' in request.endpoint %}active{% endif %}"
+                            <a class="nav-link {% if request.endpoint and 'daily_update' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('daily_updates_list') }}">
                                 <i class="bi bi-journal-text"></i> Daily Updates
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {% if 'catalog' in request.endpoint %}active{% endif %}"
+                            <a class="nav-link {% if request.endpoint and 'catalog' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('catalog_list') }}">
                                 <i class="bi bi-grid-3x3-gap"></i> Product Catalog
                             </a>
                         </li>
                         {% if current_user.is_manager_or_admin() %}
                         <li class="nav-item">
-                            <a class="nav-link {% if 'task_assign' in request.endpoint %}active{% endif %}"
+                            <a class="nav-link {% if request.endpoint and 'task_assign' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('task_assign') }}">
                                 <i class="bi bi-plus-circle"></i> Assign Task
                             </a>
@@ -204,13 +204,13 @@
                                 Admin</h6>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {% if 'task_templates' in request.endpoint %}active{% endif %}"
+                            <a class="nav-link {% if request.endpoint and 'task_templates' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('task_templates_list') }}">
                                 <i class="bi bi-clipboard-check"></i> Task Templates
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {% if 'users' in request.endpoint %}active{% endif %}"
+                            <a class="nav-link {% if request.endpoint and 'users' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('users_list') }}">
                                 <i class="bi bi-people"></i> Users
                             </a>

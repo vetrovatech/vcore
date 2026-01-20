@@ -15,12 +15,19 @@ class S3Uploader:
         self.region = os.environ.get('AWS_REGION', 'ap-south-1')
         
         # Initialize S3 client
-        self.s3_client = boto3.client(
-            's3',
-            aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
-            aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
-            region_name=self.region
-        )
+        # In Lambda, boto3 automatically uses the execution role credentials
+        # For local development, use explicit credentials from environment
+        if os.environ.get('ENVIRONMENT') == 'production':
+            # Production (Lambda) - use IAM role
+            self.s3_client = boto3.client('s3', region_name=self.region)
+        else:
+            # Local development - use explicit credentials
+            self.s3_client = boto3.client(
+                's3',
+                aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+                aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+                region_name=self.region
+            )
     
     def upload_product_image(self, file, category, product_name, image_number=1):
         """
@@ -44,26 +51,27 @@ class S3Uploader:
             category_safe = category.replace(' ', '_').replace('/', '_')
             product_safe = product_name.replace(' ', '_').replace('/', '_')
             
-            # Generate unique filename
+            # Generate unique filename with timestamp to avoid caching issues
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"{product_safe}_{image_number}{file_ext}"
+            filename = f"{product_safe}_{image_number}_{timestamp}{file_ext}"
             
             # S3 key (path in bucket)
             s3_key = f"product-images/{category_safe}/{filename}"
             
             # Upload to S3
+            # Note: ACL removed - bucket uses bucket policy for public access
             self.s3_client.upload_fileobj(
                 file,
                 self.bucket_name,
                 s3_key,
                 ExtraArgs={
                     'ContentType': file.content_type or 'image/png',
-                    'ACL': 'public-read'
+                    'CacheControl': 'max-age=31536000'  # Cache for 1 year since filename is unique
                 }
             )
             
-            # Generate public URL
-            url = f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{s3_key}"
+            # Generate public URL with cache-busting parameter
+            url = f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{s3_key}?v={timestamp}"
             return url
             
         except ClientError as e:
