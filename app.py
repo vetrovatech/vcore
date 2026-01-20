@@ -7,12 +7,13 @@ import pymysql
 # Install PyMySQL as MySQLdb for MySQL compatibility
 pymysql.install_as_MySQLdb()
 
-from models import db, User, Project, TaskTemplate, PromotorTask, DailyUpdate
+from models import db, User, Project, TaskTemplate, PromotorTask, DailyUpdate, Product
 from config import config
 from forms import (LoginForm, UserForm, ProjectForm, TaskTemplateForm, 
-                   TaskAssignmentForm, TaskUpdateForm, DailyUpdateForm)
+                   TaskAssignmentForm, TaskUpdateForm, DailyUpdateForm, ProductForm)
 from utils.auth import admin_required, manager_or_admin_required
 from utils.task_rollover import rollover_incomplete_tasks, get_current_week_info, get_week_date_range
+from utils.s3_upload import S3Uploader
 from datetime import datetime, timedelta
 from sqlalchemy import text
 
@@ -686,6 +687,229 @@ def daily_update_delete(id):
     flash('Daily update deleted successfully!', 'success')
     return redirect(url_for('daily_updates_list'))
 
+
+# ============================================================================
+# PRODUCT CATALOG ROUTES
+# ============================================================================
+
+@app.route('/catalog')
+def catalog_list():
+    """Product catalog list with filtering"""
+    # Get filter parameters
+    category_filter = request.args.get('category', '')
+    search_query = request.args.get('search', '')
+    
+    # Build query
+    query = Product.query.filter_by(is_active=True)
+    
+    if category_filter:
+        query = query.filter_by(category=category_filter)
+    
+    if search_query:
+        query = query.filter(Product.product_name.ilike(f'%{search_query}%'))
+    
+    # Get products
+    products = query.order_by(Product.category, Product.product_name).all()
+    
+    # Get filter options
+    categories = [cat[0] for cat in Product.get_categories()]
+    
+    return render_template('catalog/list.html',
+                         products=products,
+                         categories=categories,
+                         selected_category=category_filter,
+                         search_query=search_query)
+
+
+@app.route('/catalog/<int:id>')
+def catalog_detail(id):
+    """Product detail view with previous/next navigation"""
+    product = Product.query.get_or_404(id)
+    
+    # Get all active products ordered by category and name
+    all_products = Product.query.filter_by(is_active=True).order_by(
+        Product.category, Product.product_name
+    ).all()
+    
+    # Find current product index
+    current_index = next((i for i, p in enumerate(all_products) if p.id == id), None)
+    
+    # Get previous and next products
+    prev_product = all_products[current_index - 1] if current_index and current_index > 0 else None
+    next_product = all_products[current_index + 1] if current_index is not None and current_index < len(all_products) - 1 else None
+    
+    return render_template('catalog/detail.html', 
+                         product=product,
+                         prev_product=prev_product,
+                         next_product=next_product)
+
+
+@app.route('/catalog/new', methods=['GET', 'POST'])
+@manager_or_admin_required
+def catalog_new():
+    """Create new product"""
+    form = ProductForm()
+    
+    if form.validate_on_submit():
+        # Initialize S3 uploader
+        s3_uploader = S3Uploader()
+        
+        product = Product(
+            category=form.category.data,
+            product_name=form.product_name.data,
+            product_url=form.product_url.data,
+            price=form.price.data,
+            image_1_url=form.image_1_url.data,
+            image_2_url=form.image_2_url.data,
+            image_3_url=form.image_3_url.data,
+            image_4_url=form.image_4_url.data,
+            availability=form.availability.data,
+            description=form.description.data,
+            material=form.material.data,
+            brand=form.brand.data,
+            usage_application=form.usage_application.data,
+            thickness=form.thickness.data,
+            shape=form.shape.data,
+            pattern=form.pattern.data,
+            is_active=form.is_active.data
+        )
+        
+        # Handle file uploads to S3
+        for i in range(1, 5):
+            file_field = getattr(form, f'image_{i}_file')
+            if file_field.data:
+                url = s3_uploader.upload_product_image(
+                    file_field.data,
+                    form.category.data,
+                    form.product_name.data,
+                    i
+                )
+                if url:
+                    setattr(product, f'image_{i}_url', url)
+                    flash(f'Image {i} uploaded successfully!', 'success')
+                else:
+                    flash(f'Failed to upload image {i}', 'warning')
+        
+        db.session.add(product)
+        db.session.commit()
+        flash(f'Product "{product.product_name}" created successfully!', 'success')
+        return redirect(url_for('catalog_list'))
+    
+    return render_template('catalog/form.html', form=form, title='New Product')
+
+
+@app.route('/catalog/<int:id>/edit', methods=['GET', 'POST'])
+@manager_or_admin_required
+def catalog_edit(id):
+    """Edit product"""
+    product = Product.query.get_or_404(id)
+    form = ProductForm(obj=product)
+    
+    if form.validate_on_submit():
+        # Initialize S3 uploader
+        s3_uploader = S3Uploader()
+        
+        product.category = form.category.data
+        product.product_name = form.product_name.data
+        product.product_url = form.product_url.data
+        product.price = form.price.data
+        product.image_1_url = form.image_1_url.data
+        product.image_2_url = form.image_2_url.data
+        product.image_3_url = form.image_3_url.data
+        product.image_4_url = form.image_4_url.data
+        product.availability = form.availability.data
+        product.description = form.description.data
+        product.material = form.material.data
+        product.brand = form.brand.data
+        product.usage_application = form.usage_application.data
+        product.thickness = form.thickness.data
+        product.shape = form.shape.data
+        product.pattern = form.pattern.data
+        product.is_active = form.is_active.data
+        product.updated_at = datetime.utcnow()
+        
+        # Handle file uploads to S3 (replace existing images)
+        for i in range(1, 5):
+            file_field = getattr(form, f'image_{i}_file')
+            if file_field.data:
+                url = s3_uploader.upload_product_image(
+                    file_field.data,
+                    form.category.data,
+                    form.product_name.data,
+                    i
+                )
+                if url:
+                    setattr(product, f'image_{i}_url', url)
+                    flash(f'Image {i} uploaded and replaced!', 'success')
+                else:
+                    flash(f'Failed to upload image {i}', 'warning')
+        
+        db.session.commit()
+        flash(f'Product "{product.product_name}" updated successfully!', 'success')
+        return redirect(url_for('catalog_detail', id=product.id))
+    
+    return render_template('catalog/form.html', form=form, title='Edit Product', product=product)
+
+
+@app.route('/catalog/<int:id>/delete', methods=['POST'])
+@admin_required
+def catalog_delete(id):
+    """Delete product"""
+    product = Product.query.get_or_404(id)
+    product_name = product.product_name
+    db.session.delete(product)
+    db.session.commit()
+    flash(f'Product "{product_name}" deleted successfully!', 'success')
+    return redirect(url_for('catalog_list'))
+
+
+@app.route('/catalog/<int:id>/upload-image/<int:image_num>', methods=['POST'])
+@manager_or_admin_required
+def catalog_upload_image(id, image_num):
+    """Upload/replace a single product image via AJAX"""
+    try:
+        product = Product.query.get_or_404(id)
+        
+        # Validate image number
+        if image_num < 1 or image_num > 4:
+            return jsonify({'success': False, 'error': 'Invalid image number'}), 400
+        
+        # Check if file was uploaded
+        if 'image' not in request.files:
+            return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+        
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+        
+        # Initialize S3 uploader
+        s3_uploader = S3Uploader()
+        
+        # Upload to S3
+        url = s3_uploader.upload_product_image(
+            file,
+            product.category,
+            product.product_name,
+            image_num
+        )
+        
+        if url:
+            # Update product image URL
+            setattr(product, f'image_{image_num}_url', url)
+            product.updated_at = datetime.utcnow()
+            db.session.commit()
+            
+            return jsonify({
+                'success': True,
+                'url': url,
+                'message': f'Image {image_num} uploaded successfully'
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to upload to S3'}), 500
+            
+    except Exception as e:
+        print(f"Upload error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 

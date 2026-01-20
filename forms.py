@@ -1,4 +1,5 @@
 from flask_wtf import FlaskForm
+from flask_wtf.file import FileField, FileAllowed
 from wtforms import StringField, PasswordField, SelectField, DateField, TextAreaField, BooleanField
 from wtforms.validators import DataRequired, Email, Length, EqualTo, Optional, ValidationError
 from models import User
@@ -120,4 +121,54 @@ class DailyUpdateForm(FlaskForm):
             return False
         
         return True
+
+
+class ProductForm(FlaskForm):
+    """Product creation/edit form"""
+    category = StringField('Category', validators=[DataRequired(), Length(max=100)])
+    product_name = StringField('Product Name', validators=[DataRequired(), Length(max=300)])
+    product_url = StringField('Product URL', validators=[Optional(), Length(max=500)])
+    price = StringField('Price', validators=[Optional(), Length(max=100)], 
+                       render_kw={"placeholder": "e.g., 160/sqft or 24,999/Unit"})
+    
+    # Images - URL fields (existing images)
+    image_1_url = StringField('Image 1 URL', validators=[Optional(), Length(max=500)])
+    image_2_url = StringField('Image 2 URL', validators=[Optional(), Length(max=500)])
+    image_3_url = StringField('Image 3 URL', validators=[Optional(), Length(max=500)])
+    image_4_url = StringField('Image 4 URL', validators=[Optional(), Length(max=500)])
+    
+    # Images - File upload fields (new images)
+    image_1_file = FileField('Upload Image 1', validators=[
+        Optional(),
+        FileAllowed(['jpg', 'jpeg', 'png', 'gif', 'webp'], 'Images only!')
+    ])
+    image_2_file = FileField('Upload Image 2', validators=[
+        Optional(),
+        FileAllowed(['jpg', 'jpeg', 'png', 'gif', 'webp'], 'Images only!')
+    ])
+    image_3_file = FileField('Upload Image 3', validators=[
+        Optional(),
+        FileAllowed(['jpg', 'jpeg', 'png', 'gif', 'webp'], 'Images only!')
+    ])
+    image_4_file = FileField('Upload Image 4', validators=[
+        Optional(),
+        FileAllowed(['jpg', 'jpeg', 'png', 'gif', 'webp'], 'Images only!')
+    ])
+    
+    # Common fields
+    availability = StringField('Availability', validators=[Optional(), Length(max=100)])
+    description = TextAreaField('Description', validators=[Optional()], 
+                               render_kw={"rows": 4})
+    
+    # Common specifications
+    material = StringField('Material', validators=[Optional(), Length(max=200)])
+    brand = StringField('Brand', validators=[Optional(), Length(max=100)])
+    usage_application = StringField('Usage/Application', validators=[Optional(), Length(max=200)])
+    thickness = StringField('Thickness', validators=[Optional(), Length(max=100)])
+    shape = StringField('Shape', validators=[Optional(), Length(max=100)])
+    pattern = StringField('Pattern', validators=[Optional(), Length(max=100)])
+    
+    # Additional specifications (will be stored as JSON)
+    # These can be added dynamically in the template
+    is_active = BooleanField('Active', default=True)
 

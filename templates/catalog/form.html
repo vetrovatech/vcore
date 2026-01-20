@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - VCore{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-10">
+        <div class="card">
+            <div class="card-header bg-white">
+                <h4 class="mb-0">{{ title }}</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" enctype="multipart/form-data">
+                    {{ form.hidden_tag() }}
+
+                    <div class="row">
+                        <!-- Basic Information -->
+                        <div class="col-md-6 mb-3">
+                            {{ form.category.label(class="form-label") }}
+                            {{ form.category(class="form-control" + (" is-invalid" if form.category.errors else "")) }}
+                            {% if form.category.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.category.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.brand.label(class="form-label") }}
+                            {{ form.brand(class="form-control" + (" is-invalid" if form.brand.errors else "")) }}
+                            {% if form.brand.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.brand.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.product_name.label(class="form-label") }}
+                        {{ form.product_name(class="form-control" + (" is-invalid" if form.product_name.errors else ""))
+                        }}
+                        {% if form.product_name.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.product_name.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.price.label(class="form-label") }}
+                            {{ form.price(class="form-control" + (" is-invalid" if form.price.errors else "")) }}
+                            {% if form.price.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.price.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.availability.label(class="form-label") }}
+                            {{ form.availability(class="form-control" + (" is-invalid" if form.availability.errors else
+                            "")) }}
+                            {% if form.availability.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.availability.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.description.label(class="form-label") }}
+                        {{ form.description(class="form-control" + (" is-invalid" if form.description.errors else ""))
+                        }}
+                        {% if form.description.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.description.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.product_url.label(class="form-label") }}
+                        {{ form.product_url(class="form-control" + (" is-invalid" if form.product_url.errors else ""))
+                        }}
+                        {% if form.product_url.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.product_url.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                        <small class="text-muted">Original IndiaMART URL (optional)</small>
+                    </div>
+
+                    <!-- Images -->
+                    <h5 class="mt-4 mb-3"><i class="bi bi-images"></i> Product Images</h5>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.image_1_url.label(class="form-label") }}
+                            {{ form.image_1_url(class="form-control" + (" is-invalid" if form.image_1_url.errors else
+                            "")) }}
+                            {% if form.image_1_url.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.image_1_url.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.image_2_url.label(class="form-label") }}
+                            {{ form.image_2_url(class="form-control" + (" is-invalid" if form.image_2_url.errors else
+                            "")) }}
+                            {% if form.image_2_url.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.image_2_url.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.image_3_url.label(class="form-label") }}
+                            {{ form.image_3_url(class="form-control" + (" is-invalid" if form.image_3_url.errors else
+                            "")) }}
+                            {% if form.image_3_url.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.image_3_url.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.image_4_url.label(class="form-label") }}
+                            {{ form.image_4_url(class="form-control" + (" is-invalid" if form.image_4_url.errors else
+                            "")) }}
+                            {% if form.image_4_url.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.image_4_url.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <p class="text-muted small mt-3 mb-2">
+                        <i class="bi bi-info-circle"></i> Or upload new images to replace existing ones (JPG, PNG, GIF,
+                        WebP)
+                    </p>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.image_1_file.label(class="form-label") }}
+                            {{ form.image_1_file(class="form-control") }}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.image_2_file.label(class="form-label") }}
+                            {{ form.image_2_file(class="form-control") }}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.image_3_file.label(class="form-label") }}
+                            {{ form.image_3_file(class="form-control") }}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.image_4_file.label(class="form-label") }}
+                            {{ form.image_4_file(class="form-control") }}
+                        </div>
+                    </div>
+
+                    <!-- Specifications -->
+                    <h5 class="mt-4 mb-3"><i class="bi bi-list-check"></i> Specifications</h5>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.material.label(class="form-label") }}
+                            {{ form.material(class="form-control" + (" is-invalid" if form.material.errors else "")) }}
+                            {% if form.material.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.material.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.thickness.label(class="form-label") }}
+                            {{ form.thickness(class="form-control" + (" is-invalid" if form.thickness.errors else ""))
+                            }}
+                            {% if form.thickness.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.thickness.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.shape.label(class="form-label") }}
+                            {{ form.shape(class="form-control" + (" is-invalid" if form.shape.errors else "")) }}
+                            {% if form.shape.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.shape.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            {{ form.pattern.label(class="form-label") }}
+                            {{ form.pattern(class="form-control" + (" is-invalid" if form.pattern.errors else "")) }}
+                            {% if form.pattern.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.pattern.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="col-md-12 mb-3">
+                            {{ form.usage_application.label(class="form-label") }}
+                            {{ form.usage_application(class="form-control" + (" is-invalid" if
+                            form.usage_application.errors else "")) }}
+                            {% if form.usage_application.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.usage_application.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check">
+                            {{ form.is_active(class="form-check-input") }}
+                            {{ form.is_active.label(class="form-check-label") }}
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-between mt-4">
+                        <a href="{{ url_for('catalog_list') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle"></i> Save Product
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

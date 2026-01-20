@@ -2,6 +2,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
+import json
 
 db = SQLAlchemy()
 
@@ -210,4 +211,116 @@ class DailyUpdate(db.Model):
     def __repr__(self):
         project_name = self.project.name if self.project else "General"
         return f'<DailyUpdate {self.user.username} - {project_name} - {self.update_date}>'
+
+
+class Product(db.Model):
+    """Product model for catalog management"""
+    __tablename__ = 'products'
+    
+    # Primary key
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Core fields (always present - 80+ rows populated)
+    category = db.Column(db.String(100), nullable=False, index=True)
+    product_name = db.Column(db.String(300), nullable=False, index=True)
+    product_url = db.Column(db.String(500), nullable=True)
+    price = db.Column(db.String(100), nullable=True)  # Varies: "160/sqft", "24,999/Unit"
+    
+    # Images (S3 URLs)
+    image_1_url = db.Column(db.String(500), nullable=True)
+    image_2_url = db.Column(db.String(500), nullable=True)
+    image_3_url = db.Column(db.String(500), nullable=True)
+    image_4_url = db.Column(db.String(500), nullable=True)
+    
+    # Common fields
+    availability = db.Column(db.String(100), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    
+    # Common specification fields (20+ rows populated)
+    material = db.Column(db.String(200), nullable=True)
+    brand = db.Column(db.String(100), nullable=True, index=True)
+    usage_application = db.Column(db.String(200), nullable=True)
+    thickness = db.Column(db.String(100), nullable=True)
+    shape = db.Column(db.String(100), nullable=True)
+    pattern = db.Column(db.String(100), nullable=True)
+    
+    # Additional specifications stored as JSON
+    # Stores sparse fields like: Color, Glass Type, Door Type, Frame Material, etc.
+    specifications = db.Column(db.Text, nullable=True)  # JSON string
+    
+    # Metadata
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Indexes for better query performance
+    __table_args__ = (
+        db.Index('idx_category_active', 'category', 'is_active'),
+        db.Index('idx_brand_active', 'brand', 'is_active'),
+    )
+    
+    def get_specifications(self):
+        """Get specifications as a dictionary"""
+        if self.specifications:
+            try:
+                return json.loads(self.specifications)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return {}
+    
+    def set_specifications(self, specs_dict):
+        """Set specifications from a dictionary"""
+        if specs_dict:
+            self.specifications = json.dumps(specs_dict)
+        else:
+            self.specifications = None
+    
+    def get_all_images(self):
+        """Get list of all non-empty image URLs"""
+        images = []
+        for i in range(1, 5):
+            url = getattr(self, f'image_{i}_url', None)
+            if url:
+                images.append(url)
+        return images
+    
+    def get_primary_image(self):
+        """Get the first available image URL or a placeholder"""
+        return self.image_1_url or '/static/images/no-product-image.png'
+    
+    def get_formatted_price(self):
+        """Get formatted price string"""
+        if self.price:
+            return self.price
+        return 'Price on request'
+    
+    @classmethod
+    def search(cls, query, category=None, brand=None):
+        """Search products by name, category, or brand"""
+        filters = [cls.is_active == True]
+        
+        if query:
+            filters.append(cls.product_name.ilike(f'%{query}%'))
+        
+        if category:
+            filters.append(cls.category == category)
+        
+        if brand:
+            filters.append(cls.brand == brand)
+        
+        return cls.query.filter(*filters).order_by(cls.product_name)
+    
+    @classmethod
+    def get_categories(cls):
+        """Get list of unique categories"""
+        return db.session.query(cls.category).filter(cls.is_active == True).distinct().order_by(cls.category).all()
+    
+    @classmethod
+    def get_brands(cls):
+        """Get list of unique brands"""
+        return db.session.query(cls.brand).filter(cls.is_active == True, cls.brand.isnot(None)).distinct().order_by(cls.brand).all()
+    
+    def __repr__(self):
+        return f'<Product {self.product_name} ({self.category})>'
+
 

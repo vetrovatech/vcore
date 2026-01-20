@@ -184,6 +184,12 @@
                                 <i class="bi bi-journal-text"></i> Daily Updates
                             </a>
                         </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'catalog' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('catalog_list') }}">
+                                <i class="bi bi-grid-3x3-gap"></i> Product Catalog
+                            </a>
+                        </li>
                         {% if current_user.is_manager_or_admin() %}
                         <li class="nav-item">
                             <a class="nav-link {% if 'task_assign' in request.endpoint %}active{% endif %}"

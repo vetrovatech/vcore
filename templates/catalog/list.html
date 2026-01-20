@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block title %}Product Catalog - VCore{% endblock %}
+
+{% block extra_css %}
+<style>
+    .product-card {
+        height: 100%;
+        transition: transform 0.3s, box-shadow 0.3s;
+        cursor: pointer;
+    }
+
+    .product-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15) !important;
+    }
+
+    .product-image {
+        width: 100%;
+        height: 250px;
+        object-fit: cover;
+        background-color: #f8f9fa;
+    }
+
+    .product-category-badge {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(102, 126, 234, 0.9);
+        color: white;
+        padding: 5px 12px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .product-price {
+        color: #2563eb;
+        font-weight: 700;
+        font-size: 1.25rem;
+    }
+
+    .filter-section {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 0.75rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .no-products {
+        text-align: center;
+        padding: 4rem 2rem;
+        color: #64748b;
+    }
+
+    .product-brand {
+        color: #64748b;
+        font-size: 0.875rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2><i class="bi bi-grid-3x3-gap"></i> Product Catalog</h2>
+        <p class="text-muted mb-0">Browse our complete product collection</p>
+    </div>
+    {% if current_user.is_manager_or_admin() %}
+    <a href="{{ url_for('catalog_new') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> Add New Product
+    </a>
+    {% endif %}
+</div>
+
+<!-- Filters -->
+<div class="filter-section">
+    <form method="GET" action="{{ url_for('catalog_list') }}" class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label"><i class="bi bi-search"></i> Search</label>
+            <input type="text" name="search" class="form-control" placeholder="Search products..."
+                value="{{ search_query }}">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label"><i class="bi bi-tag"></i> Category</label>
+            <select name="category" class="form-select">
+                <option value="">All Categories</option>
+                {% for category in categories %}
+                <option value="{{ category }}" {% if category==selected_category %}selected{% endif %}>
+                    {{ category }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+            <button type="submit" class="btn btn-primary w-100">
+                <i class="bi bi-funnel"></i> Filter
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Products Grid -->
+{% if products %}
+<div class="row g-4">
+    {% for product in products %}
+    <div class="col-md-4 col-lg-3">
+        <div class="card product-card" onclick="window.location='{{ url_for('catalog_detail', id=product.id) }}'">
+            <div class="position-relative">
+                <img src="{{ product.get_primary_image() }}" class="product-image" alt="{{ product.product_name }}"
+                    onerror="this.src='https://via.placeholder.com/300x250?text=No+Image'">
+                <span class="product-category-badge">{{ product.category }}</span>
+            </div>
+            <div class="card-body">
+                <h5 class="card-title mb-2" style="min-height: 3rem;">{{ product.product_name }}</h5>
+                {% if product.brand %}
+                <p class="product-brand mb-2">
+                    <i class="bi bi-award"></i> {{ product.brand }}
+                </p>
+                {% endif %}
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="product-price">{{ product.get_formatted_price() }}</span>
+                    {% if product.availability %}
+                    <span class="badge bg-success">{{ product.availability }}</span>
+                    {% endif %}
+                </div>
+                {% if product.material %}
+                <p class="text-muted small mt-2 mb-0">
+                    <i class="bi bi-layers"></i> {{ product.material }}
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="mt-4">
+    <p class="text-muted">
+        Showing {{ products|length }} product{% if products|length != 1 %}s{% endif %}
+    </p>
+</div>
+{% else %}
+<div class="no-products">
+    <i class="bi bi-inbox" style="font-size: 4rem; color: #cbd5e1;"></i>
+    <h4 class="mt-3">No products found</h4>
+    <p class="text-muted">Try adjusting your filters or search query</p>
+    {% if current_user.is_manager_or_admin() %}
+    <a href="{{ url_for('catalog_new') }}" class="btn btn-primary mt-3">
+        <i class="bi bi-plus-circle"></i> Add First Product
+    </a>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}
