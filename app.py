@@ -381,14 +381,22 @@ def tasks_weekly():
 
 
 @app.route('/tasks/assign', methods=['GET', 'POST'])
-@manager_or_admin_required
+@login_required
 def task_assign():
     """Assign task to promotor"""
     form = TaskAssignmentForm()
     
     # Populate dropdowns
     form.template_id.choices = [(t.id, t.name) for t in TaskTemplate.query.filter_by(is_active=True).all()]
-    form.promotor_id.choices = [(u.id, u.username) for u in User.query.filter_by(is_active=True).all()]
+    
+    # Restrict user dropdown based on role
+    if current_user.is_manager_or_admin():
+        # Managers and admins can assign to anyone
+        form.promotor_id.choices = [(u.id, u.username) for u in User.query.filter_by(is_active=True).all()]
+    else:
+        # Regular users can only assign to themselves
+        form.promotor_id.choices = [(current_user.id, current_user.username)]
+    
     form.project_id.choices = [(0, '-- None --')] + [(p.id, p.name) for p in Project.query.filter(Project.status.in_(['Not Started', 'In Progress'])).all()]
     
     if form.validate_on_submit():

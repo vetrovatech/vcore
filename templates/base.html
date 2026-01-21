@@ -141,7 +141,8 @@
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
                             <i class="bi bi-person-circle"></i> {{ current_user.username }}
-                            <span class="badge bg-light text-dark ms-1">{{ current_user.role }}</span>
+                            <span class="badge bg-light text-dark ms-1">{{ 'User' if current_user.role == 'Promotor'
+                                else current_user.role }}</span>
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="{{ url_for('logout') }}">
@@ -190,14 +191,13 @@
                                 <i class="bi bi-grid-3x3-gap"></i> Product Catalog
                             </a>
                         </li>
-                        {% if current_user.is_manager_or_admin() %}
                         <li class="nav-item">
                             <a class="nav-link {% if request.endpoint and 'task_assign' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('task_assign') }}">
-                                <i class="bi bi-plus-circle"></i> Assign Task
+                                <i class="bi bi-plus-circle"></i> {% if current_user.is_manager_or_admin() %}Assign
+                                Task{% else %}Add Task{% endif %}
                             </a>
                         </li>
-                        {% endif %}
                         {% if current_user.is_admin() %}
                         <li class="nav-item mt-3">
                             <h6 class="text-muted px-3 mb-2" style="font-size: 0.75rem; text-transform: uppercase;">

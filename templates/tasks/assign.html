@@ -7,7 +7,8 @@
     <div class="col-md-8">
         <div class="card">
             <div class="card-header bg-white">
-                <h4 class="mb-0">Assign Task to User</h4>
+                <h4 class="mb-0">{% if current_user.is_manager_or_admin() %}Assign Task to User{% else %}Add New Task{%
+                    endif %}</h4>
             </div>
             <div class="card-body">
                 <form method="POST">
@@ -35,6 +36,7 @@
                         <small class="text-muted">Leave empty to use template name</small>
                     </div>
 
+                    {% if current_user.is_manager_or_admin() %}
                     <div class="mb-3">
                         {{ form.promotor_id.label(class="form-label") }}
                         {{ form.promotor_id(class="form-select" + (" is-invalid" if form.promotor_id.errors else "")) }}
@@ -44,6 +46,11 @@
                         </div>
                         {% endif %}
                     </div>
+                    {% else %}
+                    {# Hidden field for regular users - automatically set to themselves #}
+                    {{ form.promotor_id(class="d-none") }}
+                    <input type="hidden" name="promotor_id" value="{{ current_user.id }}">
+                    {% endif %}
 
                     <div class="mb-3">
                         {{ form.project_id.label(class="form-label") }}
@@ -83,7 +90,8 @@
                             <i class="bi bi-arrow-left"></i> Cancel
                         </a>
                         <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-check-circle"></i> Assign Task
+                            <i class="bi bi-check-circle"></i> {% if current_user.is_manager_or_admin() %}Assign Task{%
+                            else %}Add Task{% endif %}
                         </button>
                     </div>
                 </form>
