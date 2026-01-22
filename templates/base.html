@@ -41,6 +41,49 @@
             box-shadow: 2px 0 4px rgba(0, 0, 0, 0.05);
         }
 
+        /* Mobile sidebar styles */
+        @media (max-width: 767.98px) {
+            .sidebar {
+                position: fixed;
+                top: 56px;
+                left: -100%;
+                width: 280px;
+                height: calc(100vh - 56px);
+                z-index: 1040;
+                transition: left 0.3s ease-in-out;
+                overflow-y: auto;
+            }
+
+            .sidebar.show {
+                left: 0;
+            }
+
+            .sidebar-overlay {
+                display: none;
+                position: fixed;
+                top: 56px;
+                left: 0;
+                width: 100%;
+                height: calc(100vh - 56px);
+                background-color: rgba(0, 0, 0, 0.5);
+                z-index: 1039;
+            }
+
+            .sidebar-overlay.show {
+                display: block;
+            }
+
+            .mobile-menu-btn {
+                display: block !important;
+            }
+        }
+
+        @media (min-width: 768px) {
+            .mobile-menu-btn {
+                display: none !important;
+            }
+        }
+
         .sidebar .nav-link {
             color: #64748b;
             padding: 0.75rem 1rem;
@@ -130,6 +173,10 @@
     <!-- Navigation Bar -->
     <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container-fluid">
+            <button class="btn btn-link text-white mobile-menu-btn me-2" type="button" id="sidebarToggle"
+                style="display: none;">
+                <i class="bi bi-list fs-4"></i>
+            </button>
             <a class="navbar-brand" href="{{ url_for('dashboard') }}">
                 <i class="bi bi-graph-up-arrow"></i> VCore
             </a>
@@ -155,10 +202,13 @@
         </div>
     </nav>
 
+    <!-- Mobile sidebar overlay -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
     <div class="container-fluid">
         <div class="row">
             <!-- Sidebar -->
-            <nav class="col-md-2 d-md-block sidebar p-3">
+            <nav class="col-md-2 d-md-block sidebar p-3" id="sidebar">
                 <div class="position-sticky">
                     <ul class="nav flex-column">
                         <li class="nav-item">
@@ -251,6 +301,40 @@
 
     <!-- Bootstrap 5 JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // Mobile sidebar toggle
+        document.addEventListener('DOMContentLoaded', function () {
+            const sidebarToggle = document.getElementById('sidebarToggle');
+            const sidebar = document.getElementById('sidebar');
+            const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+            if (sidebarToggle && sidebar && sidebarOverlay) {
+                // Toggle sidebar
+                sidebarToggle.addEventListener('click', function () {
+                    sidebar.classList.toggle('show');
+                    sidebarOverlay.classList.toggle('show');
+                });
+
+                // Close sidebar when clicking overlay
+                sidebarOverlay.addEventListener('click', function () {
+                    sidebar.classList.remove('show');
+                    sidebarOverlay.classList.remove('show');
+                });
+
+                // Close sidebar when clicking a link on mobile
+                const sidebarLinks = sidebar.querySelectorAll('.nav-link');
+                sidebarLinks.forEach(link => {
+                    link.addEventListener('click', function () {
+                        if (window.innerWidth < 768) {
+                            sidebar.classList.remove('show');
+                            sidebarOverlay.classList.remove('show');
+                        }
+                    });
+                });
+            }
+        });
+    </script>
 
     {% block extra_js %}{% endblock %}
 </body>
