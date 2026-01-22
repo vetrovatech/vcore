@@ -192,6 +192,12 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and 'bom' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('bom_list') }}">
+                                <i class="bi bi-calculator"></i> BOM Calculator
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {% if request.endpoint and 'task_assign' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('task_assign') }}">
                                 <i class="bi bi-plus-circle"></i> {% if current_user.is_manager_or_admin() %}Assign

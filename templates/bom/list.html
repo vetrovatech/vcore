@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}BOM Calculator - VCore{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-calculator"></i> Bill of Materials Calculator</h2>
+</div>
+
+<!-- Search Bar -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-10">
+                <input type="text" name="search" class="form-control" placeholder="Search products..."
+                    value="{{ search_query }}">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search"></i> Search
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Available Calculators -->
+<h5 class="mb-3">Available Calculators</h5>
+<div class="row">
+    <div class="col-md-4 mb-3">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-window" style="color: #667eea;"></i> DGU Glass Calculator
+                </h5>
+                <p class="card-text text-muted">
+                    Calculate Bill of Materials for Double Glazing Units with customizable specifications including
+                    glass types, spacers, and gas fills.
+                </p>
+                <a href="{{ url_for('bom_dgu_calculator') }}" class="btn btn-primary">
+                    <i class="bi bi-calculator"></i> Open Calculator
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Placeholder for future calculators -->
+    <div class="col-md-4 mb-3">
+        <div class="card h-100" style="opacity: 0.6;">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-layers"></i> Laminated Glass
+                </h5>
+                <p class="card-text text-muted">BOM calculator for laminated glass products.</p>
+                <button class="btn btn-secondary" disabled>
+                    <i class="bi bi-lock"></i> Coming Soon
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-3">
+        <div class="card h-100" style="opacity: 0.6;">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-door-open"></i> Shower Enclosures
+                </h5>
+                <p class="card-text text-muted">BOM calculator for shower enclosure assemblies.</p>
+                <button class="btn btn-secondary" disabled>
+                    <i class="bi bi-lock"></i> Coming Soon
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if products %}
+<h5 class="mt-4 mb-3">Related Products ({{ products|length }})</h5>
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Product Name</th>
+                        <th>Category</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for product in products %}
+                    <tr>
+                        <td>{{ product.product_name }}</td>
+                        <td><span class="badge bg-secondary">{{ product.category }}</span></td>
+                        <td>
+                            <a href="{{ url_for('bom_dgu_calculator') }}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-calculator"></i> Calculate BOM
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

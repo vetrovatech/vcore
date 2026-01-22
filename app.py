@@ -921,6 +921,37 @@ def catalog_upload_image(id, image_num):
 
 
 
+# ============================================================================
+# BOM CALCULATOR ROUTES
+# ============================================================================
+
+@app.route('/bom')
+@login_required
+def bom_list():
+    """BOM calculator list with product search"""
+    search_query = request.args.get('search', '')
+    
+    # For now, show DGU/Insulated glass products
+    products = Product.query.filter(
+        Product.is_active == True
+    ).filter(
+        (Product.category.ilike('%insulated%')) | 
+        (Product.category.ilike('%dgu%')) |
+        (Product.product_name.ilike('%double glazing%'))
+    ).order_by(Product.product_name).all()
+    
+    if search_query:
+        products = [p for p in products if search_query.lower() in p.product_name.lower()]
+    
+    return render_template('bom/list.html', products=products, search_query=search_query)
+
+
+@app.route('/bom/dgu-calculator')
+@login_required
+def bom_dgu_calculator():
+    """DGU Glass BOM Calculator"""
+    return render_template('bom/dgu_calculator.html')
+
 
 # ============================================================================
 # ADMIN ROLLOVER ROUTE

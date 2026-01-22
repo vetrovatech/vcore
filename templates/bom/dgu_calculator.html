@@ -1,0 +1,861 @@
+{% extends "base.html" %}
+
+{% block title %}DGU Glass BOM Calculator - VCore{% endblock %}
+
+{% block extra_css %}
+<style>
+    .bom-calculator {
+        background: #f8fafc;
+    }
+
+    .calculator-card {
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .section-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #2563eb;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid #e2e8f0;
+    }
+
+    .dgu-visual {
+        display: flex;
+        justify-content: center;
+        padding: 30px 0;
+        background: #fff;
+        border-radius: 10px;
+    }
+
+    .dgu-cross-section {
+        position: relative;
+        width: 280px;
+        height: 200px;
+    }
+
+    .glass-pane {
+        position: absolute;
+        width: 20px;
+        height: 100%;
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .glass-pane span {
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        transform: rotate(180deg);
+        font-size: 0.7rem;
+        color: #fff;
+        font-weight: 600;
+    }
+
+    .outer-pane {
+        left: 30px;
+        background: linear-gradient(90deg, rgba(79, 195, 247, 0.8), rgba(79, 195, 247, 0.5));
+        border: 2px solid #4fc3f7;
+    }
+
+    .inner-pane {
+        right: 30px;
+        background: linear-gradient(90deg, rgba(129, 199, 132, 0.5), rgba(129, 199, 132, 0.8));
+        border: 2px solid #81c784;
+    }
+
+    .spacer-bar {
+        position: absolute;
+        left: 55px;
+        right: 55px;
+        height: 30px;
+        background: linear-gradient(180deg, #78909c, #546e7a);
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.65rem;
+        color: #fff;
+    }
+
+    .spacer-top {
+        top: 0;
+    }
+
+    .spacer-bottom {
+        bottom: 0;
+    }
+
+    .gas-fill {
+        position: absolute;
+        left: 55px;
+        right: 55px;
+        top: 35px;
+        bottom: 35px;
+        background: repeating-linear-gradient(45deg,
+                rgba(156, 39, 176, 0.1),
+                rgba(156, 39, 176, 0.1) 10px,
+                rgba(156, 39, 176, 0.2) 10px,
+                rgba(156, 39, 176, 0.2) 20px);
+        border-left: 3px solid rgba(233, 30, 99, 0.5);
+        border-right: 3px solid rgba(233, 30, 99, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.8rem;
+        color: #9c27b0;
+    }
+
+    .sealant-indicator {
+        position: absolute;
+        width: 8px;
+        border-radius: 2px;
+    }
+
+    .primary-seal-left {
+        left: 50px;
+        top: 30px;
+        bottom: 30px;
+        background: #ff7043;
+    }
+
+    .primary-seal-right {
+        right: 50px;
+        top: 30px;
+        bottom: 30px;
+        background: #ff7043;
+    }
+
+    .dim-gap {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.7);
+        padding: 3px 8px;
+        border-radius: 4px;
+        color: #fff;
+        font-weight: 600;
+        font-size: 0.7rem;
+    }
+
+    .bom-table {
+        font-size: 0.9rem;
+    }
+
+    .bom-table th {
+        background: #f1f5f9;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.5px;
+        color: #64748b;
+    }
+
+    .bom-table .component-name {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .color-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+
+    .scaling-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 0.7rem;
+        font-weight: 600;
+    }
+
+    .scale-area {
+        background: rgba(79, 195, 247, 0.2);
+        color: #0288d1;
+    }
+
+    .scale-perimeter {
+        background: rgba(255, 167, 38, 0.2);
+        color: #f57c00;
+    }
+
+    .subtotal-row td {
+        background: #f8fafc;
+        font-weight: 600;
+        color: #64748b;
+        font-size: 0.85rem;
+    }
+
+    .total-row td {
+        background: #e0f2fe;
+        font-weight: 700;
+        color: #0369a1;
+        font-size: 1rem;
+    }
+
+    .summary-card {
+        background: linear-gradient(135deg, rgba(79, 195, 247, 0.1), rgba(79, 195, 247, 0.05));
+        border-radius: 12px;
+        padding: 18px;
+        text-align: center;
+        border: 1px solid rgba(79, 195, 247, 0.2);
+    }
+
+    .summary-card.highlight {
+        background: linear-gradient(135deg, rgba(76, 175, 80, 0.15), rgba(76, 175, 80, 0.05));
+        border-color: rgba(76, 175, 80, 0.3);
+    }
+
+    .summary-label {
+        font-size: 0.75rem;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+    }
+
+    .summary-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #1e293b;
+    }
+
+    .summary-card.highlight .summary-value {
+        color: #2e7d32;
+    }
+
+    .summary-unit {
+        font-size: 0.85rem;
+        color: #64748b;
+        margin-top: 4px;
+    }
+
+    .price-input-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: #f8fafc;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid #e2e8f0;
+    }
+
+    .price-input-group label {
+        flex: 1;
+        font-size: 0.8rem;
+        color: #475569;
+        margin: 0;
+    }
+
+    .price-input-group input {
+        width: 90px;
+        padding: 6px 10px;
+        font-size: 0.85rem;
+        text-align: right;
+    }
+
+    .price-unit {
+        font-size: 0.7rem;
+        color: #64748b;
+        min-width: 35px;
+    }
+
+    .order-total-box {
+        background: linear-gradient(135deg, rgba(76, 175, 80, 0.15), rgba(76, 175, 80, 0.05));
+        border-radius: 16px;
+        padding: 25px;
+        text-align: center;
+        border: 2px solid rgba(76, 175, 80, 0.3);
+    }
+
+    .order-total-label {
+        font-size: 0.9rem;
+        color: #2e7d32;
+        margin-bottom: 10px;
+        font-weight: 600;
+    }
+
+    .order-total-value {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #1b5e20;
+    }
+
+    .order-breakdown {
+        margin-top: 15px;
+        font-size: 0.85rem;
+        color: #64748b;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bom-calculator">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="bi bi-window"></i> DGU Glass BOM Calculator</h2>
+            <p class="text-muted mb-0">Double Glazing Unit Cost Calculator for Indian Market</p>
+        </div>
+        <a href="{{ url_for('bom_list') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to List
+        </a>
+    </div>
+
+    <div class="row">
+        <!-- Left Panel: Inputs -->
+        <div class="col-lg-4">
+            <div class="card calculator-card mb-3">
+                <div class="card-body">
+                    <div class="section-title">
+                        <i class="bi bi-rulers"></i> Panel Dimensions
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <label class="form-label">Width (mm)</label>
+                            <input type="number" id="width" class="form-control" value="1200" min="200" max="3000">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">Height (mm)</label>
+                            <input type="number" id="height" class="form-control" value="1500" min="200" max="3000">
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <label class="form-label">Spacer Gap (mm)</label>
+                        <select id="spacerGap" class="form-select">
+                            <option value="6">6mm</option>
+                            <option value="9">9mm</option>
+                            <option value="12" selected>12mm</option>
+                            <option value="16">16mm</option>
+                            <option value="20">20mm</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card calculator-card mb-3">
+                <div class="card-body">
+                    <div class="section-title">
+                        <i class="bi bi-layers"></i> Glass Specification
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Outer Pane</label>
+                        <select id="outerGlass" class="form-select">
+                            <option value="5-clear-toughened">5mm Clear Toughened</option>
+                            <option value="6-clear-toughened" selected>6mm Clear Toughened</option>
+                            <option value="8-clear-toughened">8mm Clear Toughened</option>
+                            <option value="5-tinted-toughened">5mm Tinted Toughened</option>
+                            <option value="6-tinted-toughened">6mm Tinted Toughened</option>
+                            <option value="6-reflective">6mm Reflective</option>
+                            <option value="6-low-e">6mm Low-E Coated</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Inner Pane</label>
+                        <select id="innerGlass" class="form-select">
+                            <option value="5-clear-toughened">5mm Clear Toughened</option>
+                            <option value="6-clear-toughened" selected>6mm Clear Toughened</option>
+                            <option value="8-clear-toughened">8mm Clear Toughened</option>
+                            <option value="5-clear-annealed">5mm Clear Annealed</option>
+                            <option value="6-clear-annealed">6mm Clear Annealed</option>
+                            <option value="5-laminated">5mm Laminated (2.5+2.5)</option>
+                            <option value="6-laminated">6mm Laminated (3+3)</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Gas Fill</label>
+                        <select id="gasFill" class="form-select">
+                            <option value="air">Air (Standard)</option>
+                            <option value="argon" selected>Argon Gas</option>
+                            <option value="krypton">Krypton Gas</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Spacer Type</label>
+                        <select id="spacerType" class="form-select">
+                            <option value="aluminum" selected>Aluminum Spacer</option>
+                            <option value="warm-edge">Warm Edge (TGI)</option>
+                            <option value="super-spacer">Super Spacer (Foam)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card calculator-card">
+                <div class="card-body">
+                    <div class="section-title">
+                        <i class="bi bi-eye"></i> Cross Section View
+                    </div>
+
+                    <div class="dgu-visual">
+                        <div class="dgu-cross-section">
+                            <div class="glass-pane outer-pane"><span id="outerLabel">6mm Tough</span></div>
+                            <div class="sealant-indicator primary-seal-left"></div>
+                            <div class="spacer-bar spacer-top">Spacer + Desiccant</div>
+                            <div class="gas-fill"><span id="gasLabel">Argon</span></div>
+                            <div class="spacer-bar spacer-bottom">Aluminum Spacer</div>
+                            <div class="sealant-indicator primary-seal-right"></div>
+                            <div class="glass-pane inner-pane"><span id="innerLabel">6mm Tough</span></div>
+                            <div class="dim-gap" id="gapLabel">12mm</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel: BOM & Costs -->
+        <div class="col-lg-8">
+            <div class="card calculator-card mb-3">
+                <div class="card-body">
+                    <div class="section-title">
+                        <i class="bi bi-file-text"></i> Bill of Materials
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table bom-table">
+                            <thead>
+                                <tr>
+                                    <th>Component</th>
+                                    <th>Scales By</th>
+                                    <th class="text-end">Qty</th>
+                                    <th class="text-end">Unit</th>
+                                    <th class="text-end">Rate (₹)</th>
+                                    <th class="text-end">Amount (₹)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bomTableBody">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="row g-3 mb-3">
+                <div class="col-md-3">
+                    <div class="summary-card">
+                        <div class="summary-label">Panel Area</div>
+                        <div class="summary-value" id="summaryArea">1.80</div>
+                        <div class="summary-unit">sq.m / <span id="summaryAreaSqft">19.38</span> sqft</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="summary-card">
+                        <div class="summary-label">Perimeter</div>
+                        <div class="summary-value" id="summaryPerimeter">5.40</div>
+                        <div class="summary-unit">meters / <span id="summaryPerimeterFt">17.72</span> ft</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="summary-card">
+                        <div class="summary-label">Material Cost</div>
+                        <div class="summary-value" id="summaryMaterial">₹2,450</div>
+                        <div class="summary-unit">per panel</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="summary-card highlight">
+                        <div class="summary-label">Total Cost/Sqft</div>
+                        <div class="summary-value" id="summaryCostSqft">₹126</div>
+                        <div class="summary-unit">all inclusive</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pricing Editor -->
+            <div class="card calculator-card mb-3">
+                <div class="card-body">
+                    <div class="section-title">
+                        <i class="bi bi-currency-rupee"></i> Edit Pricing (₹)
+                    </div>
+
+                    <div class="row g-2" id="pricingGrid">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Order Calculator -->
+            <div class="card calculator-card">
+                <div class="card-body">
+                    <div class="section-title">
+                        <i class="bi bi-cart"></i> Order Calculation
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Number of Panels</label>
+                            <input type="number" id="orderQty" class="form-control" value="10" min="1">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Margin %</label>
+                            <input type="number" id="margin" class="form-control" value="25" min="0" max="100">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Wastage %</label>
+                            <input type="number" id="wastage" class="form-control" value="5" min="0" max="50">
+                        </div>
+                    </div>
+
+                    <div class="order-total-box">
+                        <div class="order-total-label">Total Order Value (with margin)</div>
+                        <div class="order-total-value" id="orderTotal">₹30,625</div>
+                        <div class="order-breakdown" id="orderBreakdown">
+                            10 panels × 19.38 sqft = 193.8 sqft @ ₹158/sqft
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Notes -->
+            <div class="alert alert-warning mt-3">
+                <h6 class="alert-heading"><i class="bi bi-info-circle"></i> Pricing Assumptions (Indian Market - 2024)
+                </h6>
+                <ul class="mb-0" style="font-size: 0.85rem;">
+                    <li>Glass rates are ex-factory prices for major cities (Mumbai/Delhi/Chennai)</li>
+                    <li>Toughening adds ₹25-40/sqft over annealed glass</li>
+                    <li>Argon gas filling: ₹15-25/sqft additional</li>
+                    <li>Transportation and installation NOT included</li>
+                    <li>Rates can vary ±15% based on location and volume</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Pricing database (₹ per unit)
+    const pricing = {
+        glass: {
+            '5-clear-toughened': { rate: 85, unit: 'sqft', name: '5mm Clear Toughened' },
+            '6-clear-toughened': { rate: 95, unit: 'sqft', name: '6mm Clear Toughened' },
+            '8-clear-toughened': { rate: 120, unit: 'sqft', name: '8mm Clear Toughened' },
+            '5-tinted-toughened': { rate: 100, unit: 'sqft', name: '5mm Tinted Toughened' },
+            '6-tinted-toughened': { rate: 110, unit: 'sqft', name: '6mm Tinted Toughened' },
+            '6-reflective': { rate: 140, unit: 'sqft', name: '6mm Reflective' },
+            '6-low-e': { rate: 180, unit: 'sqft', name: '6mm Low-E Coated' },
+            '5-clear-annealed': { rate: 45, unit: 'sqft', name: '5mm Clear Annealed' },
+            '6-clear-annealed': { rate: 55, unit: 'sqft', name: '6mm Clear Annealed' },
+            '5-laminated': { rate: 130, unit: 'sqft', name: '5mm Laminated' },
+            '6-laminated': { rate: 150, unit: 'sqft', name: '6mm Laminated' }
+        },
+        spacer: {
+            'aluminum': { rate: 25, unit: 'rft', name: 'Aluminum Spacer' },
+            'warm-edge': { rate: 45, unit: 'rft', name: 'Warm Edge Spacer' },
+            'super-spacer': { rate: 60, unit: 'rft', name: 'Super Spacer' }
+        },
+        gas: {
+            'air': { rate: 0, unit: 'sqft', name: 'Air Fill' },
+            'argon': { rate: 20, unit: 'sqft', name: 'Argon Gas' },
+            'krypton': { rate: 150, unit: 'sqft', name: 'Krypton Gas' }
+        },
+        consumables: {
+            'desiccant': { rate: 8, unit: 'rft', name: 'Desiccant' },
+            'butyl': { rate: 6, unit: 'rft', name: 'Primary Sealant (Butyl)' },
+            'silicone': { rate: 12, unit: 'rft', name: 'Secondary Sealant (Silicone)' }
+        },
+        labor: {
+            'assembly': { rate: 25, unit: 'sqft', name: 'Assembly Labor' },
+            'electricity': { rate: 5, unit: 'sqft', name: 'Electricity & Overhead' }
+        }
+    };
+
+    // Color mapping for components
+    const colors = {
+        'outer-glass': '#4fc3f7',
+        'inner-glass': '#81c784',
+        'spacer': '#78909c',
+        'gas': '#ce93d8',
+        'desiccant': '#ffb74d',
+        'butyl': '#ff7043',
+        'silicone': '#ef5350',
+        'labor': '#90a4ae',
+        'electricity': '#ffd54f'
+    };
+
+    function calculateBOM() {
+        const width = parseFloat(document.getElementById('width').value) || 1200;
+        const height = parseFloat(document.getElementById('height').value) || 1500;
+        const spacerGap = document.getElementById('spacerGap').value;
+        const outerGlass = document.getElementById('outerGlass').value;
+        const innerGlass = document.getElementById('innerGlass').value;
+        const gasFill = document.getElementById('gasFill').value;
+        const spacerType = document.getElementById('spacerType').value;
+
+        // Calculate dimensions
+        const areaSqm = (width * height) / 1000000;
+        const areaSqft = areaSqm * 10.764;
+        const perimeterM = 2 * (width + height) / 1000;
+        const perimeterFt = perimeterM * 3.281;
+
+        // Update visual labels
+        document.getElementById('outerLabel').textContent = pricing.glass[outerGlass].name.split(' ').slice(0, 2).join(' ');
+        document.getElementById('innerLabel').textContent = pricing.glass[innerGlass].name.split(' ').slice(0, 2).join(' ');
+        document.getElementById('gasLabel').textContent = pricing.gas[gasFill].name.replace(' Gas', '').replace(' Fill', '');
+        document.getElementById('gapLabel').textContent = spacerGap + 'mm';
+
+        // Build BOM
+        const bom = [
+            {
+                name: 'Outer Pane - ' + pricing.glass[outerGlass].name,
+                color: colors['outer-glass'],
+                scaleType: 'area',
+                qty: areaSqft,
+                unit: 'sqft',
+                rate: pricing.glass[outerGlass].rate,
+                editable: 'outer-glass'
+            },
+            {
+                name: 'Inner Pane - ' + pricing.glass[innerGlass].name,
+                color: colors['inner-glass'],
+                scaleType: 'area',
+                qty: areaSqft,
+                unit: 'sqft',
+                rate: pricing.glass[innerGlass].rate,
+                editable: 'inner-glass'
+            },
+            {
+                name: pricing.spacer[spacerType].name + ' (' + spacerGap + 'mm)',
+                color: colors['spacer'],
+                scaleType: 'perimeter',
+                qty: perimeterFt,
+                unit: 'rft',
+                rate: pricing.spacer[spacerType].rate,
+                editable: 'spacer'
+            },
+            {
+                name: 'Desiccant (Molecular Sieve)',
+                color: colors['desiccant'],
+                scaleType: 'perimeter',
+                qty: perimeterFt,
+                unit: 'rft',
+                rate: pricing.consumables.desiccant.rate,
+                editable: 'desiccant'
+            },
+            {
+                name: 'Primary Sealant (Butyl)',
+                color: colors['butyl'],
+                scaleType: 'perimeter',
+                qty: perimeterFt * 2,
+                unit: 'rft',
+                rate: pricing.consumables.butyl.rate,
+                editable: 'butyl'
+            },
+            {
+                name: 'Secondary Sealant (Silicone/Polysulfide)',
+                color: colors['silicone'],
+                scaleType: 'perimeter',
+                qty: perimeterFt,
+                unit: 'rft',
+                rate: pricing.consumables.silicone.rate,
+                editable: 'silicone'
+            },
+            {
+                name: pricing.gas[gasFill].name,
+                color: colors['gas'],
+                scaleType: 'area',
+                qty: areaSqft,
+                unit: 'sqft',
+                rate: pricing.gas[gasFill].rate,
+                editable: 'gas'
+            },
+            {
+                name: 'Assembly Labor',
+                color: colors['labor'],
+                scaleType: 'area',
+                qty: areaSqft,
+                unit: 'sqft',
+                rate: pricing.labor.assembly.rate,
+                editable: 'labor'
+            },
+            {
+                name: 'Electricity & Overhead',
+                color: colors['electricity'],
+                scaleType: 'area',
+                qty: areaSqft,
+                unit: 'sqft',
+                rate: pricing.labor.electricity.rate,
+                editable: 'electricity'
+            }
+        ];
+
+        // Generate BOM table
+        let tableHTML = '';
+        let totalMaterial = 0;
+        let glassSubtotal = 0;
+        let consumablesSubtotal = 0;
+        let laborSubtotal = 0;
+
+        bom.forEach((item, index) => {
+            const amount = item.qty * item.rate;
+            totalMaterial += amount;
+
+            if (index < 2) glassSubtotal += amount;
+            else if (index < 7) consumablesSubtotal += amount;
+            else laborSubtotal += amount;
+
+            const scaleBadge = item.scaleType === 'area'
+                ? '<span class="scaling-badge scale-area">AREA</span>'
+                : '<span class="scaling-badge scale-perimeter">PERIMETER</span>';
+
+            tableHTML += `
+            <tr>
+                <td>
+                    <div class="component-name">
+                        <span class="color-dot" style="background: ${item.color}"></span>
+                        ${item.name}
+                    </div>
+                </td>
+                <td>${scaleBadge}</td>
+                <td class="text-end">${item.qty.toFixed(2)}</td>
+                <td class="text-end">${item.unit}</td>
+                <td class="text-end">₹${item.rate.toFixed(0)}</td>
+                <td class="text-end">₹${amount.toFixed(0)}</td>
+            </tr>
+        `;
+
+            if (index === 1) {
+                tableHTML += `<tr class="subtotal-row"><td colspan="5">Glass Subtotal</td><td class="text-end">₹${glassSubtotal.toFixed(0)}</td></tr>`;
+            }
+            if (index === 6) {
+                tableHTML += `<tr class="subtotal-row"><td colspan="5">Consumables Subtotal</td><td class="text-end">₹${consumablesSubtotal.toFixed(0)}</td></tr>`;
+            }
+        });
+
+        tableHTML += `<tr class="subtotal-row"><td colspan="5">Labor & Overhead Subtotal</td><td class="text-end">₹${laborSubtotal.toFixed(0)}</td></tr>`;
+        tableHTML += `<tr class="total-row"><td colspan="5">TOTAL PER PANEL</td><td class="text-end">₹${totalMaterial.toFixed(0)}</td></tr>`;
+
+        document.getElementById('bomTableBody').innerHTML = tableHTML;
+
+        // Update summary cards
+        document.getElementById('summaryArea').textContent = areaSqm.toFixed(2);
+        document.getElementById('summaryAreaSqft').textContent = areaSqft.toFixed(2);
+        document.getElementById('summaryPerimeter').textContent = perimeterM.toFixed(2);
+        document.getElementById('summaryPerimeterFt').textContent = perimeterFt.toFixed(2);
+        document.getElementById('summaryMaterial').textContent = '₹' + totalMaterial.toFixed(0);
+        document.getElementById('summaryCostSqft').textContent = '₹' + (totalMaterial / areaSqft).toFixed(0);
+
+        // Update order calculation
+        calculateOrder(totalMaterial, areaSqft);
+
+        return { totalMaterial, areaSqft };
+    }
+
+    function calculateOrder(panelCost, panelSqft) {
+        const qty = parseInt(document.getElementById('orderQty').value) || 1;
+        const margin = parseFloat(document.getElementById('margin').value) || 0;
+        const wastage = parseFloat(document.getElementById('wastage').value) || 0;
+
+        const baseCost = panelCost * qty;
+        const wastageCost = baseCost * (wastage / 100);
+        const subtotal = baseCost + wastageCost;
+        const marginAmount = subtotal * (margin / 100);
+        const total = subtotal + marginAmount;
+
+        const totalSqft = panelSqft * qty;
+        const costPerSqft = total / totalSqft;
+
+        document.getElementById('orderTotal').textContent = '₹' + total.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+        document.getElementById('orderBreakdown').innerHTML = `
+        ${qty} panels × ${panelSqft.toFixed(2)} sqft = ${totalSqft.toFixed(1)} sqft @ <strong>₹${costPerSqft.toFixed(0)}/sqft</strong><br>
+        <small style="color: #64748b;">Base: ₹${baseCost.toLocaleString('en-IN', { maximumFractionDigits: 0 })} + Wastage: ₹${wastageCost.toLocaleString('en-IN', { maximumFractionDigits: 0 })} + Margin: ₹${marginAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</small>
+    `;
+    }
+
+    function generatePricingEditor() {
+        const editableItems = [
+            { key: 'outer-glass', label: 'Outer Glass', getValue: () => pricing.glass[document.getElementById('outerGlass').value].rate, unit: '/sqft' },
+            { key: 'inner-glass', label: 'Inner Glass', getValue: () => pricing.glass[document.getElementById('innerGlass').value].rate, unit: '/sqft' },
+            { key: 'spacer', label: 'Spacer', getValue: () => pricing.spacer[document.getElementById('spacerType').value].rate, unit: '/rft' },
+            { key: 'gas', label: 'Gas Fill', getValue: () => pricing.gas[document.getElementById('gasFill').value].rate, unit: '/sqft' },
+            { key: 'desiccant', label: 'Desiccant', getValue: () => pricing.consumables.desiccant.rate, unit: '/rft' },
+            { key: 'butyl', label: 'Butyl Seal', getValue: () => pricing.consumables.butyl.rate, unit: '/rft' },
+            { key: 'silicone', label: 'Silicone Seal', getValue: () => pricing.consumables.silicone.rate, unit: '/rft' },
+            { key: 'labor', label: 'Labor', getValue: () => pricing.labor.assembly.rate, unit: '/sqft' },
+            { key: 'electricity', label: 'Overhead', getValue: () => pricing.labor.electricity.rate, unit: '/sqft' }
+        ];
+
+        let html = '';
+        editableItems.forEach(item => {
+            html += `
+            <div class="col-md-6">
+                <div class="price-input-group">
+                    <span class="color-dot" style="background: ${colors[item.key]}"></span>
+                    <label>${item.label}</label>
+                    <input type="number" id="price-${item.key}" class="form-control" value="${item.getValue()}" onchange="updatePrice('${item.key}', this.value)">
+                    <span class="price-unit">${item.unit}</span>
+                </div>
+            </div>
+        `;
+        });
+
+        document.getElementById('pricingGrid').innerHTML = html;
+    }
+
+    function updatePrice(key, value) {
+        const val = parseFloat(value) || 0;
+
+        switch (key) {
+            case 'outer-glass':
+                pricing.glass[document.getElementById('outerGlass').value].rate = val;
+                break;
+            case 'inner-glass':
+                pricing.glass[document.getElementById('innerGlass').value].rate = val;
+                break;
+            case 'spacer':
+                pricing.spacer[document.getElementById('spacerType').value].rate = val;
+                break;
+            case 'gas':
+                pricing.gas[document.getElementById('gasFill').value].rate = val;
+                break;
+            case 'desiccant':
+                pricing.consumables.desiccant.rate = val;
+                break;
+            case 'butyl':
+                pricing.consumables.butyl.rate = val;
+                break;
+            case 'silicone':
+                pricing.consumables.silicone.rate = val;
+                break;
+            case 'labor':
+                pricing.labor.assembly.rate = val;
+                break;
+            case 'electricity':
+                pricing.labor.electricity.rate = val;
+                break;
+        }
+
+        calculateBOM();
+    }
+
+    // Event listeners
+    document.querySelectorAll('input, select').forEach(el => {
+        el.addEventListener('change', () => {
+            generatePricingEditor();
+            calculateBOM();
+        });
+        el.addEventListener('input', () => {
+            if (el.type === 'number') {
+                calculateBOM();
+            }
+        });
+    });
+
+    // Initialize
+    generatePricingEditor();
+    calculateBOM();
+</script>
+{% endblock %}
