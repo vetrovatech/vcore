@@ -12,3 +12,9 @@ gunicorn==21.2.0
 awsgi==0.0.5
 email-validator==2.1.0
 boto3==1.34.22
+Pillow==10.2.0
+requests==2.31.0
+replicate==0.22.0
+mangum==0.17.0
+awslambdaric==2.0.7
+Pillow==10.2.00
