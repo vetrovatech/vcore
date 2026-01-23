@@ -1048,6 +1048,34 @@ def wordpress_sync_all():
     return jsonify(result)
 
 
+@app.route('/api/wordpress/changed-products', methods=['GET'])
+@admin_required
+def wordpress_changed_products():
+    """Get list of products that have changed since last sync"""
+    from models import Product
+    
+    # Get products that need syncing
+    changed_products = Product.query.filter(
+        Product.is_active == True,
+        (Product.last_wordpress_sync == None) | 
+        (Product.updated_at > Product.last_wordpress_sync)
+    ).all()
+    
+    products_list = [{
+        'id': p.id,
+        'name': p.product_name,
+        'category': p.category,
+        'updated_at': p.updated_at.isoformat() if p.updated_at else None,
+        'last_sync': p.last_wordpress_sync.isoformat() if p.last_wordpress_sync else 'Never synced'
+    } for p in changed_products]
+    
+    return jsonify({
+        'success': True,
+        'count': len(products_list),
+        'products': products_list
+    })
+
+
 @app.route('/api/wordpress/sync-product/<int:product_id>', methods=['POST'])
 @admin_required
 def wordpress_sync_product(product_id):
