@@ -253,6 +253,10 @@ class Product(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
+    # WordPress sync tracking
+    wordpress_id = db.Column(db.Integer, nullable=True, index=True)
+    last_wordpress_sync = db.Column(db.DateTime, nullable=True)
+    
     # Indexes for better query performance
     __table_args__ = (
         db.Index('idx_category_active', 'category', 'is_active'),

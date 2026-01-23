@@ -1,0 +1,118 @@
+{
+  "menu_structure": {
+    "architectural_glass": {
+      "name": "Architectural Glass",
+      "slug": "architectural-glass",
+      "description": "High-performance architectural glass solutions for commercial and public spaces",
+      "subcategories": {
+        "commercial_buildings": {
+          "name": "Commercial Buildings",
+          "slug": "commercial-buildings",
+          "products": ["Commercial Curtain Wall Glazing Service", "ACP Glass Cladding Glazing Service", "Building Stick Structural Glass Glazing Service"]
+        },
+        "office_spaces": {
+          "name": "Office Spaces",
+          "slug": "office-spaces",
+          "products": ["Glass Partition", "12 mm Toughened Glass Partitions", "Frameless Glass Partitions", "Modular Office Partition", "Office Glass Partition"]
+        },
+        "public_spaces": {
+          "name": "Public Spaces",
+          "slug": "public-spaces",
+          "products": ["Toughened Glass Glazing Service", "Glass Spider Glazing Service"]
+        }
+      }
+    },
+    "residential_glass": {
+      "name": "Residential Glass",
+      "slug": "residential-glass",
+      "description": "Premium glass solutions for modern homes and living spaces",
+      "subcategories": {
+        "living_spaces": {
+          "name": "Living Spaces",
+          "slug": "living-spaces",
+          "products": ["Home Glass Door", "Decorative Glass Door", "Fluted Glass", "8mm Black Fluted Glass"]
+        },
+        "bedrooms": {
+          "name": "Bedrooms",
+          "slug": "bedrooms",
+          "products": ["Sliding Door", "UPVC Sliding Door"]
+        },
+        "windows_doors": {
+          "name": "Windows & Doors",
+          "slug": "windows-doors",
+          "products": ["UPVC Doors And Windows", "Window Glass", "Toughened Glass Door", "UPVC Casement Door", "UPVC Casement Window", "UPVC Sliding Window"]
+        }
+      }
+    },
+    "commercial_glass": {
+      "name": "Commercial Glass",
+      "slug": "commercial-glass",
+      "description": "Professional glass solutions for retail, corporate, and specialized applications",
+      "subcategories": {
+        "retail_hospitality": {
+          "name": "Retail & Hospitality",
+          "slug": "retail-hospitality",
+          "products": ["Glass Partition", "Glass Railing", "Mirror Glass", "Stainless Steel Glass Railing"]
+        },
+        "corporate_offices": {
+          "name": "Corporate Offices",
+          "slug": "corporate-offices",
+          "products": ["Glass Partition", "12 mm Toughened Glass Partitions", "Frameless Glass Partitions", "Modular Office Partition", "Office Glass Partition", "Glass Top"]
+        },
+        "specialized_applications": {
+          "name": "Specialized Applications",
+          "slug": "specialized-applications",
+          "products": ["Insulated Glass Sound Proof Gla", "Laminated Glass", "Toughened Laminated Glass"]
+        }
+      }
+    },
+    "luxury_glass": {
+      "name": "Luxury Glass",
+      "slug": "luxury-glass",
+      "description": "Designer glass solutions for premium residential and commercial projects",
+      "subcategories": {
+        "premium_bathrooms": {
+          "name": "Premium Bathrooms",
+          "slug": "premium-bathrooms",
+          "products": ["Shower Enclosures", "Bathroom Shower Enclosure", "Frameless Shower Enclosure", "Glass Shower Enclosure", "Shower Enclosure"]
+        },
+        "designer_elements": {
+          "name": "Designer Elements",
+          "slug": "designer-elements",
+          "products": ["Etched Glass", "10mm Frosted Glass", "Acid Etched Glass", "Designed Etched Glass", "Sandblasted Etched Glass", "Lacquered Glass", "Printed Glass", "Fluted Glass", "8mm Black Fluted Glass"]
+        },
+        "outdoor_luxury": {
+          "name": "Outdoor Luxury",
+          "slug": "outdoor-luxury",
+          "products": ["Glass Railing", "Stainless Steel Glass Railing", "U Channel Glass Railing"]
+        },
+        "premium_kitchens": {
+          "name": "Premium Kitchens",
+          "slug": "premium-kitchens",
+          "products": ["Lacquered Glass", "Printed Glass"]
+        }
+      }
+    }
+  },
+  "category_mapping": {
+    "Shower Enclosures": ["luxury_glass.premium_bathrooms"],
+    "Glass Partition": ["architectural_glass.office_spaces", "commercial_glass.retail_hospitality", "commercial_glass.corporate_offices"],
+    "Decorative Glass Door": ["residential_glass.living_spaces"],
+    "Etched Glass": ["luxury_glass.designer_elements"],
+    "Float Glass": ["residential_glass.windows_doors"],
+    "Fluted Glass": ["residential_glass.living_spaces", "luxury_glass.designer_elements"],
+    "Glass Glazing Service": ["architectural_glass.commercial_buildings", "architectural_glass.public_spaces"],
+    "Glass Railing": ["commercial_glass.retail_hospitality", "luxury_glass.outdoor_luxury"],
+    "Glass Top": ["commercial_glass.corporate_offices"],
+    "Glass Work": ["architectural_glass.public_spaces"],
+    "Insulated Glass Sound Proof Gla": ["commercial_glass.specialized_applications"],
+    "Lacquered Glass": ["luxury_glass.designer_elements", "luxury_glass.premium_kitchens"],
+    "Laminated Glass": ["commercial_glass.specialized_applications"],
+    "Mirror Glass": ["commercial_glass.retail_hospitality"],
+    "Printed Glass": ["luxury_glass.designer_elements", "luxury_glass.premium_kitchens"],
+    "Sliding Door": ["residential_glass.bedrooms"],
+    "Transparent Glass": ["residential_glass.windows_doors"],
+    "UPVC Doors And Windows": ["residential_glass.windows_doors"],
+    "Window Glass": ["residential_glass.windows_doors"]
+  }
+}

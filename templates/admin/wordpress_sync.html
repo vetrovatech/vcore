@@ -1,0 +1,328 @@
+{% extends "base.html" %}
+
+{% block title %}WordPress Sync - VCore{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-md-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2><i class="fas fa-sync-alt"></i> WordPress Sync</h2>
+                <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary">
+                    <i class="fas fa-arrow-left"></i> Back to Dashboard
+                </a>
+            </div>
+
+            <!-- Connection Status Card -->
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="fas fa-plug"></i> Connection Status</h5>
+                </div>
+                <div class="card-body">
+                    <div id="connection-status">
+                        <button class="btn btn-info" onclick="testConnection()">
+                            <i class="fas fa-check-circle"></i> Test Connection
+                        </button>
+                        <div id="connection-result" class="mt-3"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sync Statistics Card -->
+            <div class="card mb-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="fas fa-chart-bar"></i> Sync Statistics</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-4">
+                            <div class="stat-box">
+                                <h3 class="text-primary" id="total-products">{{ stats.total_products or 0 }}</h3>
+                                <p class="text-muted">Total Products</p>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="stat-box">
+                                <h3 class="text-success" id="synced-products">{{ stats.synced_products or 0 }}</h3>
+                                <p class="text-muted">Synced to WordPress</p>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="stat-box">
+                                <h3 class="text-warning" id="pending-products">{{ stats.pending_sync or 0 }}</h3>
+                                <p class="text-muted">Pending Sync</p>
+                            </div>
+                        </div>
+                    </div>
+                    {% if stats.last_sync %}
+                    <div class="text-center mt-3">
+                        <small class="text-muted">Last synced: {{ stats.last_sync }}</small>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Sync Actions Card -->
+            <div class="card mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="fas fa-cloud-upload-alt"></i> Sync Actions</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card border-primary">
+                                <div class="card-body text-center">
+                                    <i class="fas fa-folder-plus fa-3x text-primary mb-3"></i>
+                                    <h5>Create Categories</h5>
+                                    <p class="text-muted">Create the new category structure in WordPress</p>
+                                    <button class="btn btn-primary btn-lg" onclick="createCategories()">
+                                        <i class="fas fa-plus-circle"></i> Create Categories
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card border-success">
+                                <div class="card-body text-center">
+                                    <i class="fas fa-sync fa-3x text-success mb-3"></i>
+                                    <h5>Sync All Products</h5>
+                                    <p class="text-muted">Sync all products to WordPress (may take a few minutes)</p>
+                                    <button class="btn btn-success btn-lg" onclick="syncAllProducts()" id="sync-btn">
+                                        <i class="fas fa-cloud-upload-alt"></i> Sync to WordPress
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Progress Card (Hidden by default) -->
+            <div class="card mb-4" id="progress-card" style="display: none;">
+                <div class="card-header bg-warning text-white">
+                    <h5 class="mb-0"><i class="fas fa-spinner fa-spin"></i> Sync in Progress</h5>
+                </div>
+                <div class="card-body">
+                    <div class="progress" style="height: 30px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" 
+                             id="sync-progress"
+                             style="width: 0%">
+                            <span id="progress-text">0%</span>
+                        </div>
+                    </div>
+                    <div id="sync-status" class="mt-3"></div>
+                </div>
+            </div>
+
+            <!-- Results Card -->
+            <div class="card" id="results-card" style="display: none;">
+                <div class="card-header" id="results-header">
+                    <h5 class="mb-0"><i class="fas fa-check-circle"></i> Sync Results</h5>
+                </div>
+                <div class="card-body" id="results-body">
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<style>
+.stat-box {
+    padding: 20px;
+    border-radius: 8px;
+    background: #f8f9fa;
+}
+
+.stat-box h3 {
+    font-size: 3rem;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.card {
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.btn-lg {
+    padding: 12px 30px;
+    font-size: 1.1rem;
+}
+</style>
+
+<script>
+function testConnection() {
+    const resultDiv = document.getElementById('connection-result');
+    resultDiv.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="sr-only">Testing...</span></div>';
+    
+    fetch('/api/wordpress/test-connection', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            resultDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i> ${data.message}
+                </div>
+            `;
+        } else {
+            resultDiv.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="fas fa-times-circle"></i> ${data.message}
+                </div>
+            `;
+        }
+    })
+    .catch(error => {
+        resultDiv.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-triangle"></i> Error: ${error.message}
+            </div>
+        `;
+    });
+}
+
+function createCategories() {
+    if (!confirm('This will create the new category structure in WordPress. Continue?')) {
+        return;
+    }
+    
+    const progressCard = document.getElementById('progress-card');
+    const syncStatus = document.getElementById('sync-status');
+    
+    progressCard.style.display = 'block';
+    syncStatus.innerHTML = '<p><i class="fas fa-spinner fa-spin"></i> Creating categories...</p>';
+    
+    fetch('/api/wordpress/create-categories', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        progressCard.style.display = 'none';
+        showResults(data, 'Categories Created');
+    })
+    .catch(error => {
+        progressCard.style.display = 'none';
+        showResults({success: false, message: error.message}, 'Error');
+    });
+}
+
+function syncAllProducts() {
+    if (!confirm('This will sync all products to WordPress. This may take several minutes. Continue?')) {
+        return;
+    }
+    
+    const syncBtn = document.getElementById('sync-btn');
+    const progressCard = document.getElementById('progress-card');
+    const syncProgress = document.getElementById('sync-progress');
+    const progressText = document.getElementById('progress-text');
+    const syncStatus = document.getElementById('sync-status');
+    
+    syncBtn.disabled = true;
+    progressCard.style.display = 'block';
+    
+    // Simulate progress
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+        progress += 5;
+        if (progress <= 90) {
+            syncProgress.style.width = progress + '%';
+            progressText.textContent = progress + '%';
+        }
+    }, 1000);
+    
+    syncStatus.innerHTML = '<p><i class="fas fa-spinner fa-spin"></i> Syncing products to WordPress...</p>';
+    
+    fetch('/api/wordpress/sync-all', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        clearInterval(progressInterval);
+        syncProgress.style.width = '100%';
+        progressText.textContent = '100%';
+        
+        setTimeout(() => {
+            progressCard.style.display = 'none';
+            syncBtn.disabled = false;
+            showResults(data, 'Sync Complete');
+            
+            // Refresh stats
+            location.reload();
+        }, 1000);
+    })
+    .catch(error => {
+        clearInterval(progressInterval);
+        progressCard.style.display = 'none';
+        syncBtn.disabled = false;
+        showResults({success: false, message: error.message}, 'Sync Failed');
+    });
+}
+
+function showResults(data, title) {
+    const resultsCard = document.getElementById('results-card');
+    const resultsHeader = document.getElementById('results-header');
+    const resultsBody = document.getElementById('results-body');
+    
+    resultsCard.style.display = 'block';
+    
+    if (data.success) {
+        resultsHeader.className = 'card-header bg-success text-white';
+        resultsHeader.innerHTML = `<h5 class="mb-0"><i class="fas fa-check-circle"></i> ${title}</h5>`;
+        
+        let html = `<div class="alert alert-success">${data.message || 'Operation completed successfully'}</div>`;
+        
+        if (data.synced !== undefined) {
+            html += `
+                <div class="row text-center mt-3">
+                    <div class="col-md-4">
+                        <h4 class="text-success">${data.synced}</h4>
+                        <p>Synced</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h4 class="text-danger">${data.failed || 0}</h4>
+                        <p>Failed</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h4 class="text-primary">${data.total_products || 0}</h4>
+                        <p>Total</p>
+                    </div>
+                </div>
+            `;
+        }
+        
+        if (data.errors && data.errors.length > 0) {
+            html += '<h5 class="mt-3">Errors:</h5><ul class="list-group">';
+            data.errors.forEach(error => {
+                html += `<li class="list-group-item list-group-item-danger">${error.product_name || 'Unknown'}: ${error.error}</li>`;
+            });
+            html += '</ul>';
+        }
+        
+        if (data.created_categories) {
+            html += `<p class="mt-3"><strong>Created ${data.created_categories.length} categories</strong></p>`;
+        }
+        
+        resultsBody.innerHTML = html;
+    } else {
+        resultsHeader.className = 'card-header bg-danger text-white';
+        resultsHeader.innerHTML = `<h5 class="mb-0"><i class="fas fa-times-circle"></i> ${title}</h5>`;
+        resultsBody.innerHTML = `<div class="alert alert-danger">${data.message || 'Operation failed'}</div>`;
+    }
+    
+    // Scroll to results
+    resultsCard.scrollIntoView({ behavior: 'smooth' });
+}
+</script>
+{% endblock %}

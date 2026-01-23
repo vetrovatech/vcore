@@ -993,6 +993,74 @@ def health_check():
 
 
 # ============================================================================
+# WORDPRESS SYNC ROUTES (Admin Only)
+# ============================================================================
+
+@app.route('/admin/wordpress-sync')
+@admin_required
+def wordpress_sync_page():
+    """WordPress sync admin page"""
+    from utils.wordpress_sync import WordPressSync
+    
+    wp_sync = WordPressSync()
+    stats = wp_sync.get_sync_status(db.session)
+    
+    return render_template('admin/wordpress_sync.html', stats=stats)
+
+
+@app.route('/api/wordpress/test-connection', methods=['POST'])
+@admin_required
+def wordpress_test_connection():
+    """Test WordPress API connection"""
+    from utils.wordpress_sync import WordPressSync
+    
+    wp_sync = WordPressSync()
+    result = wp_sync.test_connection()
+    
+    return jsonify(result)
+
+
+@app.route('/api/wordpress/create-categories', methods=['POST'])
+@admin_required
+def wordpress_create_categories():
+    """Create category structure in WordPress"""
+    from utils.wordpress_sync import WordPressSync
+    
+    wp_sync = WordPressSync()
+    result = wp_sync.create_categories()
+    
+    return jsonify(result)
+
+
+@app.route('/api/wordpress/sync-all', methods=['POST'])
+@admin_required
+def wordpress_sync_all():
+    """Sync all products to WordPress"""
+    from utils.wordpress_sync import WordPressSync
+    
+    wp_sync = WordPressSync()
+    result = wp_sync.sync_all_products(db.session)
+    
+    return jsonify(result)
+
+
+@app.route('/api/wordpress/sync-product/<int:product_id>', methods=['POST'])
+@admin_required
+def wordpress_sync_product(product_id):
+    """Sync single product to WordPress"""
+    from utils.wordpress_sync import WordPressSync
+    
+    product = Product.query.get_or_404(product_id)
+    wp_sync = WordPressSync()
+    result = wp_sync.sync_single_product(product)
+    
+    if result.get('success'):
+        db.session.commit()
+    
+    return jsonify(result)
+
+
+# ============================================================================
 # ERROR HANDLERS
 # ============================================================================
 

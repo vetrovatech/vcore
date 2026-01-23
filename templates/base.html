@@ -271,6 +271,12 @@
                                 <i class="bi bi-people"></i> Users
                             </a>
                         </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and 'wordpress_sync' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('wordpress_sync_page') }}">
+                                <i class="bi bi-cloud-arrow-up"></i> WordPress Sync
+                            </a>
+                        </li>
                         {% endif %}
                     </ul>
                 </div>

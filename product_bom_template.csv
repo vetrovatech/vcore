@@ -1,0 +1,383 @@
+product_id,product_name,category,bom_type,component_name,unit,quantity_per_unit,cost_per_unit,notes
+15,Home Glass Door,Decorative Glass Door,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+15,Home Glass Door,Decorative Glass Door,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+15,Home Glass Door,Decorative Glass Door,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+15,Home Glass Door,Decorative Glass Door,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+18,Shower Glass Door,Decorative Glass Door,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+18,Shower Glass Door,Decorative Glass Door,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+18,Shower Glass Door,Decorative Glass Door,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+18,Shower Glass Door,Decorative Glass Door,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+16,Toughened Glass Door,Decorative Glass Door,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+16,Toughened Glass Door,Decorative Glass Door,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+16,Toughened Glass Door,Decorative Glass Door,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+16,Toughened Glass Door,Decorative Glass Door,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+13,10mm Frosted Glass,Etched Glass,Etched/Frosted Glass,Float Glass,sqft,1.0,0,Raw glass
+13,10mm Frosted Glass,Etched Glass,Etched/Frosted Glass,Acid/Sandblasting Material,sqft,1.0,0,Processing material
+13,10mm Frosted Glass,Etched Glass,Etched/Frosted Glass,Labor - Etching,hrs,0,0,Processing time
+13,10mm Frosted Glass,Etched Glass,Etched/Frosted Glass,Electricity - Tempering,unit,1.0,0,If toughened
+12,Acid Etched Glass,Etched Glass,Etched/Frosted Glass,Float Glass,sqft,1.0,0,Raw glass
+12,Acid Etched Glass,Etched Glass,Etched/Frosted Glass,Acid/Sandblasting Material,sqft,1.0,0,Processing material
+12,Acid Etched Glass,Etched Glass,Etched/Frosted Glass,Labor - Etching,hrs,0,0,Processing time
+12,Acid Etched Glass,Etched Glass,Etched/Frosted Glass,Electricity - Tempering,unit,1.0,0,If toughened
+14,Designed Etched Glass,Etched Glass,Etched/Frosted Glass,Float Glass,sqft,1.0,0,Raw glass
+14,Designed Etched Glass,Etched Glass,Etched/Frosted Glass,Acid/Sandblasting Material,sqft,1.0,0,Processing material
+14,Designed Etched Glass,Etched Glass,Etched/Frosted Glass,Labor - Etching,hrs,0,0,Processing time
+14,Designed Etched Glass,Etched Glass,Etched/Frosted Glass,Electricity - Tempering,unit,1.0,0,If toughened
+11,Sandblasted Etched Glass,Etched Glass,Etched/Frosted Glass,Float Glass,sqft,1.0,0,Raw glass
+11,Sandblasted Etched Glass,Etched Glass,Etched/Frosted Glass,Acid/Sandblasting Material,sqft,1.0,0,Processing material
+11,Sandblasted Etched Glass,Etched Glass,Etched/Frosted Glass,Labor - Etching,hrs,0,0,Processing time
+11,Sandblasted Etched Glass,Etched Glass,Etched/Frosted Glass,Electricity - Tempering,unit,1.0,0,If toughened
+10,Clear Float Glass,Float Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+10,Clear Float Glass,Float Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+10,Clear Float Glass,Float Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+10,Clear Float Glass,Float Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+42,8mm Black Fluted Glass,Fluted Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+42,8mm Black Fluted Glass,Fluted Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+42,8mm Black Fluted Glass,Fluted Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+42,8mm Black Fluted Glass,Fluted Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+41,Fluted Glass,Fluted Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+41,Fluted Glass,Fluted Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+41,Fluted Glass,Fluted Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+41,Fluted Glass,Fluted Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+51,ACP Glass Cladding Glazing Service,Glass Glazing Service,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+51,ACP Glass Cladding Glazing Service,Glass Glazing Service,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+51,ACP Glass Cladding Glazing Service,Glass Glazing Service,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+51,ACP Glass Cladding Glazing Service,Glass Glazing Service,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+49,Building Stick Structural Glass Glazing Service,Glass Glazing Service,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+49,Building Stick Structural Glass Glazing Service,Glass Glazing Service,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+49,Building Stick Structural Glass Glazing Service,Glass Glazing Service,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+49,Building Stick Structural Glass Glazing Service,Glass Glazing Service,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+52,Commercial Curtain Wall Glazing Service,Glass Glazing Service,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+52,Commercial Curtain Wall Glazing Service,Glass Glazing Service,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+52,Commercial Curtain Wall Glazing Service,Glass Glazing Service,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+52,Commercial Curtain Wall Glazing Service,Glass Glazing Service,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+48,Glass Spider Glazing Service,Glass Glazing Service,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+48,Glass Spider Glazing Service,Glass Glazing Service,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+48,Glass Spider Glazing Service,Glass Glazing Service,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+48,Glass Spider Glazing Service,Glass Glazing Service,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+50,Toughened Glass Glazing Service,Glass Glazing Service,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+50,Toughened Glass Glazing Service,Glass Glazing Service,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+50,Toughened Glass Glazing Service,Glass Glazing Service,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+50,Toughened Glass Glazing Service,Glass Glazing Service,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+60,12 mm Toughened Glass Partitions,Glass Partition,Glass Partition,Toughened Glass,sqft,0,0,Glass panels
+60,12 mm Toughened Glass Partitions,Glass Partition,Glass Partition,Aluminum U-Channel (Top),ft,0,0,Top track
+60,12 mm Toughened Glass Partitions,Glass Partition,Glass Partition,Aluminum U-Channel (Bottom),ft,0,0,Bottom track
+60,12 mm Toughened Glass Partitions,Glass Partition,Glass Partition,Rubber Gasket,ft,0,0,Glass support
+60,12 mm Toughened Glass Partitions,Glass Partition,Glass Partition,Patch Fittings,set,0,0,If frameless
+60,12 mm Toughened Glass Partitions,Glass Partition,Glass Partition,Silicone Sealant,tube,1,0,Installation
+60,12 mm Toughened Glass Partitions,Glass Partition,Glass Partition,Labor - Installation,hrs,0,0,On-site work
+56,Frameless Glass Partitions,Glass Partition,Glass Partition,Toughened Glass,sqft,0,0,Glass panels
+56,Frameless Glass Partitions,Glass Partition,Glass Partition,Aluminum U-Channel (Top),ft,0,0,Top track
+56,Frameless Glass Partitions,Glass Partition,Glass Partition,Aluminum U-Channel (Bottom),ft,0,0,Bottom track
+56,Frameless Glass Partitions,Glass Partition,Glass Partition,Rubber Gasket,ft,0,0,Glass support
+56,Frameless Glass Partitions,Glass Partition,Glass Partition,Patch Fittings,set,0,0,If frameless
+56,Frameless Glass Partitions,Glass Partition,Glass Partition,Silicone Sealant,tube,1,0,Installation
+56,Frameless Glass Partitions,Glass Partition,Glass Partition,Labor - Installation,hrs,0,0,On-site work
+61,Modular Office Partition,Glass Partition,Glass Partition,Toughened Glass,sqft,0,0,Glass panels
+61,Modular Office Partition,Glass Partition,Glass Partition,Aluminum U-Channel (Top),ft,0,0,Top track
+61,Modular Office Partition,Glass Partition,Glass Partition,Aluminum U-Channel (Bottom),ft,0,0,Bottom track
+61,Modular Office Partition,Glass Partition,Glass Partition,Rubber Gasket,ft,0,0,Glass support
+61,Modular Office Partition,Glass Partition,Glass Partition,Patch Fittings,set,0,0,If frameless
+61,Modular Office Partition,Glass Partition,Glass Partition,Silicone Sealant,tube,1,0,Installation
+61,Modular Office Partition,Glass Partition,Glass Partition,Labor - Installation,hrs,0,0,On-site work
+62,Office Glass Partition,Glass Partition,Glass Partition,Toughened Glass,sqft,0,0,Glass panels
+62,Office Glass Partition,Glass Partition,Glass Partition,Aluminum U-Channel (Top),ft,0,0,Top track
+62,Office Glass Partition,Glass Partition,Glass Partition,Aluminum U-Channel (Bottom),ft,0,0,Bottom track
+62,Office Glass Partition,Glass Partition,Glass Partition,Rubber Gasket,ft,0,0,Glass support
+62,Office Glass Partition,Glass Partition,Glass Partition,Patch Fittings,set,0,0,If frameless
+62,Office Glass Partition,Glass Partition,Glass Partition,Silicone Sealant,tube,1,0,Installation
+62,Office Glass Partition,Glass Partition,Glass Partition,Labor - Installation,hrs,0,0,On-site work
+57,Toughened Interior Glass Partition,Glass Partition,Glass Partition,Toughened Glass,sqft,0,0,Glass panels
+57,Toughened Interior Glass Partition,Glass Partition,Glass Partition,Aluminum U-Channel (Top),ft,0,0,Top track
+57,Toughened Interior Glass Partition,Glass Partition,Glass Partition,Aluminum U-Channel (Bottom),ft,0,0,Bottom track
+57,Toughened Interior Glass Partition,Glass Partition,Glass Partition,Rubber Gasket,ft,0,0,Glass support
+57,Toughened Interior Glass Partition,Glass Partition,Glass Partition,Patch Fittings,set,0,0,If frameless
+57,Toughened Interior Glass Partition,Glass Partition,Glass Partition,Silicone Sealant,tube,1,0,Installation
+57,Toughened Interior Glass Partition,Glass Partition,Glass Partition,Labor - Installation,hrs,0,0,On-site work
+55,Toughened Office Glass Partition,Glass Partition,Glass Partition,Toughened Glass,sqft,0,0,Glass panels
+55,Toughened Office Glass Partition,Glass Partition,Glass Partition,Aluminum U-Channel (Top),ft,0,0,Top track
+55,Toughened Office Glass Partition,Glass Partition,Glass Partition,Aluminum U-Channel (Bottom),ft,0,0,Bottom track
+55,Toughened Office Glass Partition,Glass Partition,Glass Partition,Rubber Gasket,ft,0,0,Glass support
+55,Toughened Office Glass Partition,Glass Partition,Glass Partition,Patch Fittings,set,0,0,If frameless
+55,Toughened Office Glass Partition,Glass Partition,Glass Partition,Silicone Sealant,tube,1,0,Installation
+55,Toughened Office Glass Partition,Glass Partition,Glass Partition,Labor - Installation,hrs,0,0,On-site work
+53,Wall Glass Partition,Glass Partition,Glass Partition,Toughened Glass,sqft,0,0,Glass panels
+53,Wall Glass Partition,Glass Partition,Glass Partition,Aluminum U-Channel (Top),ft,0,0,Top track
+53,Wall Glass Partition,Glass Partition,Glass Partition,Aluminum U-Channel (Bottom),ft,0,0,Bottom track
+53,Wall Glass Partition,Glass Partition,Glass Partition,Rubber Gasket,ft,0,0,Glass support
+53,Wall Glass Partition,Glass Partition,Glass Partition,Patch Fittings,set,0,0,If frameless
+53,Wall Glass Partition,Glass Partition,Glass Partition,Silicone Sealant,tube,1,0,Installation
+53,Wall Glass Partition,Glass Partition,Glass Partition,Labor - Installation,hrs,0,0,On-site work
+74,Curved Glass Railing,Glass Railing,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+74,Curved Glass Railing,Glass Railing,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+74,Curved Glass Railing,Glass Railing,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+74,Curved Glass Railing,Glass Railing,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+71,Glass Grill Railing,Glass Railing,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+71,Glass Grill Railing,Glass Railing,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+71,Glass Grill Railing,Glass Railing,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+71,Glass Grill Railing,Glass Railing,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+70,Glass Stairs Railing,Glass Railing,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+70,Glass Stairs Railing,Glass Railing,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+70,Glass Stairs Railing,Glass Railing,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+70,Glass Stairs Railing,Glass Railing,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+73,Residential Stainless Steel Glass Railing,Glass Railing,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+73,Residential Stainless Steel Glass Railing,Glass Railing,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+73,Residential Stainless Steel Glass Railing,Glass Railing,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+73,Residential Stainless Steel Glass Railing,Glass Railing,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+72,Solid Glass Railing,Glass Railing,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+72,Solid Glass Railing,Glass Railing,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+72,Solid Glass Railing,Glass Railing,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+72,Solid Glass Railing,Glass Railing,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+83,Glass Table Top,Glass Top,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+83,Glass Table Top,Glass Top,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+83,Glass Table Top,Glass Top,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+83,Glass Table Top,Glass Top,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+44,Commercial Building Toughened Glass Work,Glass Work,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+44,Commercial Building Toughened Glass Work,Glass Work,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+44,Commercial Building Toughened Glass Work,Glass Work,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+44,Commercial Building Toughened Glass Work,Glass Work,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+47,Glass Paragola Skylight,Glass Work,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+47,Glass Paragola Skylight,Glass Work,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+47,Glass Paragola Skylight,Glass Work,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+47,Glass Paragola Skylight,Glass Work,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+43,Interior Glass Work,Glass Work,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+43,Interior Glass Work,Glass Work,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+43,Interior Glass Work,Glass Work,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+43,Interior Glass Work,Glass Work,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+46,Toughened Glass Roofing,Glass Work,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+46,Toughened Glass Roofing,Glass Work,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+46,Toughened Glass Roofing,Glass Work,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+46,Toughened Glass Roofing,Glass Work,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+45,Toughened Glass Work,Glass Work,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+45,Toughened Glass Work,Glass Work,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+45,Toughened Glass Work,Glass Work,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+45,Toughened Glass Work,Glass Work,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+33,Double Glazing Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Toughened Glass (Outer),sqft,1.0,0,Outer pane
+33,Double Glazing Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Toughened Glass (Inner),sqft,1.0,0,Inner pane
+33,Double Glazing Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Aluminum Spacer,ft,0,0,Perimeter length
+33,Double Glazing Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Desiccant,gm,0,0,Moisture absorber
+33,Double Glazing Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Primary Sealant (Butyl),ft,0,0,Inner seal
+33,Double Glazing Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Secondary Sealant (Silicone),ft,0,0,Outer seal
+33,Double Glazing Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Inert Gas (Argon),sqft,1.0,0,Gas filling
+33,Double Glazing Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Labor - Assembly,hrs,0,0,Assembly time
+33,Double Glazing Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Electricity,unit,1.0,0,Processing
+34,Insulated Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Toughened Glass (Outer),sqft,1.0,0,Outer pane
+34,Insulated Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Toughened Glass (Inner),sqft,1.0,0,Inner pane
+34,Insulated Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Aluminum Spacer,ft,0,0,Perimeter length
+34,Insulated Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Desiccant,gm,0,0,Moisture absorber
+34,Insulated Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Primary Sealant (Butyl),ft,0,0,Inner seal
+34,Insulated Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Secondary Sealant (Silicone),ft,0,0,Outer seal
+34,Insulated Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Inert Gas (Argon),sqft,1.0,0,Gas filling
+34,Insulated Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Labor - Assembly,hrs,0,0,Assembly time
+34,Insulated Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Electricity,unit,1.0,0,Processing
+32,Sound Proof Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Toughened Glass (Outer),sqft,1.0,0,Outer pane
+32,Sound Proof Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Toughened Glass (Inner),sqft,1.0,0,Inner pane
+32,Sound Proof Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Aluminum Spacer,ft,0,0,Perimeter length
+32,Sound Proof Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Desiccant,gm,0,0,Moisture absorber
+32,Sound Proof Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Primary Sealant (Butyl),ft,0,0,Inner seal
+32,Sound Proof Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Secondary Sealant (Silicone),ft,0,0,Outer seal
+32,Sound Proof Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Inert Gas (Argon),sqft,1.0,0,Gas filling
+32,Sound Proof Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Labor - Assembly,hrs,0,0,Assembly time
+32,Sound Proof Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Electricity,unit,1.0,0,Processing
+35,Sound Proof Window Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Toughened Glass (Outer),sqft,1.0,0,Outer pane
+35,Sound Proof Window Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Toughened Glass (Inner),sqft,1.0,0,Inner pane
+35,Sound Proof Window Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Aluminum Spacer,ft,0,0,Perimeter length
+35,Sound Proof Window Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Desiccant,gm,0,0,Moisture absorber
+35,Sound Proof Window Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Primary Sealant (Butyl),ft,0,0,Inner seal
+35,Sound Proof Window Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Secondary Sealant (Silicone),ft,0,0,Outer seal
+35,Sound Proof Window Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Inert Gas (Argon),sqft,1.0,0,Gas filling
+35,Sound Proof Window Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Labor - Assembly,hrs,0,0,Assembly time
+35,Sound Proof Window Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Electricity,unit,1.0,0,Processing
+36,Soundproof Toughened Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Toughened Glass (Outer),sqft,1.0,0,Outer pane
+36,Soundproof Toughened Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Toughened Glass (Inner),sqft,1.0,0,Inner pane
+36,Soundproof Toughened Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Aluminum Spacer,ft,0,0,Perimeter length
+36,Soundproof Toughened Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Desiccant,gm,0,0,Moisture absorber
+36,Soundproof Toughened Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Primary Sealant (Butyl),ft,0,0,Inner seal
+36,Soundproof Toughened Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Secondary Sealant (Silicone),ft,0,0,Outer seal
+36,Soundproof Toughened Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Inert Gas (Argon),sqft,1.0,0,Gas filling
+36,Soundproof Toughened Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Labor - Assembly,hrs,0,0,Assembly time
+36,Soundproof Toughened Glass,Insulated Glass Sound Proof Gla,DGU/Insulated Glass,Electricity,unit,1.0,0,Processing
+69,Designer Lacquered Glass,Lacquered Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+69,Designer Lacquered Glass,Lacquered Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+69,Designer Lacquered Glass,Lacquered Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+69,Designer Lacquered Glass,Lacquered Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+67,Lacquered Glass With Aluminium Shutter,Lacquered Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+67,Lacquered Glass With Aluminium Shutter,Lacquered Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+67,Lacquered Glass With Aluminium Shutter,Lacquered Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+67,Lacquered Glass With Aluminium Shutter,Lacquered Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+68,Saint Gobain Lacquered Glass,Lacquered Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+68,Saint Gobain Lacquered Glass,Lacquered Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+68,Saint Gobain Lacquered Glass,Lacquered Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+68,Saint Gobain Lacquered Glass,Lacquered Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+40,Fabric Laminated Glass,Laminated Glass,Laminated Glass,Toughened Glass (Top),sqft,1.0,0,Top layer
+40,Fabric Laminated Glass,Laminated Glass,Laminated Glass,Toughened Glass (Bottom),sqft,1.0,0,Bottom layer
+40,Fabric Laminated Glass,Laminated Glass,Laminated Glass,PVB Interlayer,sqft,1.0,0,Lamination film
+40,Fabric Laminated Glass,Laminated Glass,Laminated Glass,Labor - Lamination,hrs,0,0,Processing time
+40,Fabric Laminated Glass,Laminated Glass,Laminated Glass,Electricity - Autoclave,unit,1.0,0,Autoclave processing
+37,Laminated Glass,Laminated Glass,Laminated Glass,Toughened Glass (Top),sqft,1.0,0,Top layer
+37,Laminated Glass,Laminated Glass,Laminated Glass,Toughened Glass (Bottom),sqft,1.0,0,Bottom layer
+37,Laminated Glass,Laminated Glass,Laminated Glass,PVB Interlayer,sqft,1.0,0,Lamination film
+37,Laminated Glass,Laminated Glass,Laminated Glass,Labor - Lamination,hrs,0,0,Processing time
+37,Laminated Glass,Laminated Glass,Laminated Glass,Electricity - Autoclave,unit,1.0,0,Autoclave processing
+39,Pvb Laminated Glass,Laminated Glass,Laminated Glass,Toughened Glass (Top),sqft,1.0,0,Top layer
+39,Pvb Laminated Glass,Laminated Glass,Laminated Glass,Toughened Glass (Bottom),sqft,1.0,0,Bottom layer
+39,Pvb Laminated Glass,Laminated Glass,Laminated Glass,PVB Interlayer,sqft,1.0,0,Lamination film
+39,Pvb Laminated Glass,Laminated Glass,Laminated Glass,Labor - Lamination,hrs,0,0,Processing time
+39,Pvb Laminated Glass,Laminated Glass,Laminated Glass,Electricity - Autoclave,unit,1.0,0,Autoclave processing
+38,Sandwich Glass,Laminated Glass,Laminated Glass,Toughened Glass (Top),sqft,1.0,0,Top layer
+38,Sandwich Glass,Laminated Glass,Laminated Glass,Toughened Glass (Bottom),sqft,1.0,0,Bottom layer
+38,Sandwich Glass,Laminated Glass,Laminated Glass,PVB Interlayer,sqft,1.0,0,Lamination film
+38,Sandwich Glass,Laminated Glass,Laminated Glass,Labor - Lamination,hrs,0,0,Processing time
+38,Sandwich Glass,Laminated Glass,Laminated Glass,Electricity - Autoclave,unit,1.0,0,Autoclave processing
+63,6mm LED Mirror Glass,Mirror Glass,Mirror Glass,Float Glass,sqft,1.0,0,Raw glass
+63,6mm LED Mirror Glass,Mirror Glass,Mirror Glass,Silver Coating,sqft,1.0,0,Reflective coating
+63,6mm LED Mirror Glass,Mirror Glass,Mirror Glass,Protective Paint,sqft,1.0,0,Back coating
+63,6mm LED Mirror Glass,Mirror Glass,Mirror Glass,Labor - Processing,hrs,0,0,Coating time
+65,LED Touch Sensor Mirror,Mirror Glass,Mirror Glass,Float Glass,sqft,1.0,0,Raw glass
+65,LED Touch Sensor Mirror,Mirror Glass,Mirror Glass,Silver Coating,sqft,1.0,0,Reflective coating
+65,LED Touch Sensor Mirror,Mirror Glass,Mirror Glass,Protective Paint,sqft,1.0,0,Back coating
+65,LED Touch Sensor Mirror,Mirror Glass,Mirror Glass,Labor - Processing,hrs,0,0,Coating time
+64,mm LED Decorative Wall Mirror Glass,Mirror Glass,Mirror Glass,Float Glass,sqft,1.0,0,Raw glass
+64,mm LED Decorative Wall Mirror Glass,Mirror Glass,Mirror Glass,Silver Coating,sqft,1.0,0,Reflective coating
+64,mm LED Decorative Wall Mirror Glass,Mirror Glass,Mirror Glass,Protective Paint,sqft,1.0,0,Back coating
+64,mm LED Decorative Wall Mirror Glass,Mirror Glass,Mirror Glass,Labor - Processing,hrs,0,0,Coating time
+66,Printed Glass,Printed Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+66,Printed Glass,Printed Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+66,Printed Glass,Printed Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+66,Printed Glass,Printed Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+7,12mm Glass Shower Partition,Shower Enclosures,Shower Enclosure,Toughened Glass,sqft,0,0,Glass panels
+7,12mm Glass Shower Partition,Shower Enclosures,Shower Enclosure,Aluminum Profile,ft,0,0,Frame
+7,12mm Glass Shower Partition,Shower Enclosures,Shower Enclosure,Hinges (SS304),pcs,0,0,Door hinges
+7,12mm Glass Shower Partition,Shower Enclosures,Shower Enclosure,Handle,pcs,1,0,Door handle
+7,12mm Glass Shower Partition,Shower Enclosures,Shower Enclosure,Rubber Gasket,ft,0,0,Sealing
+7,12mm Glass Shower Partition,Shower Enclosures,Shower Enclosure,Silicone Sealant,tube,1,0,Installation
+7,12mm Glass Shower Partition,Shower Enclosures,Shower Enclosure,Labor - Fabrication,hrs,0,0,Assembly
+7,12mm Glass Shower Partition,Shower Enclosures,Shower Enclosure,Labor - Installation,hrs,0,0,On-site installation
+5,8mm Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Toughened Glass,sqft,0,0,Glass panels
+5,8mm Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Aluminum Profile,ft,0,0,Frame
+5,8mm Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Hinges (SS304),pcs,0,0,Door hinges
+5,8mm Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Handle,pcs,1,0,Door handle
+5,8mm Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Rubber Gasket,ft,0,0,Sealing
+5,8mm Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Silicone Sealant,tube,1,0,Installation
+5,8mm Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Fabrication,hrs,0,0,Assembly
+5,8mm Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Installation,hrs,0,0,On-site installation
+3,Bathroom Shower Enclosure,Shower Enclosures,Shower Enclosure,Toughened Glass,sqft,0,0,Glass panels
+3,Bathroom Shower Enclosure,Shower Enclosures,Shower Enclosure,Aluminum Profile,ft,0,0,Frame
+3,Bathroom Shower Enclosure,Shower Enclosures,Shower Enclosure,Hinges (SS304),pcs,0,0,Door hinges
+3,Bathroom Shower Enclosure,Shower Enclosures,Shower Enclosure,Handle,pcs,1,0,Door handle
+3,Bathroom Shower Enclosure,Shower Enclosures,Shower Enclosure,Rubber Gasket,ft,0,0,Sealing
+3,Bathroom Shower Enclosure,Shower Enclosures,Shower Enclosure,Silicone Sealant,tube,1,0,Installation
+3,Bathroom Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Fabrication,hrs,0,0,Assembly
+3,Bathroom Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Installation,hrs,0,0,On-site installation
+6,Bi Fold Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Toughened Glass,sqft,0,0,Glass panels
+6,Bi Fold Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Aluminum Profile,ft,0,0,Frame
+6,Bi Fold Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Hinges (SS304),pcs,0,0,Door hinges
+6,Bi Fold Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Handle,pcs,1,0,Door handle
+6,Bi Fold Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Rubber Gasket,ft,0,0,Sealing
+6,Bi Fold Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Silicone Sealant,tube,1,0,Installation
+6,Bi Fold Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Fabrication,hrs,0,0,Assembly
+6,Bi Fold Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Installation,hrs,0,0,On-site installation
+2,Corner Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Toughened Glass,sqft,0,0,Glass panels
+2,Corner Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Aluminum Profile,ft,0,0,Frame
+2,Corner Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Hinges (SS304),pcs,0,0,Door hinges
+2,Corner Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Handle,pcs,1,0,Door handle
+2,Corner Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Rubber Gasket,ft,0,0,Sealing
+2,Corner Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Silicone Sealant,tube,1,0,Installation
+2,Corner Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Fabrication,hrs,0,0,Assembly
+2,Corner Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Installation,hrs,0,0,On-site installation
+9,Frameless Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Toughened Glass,sqft,0,0,Glass panels
+9,Frameless Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Aluminum Profile,ft,0,0,Frame
+9,Frameless Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Hinges (SS304),pcs,0,0,Door hinges
+9,Frameless Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Handle,pcs,1,0,Door handle
+9,Frameless Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Rubber Gasket,ft,0,0,Sealing
+9,Frameless Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Silicone Sealant,tube,1,0,Installation
+9,Frameless Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Fabrication,hrs,0,0,Assembly
+9,Frameless Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Installation,hrs,0,0,On-site installation
+1,Glass Shower Cubicles,Shower Enclosures,Shower Enclosure,Toughened Glass,sqft,0,0,Glass panels
+1,Glass Shower Cubicles,Shower Enclosures,Shower Enclosure,Aluminum Profile,ft,0,0,Frame
+1,Glass Shower Cubicles,Shower Enclosures,Shower Enclosure,Hinges (SS304),pcs,0,0,Door hinges
+1,Glass Shower Cubicles,Shower Enclosures,Shower Enclosure,Handle,pcs,1,0,Door handle
+1,Glass Shower Cubicles,Shower Enclosures,Shower Enclosure,Rubber Gasket,ft,0,0,Sealing
+1,Glass Shower Cubicles,Shower Enclosures,Shower Enclosure,Silicone Sealant,tube,1,0,Installation
+1,Glass Shower Cubicles,Shower Enclosures,Shower Enclosure,Labor - Fabrication,hrs,0,0,Assembly
+1,Glass Shower Cubicles,Shower Enclosures,Shower Enclosure,Labor - Installation,hrs,0,0,On-site installation
+8,Sliding Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Toughened Glass,sqft,0,0,Glass panels
+8,Sliding Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Aluminum Profile,ft,0,0,Frame
+8,Sliding Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Hinges (SS304),pcs,0,0,Door hinges
+8,Sliding Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Handle,pcs,1,0,Door handle
+8,Sliding Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Rubber Gasket,ft,0,0,Sealing
+8,Sliding Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Silicone Sealant,tube,1,0,Installation
+8,Sliding Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Fabrication,hrs,0,0,Assembly
+8,Sliding Door Glass Shower Enclosure,Shower Enclosures,Shower Enclosure,Labor - Installation,hrs,0,0,On-site installation
+4,Sliding Shower With Flutad Glass,Shower Enclosures,Shower Enclosure,Toughened Glass,sqft,0,0,Glass panels
+4,Sliding Shower With Flutad Glass,Shower Enclosures,Shower Enclosure,Aluminum Profile,ft,0,0,Frame
+4,Sliding Shower With Flutad Glass,Shower Enclosures,Shower Enclosure,Hinges (SS304),pcs,0,0,Door hinges
+4,Sliding Shower With Flutad Glass,Shower Enclosures,Shower Enclosure,Handle,pcs,1,0,Door handle
+4,Sliding Shower With Flutad Glass,Shower Enclosures,Shower Enclosure,Rubber Gasket,ft,0,0,Sealing
+4,Sliding Shower With Flutad Glass,Shower Enclosures,Shower Enclosure,Silicone Sealant,tube,1,0,Installation
+4,Sliding Shower With Flutad Glass,Shower Enclosures,Shower Enclosure,Labor - Fabrication,hrs,0,0,Assembly
+4,Sliding Shower With Flutad Glass,Shower Enclosures,Shower Enclosure,Labor - Installation,hrs,0,0,On-site installation
+79,Automatic Sensor Glass Door,Sliding Door,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+79,Automatic Sensor Glass Door,Sliding Door,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+79,Automatic Sensor Glass Door,Sliding Door,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+79,Automatic Sensor Glass Door,Sliding Door,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+75,Automatic Sliding Door,Sliding Door,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+75,Automatic Sliding Door,Sliding Door,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+75,Automatic Sliding Door,Sliding Door,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+75,Automatic Sliding Door,Sliding Door,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+82,Plain Glass Doors,Sliding Door,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+82,Plain Glass Doors,Sliding Door,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+82,Plain Glass Doors,Sliding Door,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+82,Plain Glass Doors,Sliding Door,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+30,10mm Toughened Glass,Transparent Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+30,10mm Toughened Glass,Transparent Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+30,10mm Toughened Glass,Transparent Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+30,10mm Toughened Glass,Transparent Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+27,12mm Laminated Toughened Glass,Transparent Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+27,12mm Laminated Toughened Glass,Transparent Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+27,12mm Laminated Toughened Glass,Transparent Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+27,12mm Laminated Toughened Glass,Transparent Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+29,15mm Toughened Glass,Transparent Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+29,15mm Toughened Glass,Transparent Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+29,15mm Toughened Glass,Transparent Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+29,15mm Toughened Glass,Transparent Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+31,19 mm Toughened Glass,Transparent Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+31,19 mm Toughened Glass,Transparent Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+31,19 mm Toughened Glass,Transparent Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+31,19 mm Toughened Glass,Transparent Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+26,Tempered Glass,Transparent Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+26,Tempered Glass,Transparent Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+26,Tempered Glass,Transparent Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+26,Tempered Glass,Transparent Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+28,Toughened Safety Glass,Transparent Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+28,Toughened Safety Glass,Transparent Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+28,Toughened Safety Glass,Transparent Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+28,Toughened Safety Glass,Transparent Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+25,Transparent Toughened Glass,Transparent Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+25,Transparent Toughened Glass,Transparent Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+25,Transparent Toughened Glass,Transparent Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+25,Transparent Toughened Glass,Transparent Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+21,Modular UPVC Sliding Window,UPVC Doors And Windows,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+21,Modular UPVC Sliding Window,UPVC Doors And Windows,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+21,Modular UPVC Sliding Window,UPVC Doors And Windows,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+21,Modular UPVC Sliding Window,UPVC Doors And Windows,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+23,UPVC 3 Track Sliding Window,UPVC Doors And Windows,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+23,UPVC 3 Track Sliding Window,UPVC Doors And Windows,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+23,UPVC 3 Track Sliding Window,UPVC Doors And Windows,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+23,UPVC 3 Track Sliding Window,UPVC Doors And Windows,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+20,UPVC Doors And Windows,UPVC Doors And Windows,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+20,UPVC Doors And Windows,UPVC Doors And Windows,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+20,UPVC Doors And Windows,UPVC Doors And Windows,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+20,UPVC Doors And Windows,UPVC Doors And Windows,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+22,UPVC Sliding Glass Window,UPVC Doors And Windows,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+22,UPVC Sliding Glass Window,UPVC Doors And Windows,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+22,UPVC Sliding Glass Window,UPVC Doors And Windows,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+22,UPVC Sliding Glass Window,UPVC Doors And Windows,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+24,Upvc Window Glass,UPVC Doors And Windows,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+24,Upvc Window Glass,UPVC Doors And Windows,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+24,Upvc Window Glass,UPVC Doors And Windows,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+24,Upvc Window Glass,UPVC Doors And Windows,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
+19,Designer Window Glass,Window Glass,Toughened Glass,Float Glass,sqft,1.0,0,Raw glass
+19,Designer Window Glass,Window Glass,Toughened Glass,Labor - Cutting,hrs,0,0,Cutting time
+19,Designer Window Glass,Window Glass,Toughened Glass,Labor - Edging,hrs,0,0,Edge polishing
+19,Designer Window Glass,Window Glass,Toughened Glass,Electricity - Tempering,unit,1.0,0,Furnace processing
