@@ -1038,8 +1038,12 @@ def wordpress_sync_all():
     """Sync all products to WordPress"""
     from utils.wordpress_sync import WordPressSync
     
+    # Check if incremental sync is requested (default: True)
+    data = request.get_json() or {}
+    incremental = data.get('incremental', True)
+    
     wp_sync = WordPressSync()
-    result = wp_sync.sync_all_products(db.session)
+    result = wp_sync.sync_all_products(db.session, incremental=incremental)
     
     return jsonify(result)
 

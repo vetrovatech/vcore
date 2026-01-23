@@ -69,7 +69,7 @@
                 </div>
                 <div class="card-body">
                     <div class="row">
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <div class="card border-primary">
                                 <div class="card-body text-center">
                                     <i class="fas fa-folder-plus fa-3x text-primary mb-3"></i>
@@ -81,14 +81,28 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <div class="card border-success">
                                 <div class="card-body text-center">
-                                    <i class="fas fa-sync fa-3x text-success mb-3"></i>
-                                    <h5>Sync All Products</h5>
-                                    <p class="text-muted">Sync all products to WordPress (may take a few minutes)</p>
-                                    <button class="btn btn-success btn-lg" onclick="syncAllProducts()" id="sync-btn">
-                                        <i class="fas fa-cloud-upload-alt"></i> Sync to WordPress
+                                    <i class="fas fa-bolt fa-3x text-success mb-3"></i>
+                                    <h5>Quick Sync</h5>
+                                    <p class="text-muted">Sync only changed products (fast, recommended)</p>
+                                    <button class="btn btn-success btn-lg" onclick="syncProducts(true)"
+                                        id="sync-btn-incremental">
+                                        <i class="fas fa-sync-alt"></i> Quick Sync
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border-warning">
+                                <div class="card-body text-center">
+                                    <i class="fas fa-sync fa-3x text-warning mb-3"></i>
+                                    <h5>Full Sync</h5>
+                                    <p class="text-muted">Sync all products (slow, 10-15 min)</p>
+                                    <button class="btn btn-warning btn-lg" onclick="syncProducts(false)"
+                                        id="sync-btn-full">
+                                        <i class="fas fa-cloud-upload-alt"></i> Full Sync
                                     </button>
                                 </div>
                             </div>
@@ -213,18 +227,37 @@
             });
     }
 
-    function syncAllProducts() {
-        if (!confirm('This will sync all products to WordPress. This may take several minutes. Continue?')) {
-            return;
+    function syncProducts(incremental = true) {
+        // Show appropriate confirmation dialog
+        const syncType = incremental ? 'Quick Sync' : 'Full Sync';
+        const timeEstimate = incremental ? '1-5 minutes' : '10-15 minutes';
+        const description = incremental ?
+            'This will sync only products that have changed since the last sync.' :
+            'This will sync ALL 74 products to WordPress.';
+
+        const confirmed = confirm(
+            `⚠️ WordPress ${syncType}\n\n` +
+            `${description}\n\n` +
+            `⏱️ Estimated Time: ${timeEstimate}\n\n` +
+            'Do you want to continue?'
+        );
+
+        if (!confirmed) {
+            return; // User cancelled
         }
 
-        const syncBtn = document.getElementById('sync-btn');
+        const syncBtnId = incremental ? 'sync-btn-incremental' : 'sync-btn-full';
+        const syncBtn = document.getElementById(syncBtnId);
         const progressCard = document.getElementById('progress-card');
         const syncProgress = document.getElementById('sync-progress');
         const progressText = document.getElementById('progress-text');
         const syncStatus = document.getElementById('sync-status');
 
-        syncBtn.disabled = true;
+        // Disable both buttons during sync
+        document.getElementById('sync-btn-incremental').disabled = true;
+        document.getElementById('sync-btn-full').disabled = true;
+
+        syncBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing...';
         progressCard.style.display = 'block';
 
         // Simulate progress
@@ -237,13 +270,14 @@
             }
         }, 1000);
 
-        syncStatus.innerHTML = '<p><i class="fas fa-spinner fa-spin"></i> Syncing products to WordPress...</p>';
+        syncStatus.innerHTML = `<p><i class="fas fa-spinner fa-spin"></i> Running ${syncType}... Please wait, this may take ${timeEstimate}.</p>`;
 
         fetch('/api/wordpress/sync-all', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
-            }
+            },
+            body: JSON.stringify({ incremental: incremental })
         })
             .then(response => response.json())
             .then(data => {
@@ -253,8 +287,14 @@
 
                 setTimeout(() => {
                     progressCard.style.display = 'none';
-                    syncBtn.disabled = false;
-                    showResults(data, 'Sync Complete');
+
+                    // Re-enable buttons
+                    document.getElementById('sync-btn-incremental').disabled = false;
+                    document.getElementById('sync-btn-full').disabled = false;
+                    document.getElementById('sync-btn-incremental').innerHTML = '<i class="fas fa-sync-alt"></i> Quick Sync';
+                    document.getElementById('sync-btn-full').innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Full Sync';
+
+                    showResults(data, `${syncType} Complete`);
 
                     // Refresh stats
                     location.reload();
@@ -263,8 +303,14 @@
             .catch(error => {
                 clearInterval(progressInterval);
                 progressCard.style.display = 'none';
-                syncBtn.disabled = false;
-                showResults({ success: false, message: error.message }, 'Sync Failed');
+
+                // Re-enable buttons
+                document.getElementById('sync-btn-incremental').disabled = false;
+                document.getElementById('sync-btn-full').disabled = false;
+                document.getElementById('sync-btn-incremental').innerHTML = '<i class="fas fa-sync-alt"></i> Quick Sync';
+                document.getElementById('sync-btn-full').innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Full Sync';
+
+                showResults({ success: false, message: error.message }, `${syncType} Failed`);
             });
     }
 

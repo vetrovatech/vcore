@@ -66,18 +66,36 @@ class WordPressSync:
         except Exception as e:
             return {'success': False, 'message': f'Error: {str(e)}'}
     
-    def sync_all_products(self, db_connection) -> Dict:
-        """Sync all active products to WordPress"""
+    def sync_all_products(self, db_connection, incremental=True) -> Dict:
+        """Sync all active products to WordPress
+        
+        Args:
+            db_connection: Database session
+            incremental: If True, only sync products that have changed since last sync
+        """
         from models import Product
         
         try:
-            # Get all active products
-            products = Product.query.filter_by(is_active=True).all()
+            # Get products to sync
+            if incremental:
+                # Only sync products that are new or have been updated since last sync
+                products = Product.query.filter(
+                    Product.is_active == True,
+                    (Product.last_wordpress_sync == None) | 
+                    (Product.updated_at > Product.last_wordpress_sync)
+                ).all()
+            else:
+                # Full sync - all active products
+                products = Product.query.filter_by(is_active=True).all()
             
             if not products:
                 return {
-                    'success': False,
-                    'message': 'No active products found'
+                    'success': True,
+                    'message': 'No products need syncing' if incremental else 'No active products found',
+                    'total_products': 0,
+                    'synced': 0,
+                    'failed': 0,
+                    'skipped': 0
                 }
             
             # Prepare product data
