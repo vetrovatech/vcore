@@ -18,6 +18,7 @@ COPY forms.py .
 COPY config.py .
 COPY utils/ ./utils/
 COPY templates/ ./templates/
+COPY static/ ./static/
 
 # Expose port for Lambda Web Adapter
 ENV PORT=8080
