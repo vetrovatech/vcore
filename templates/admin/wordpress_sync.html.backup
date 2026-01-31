@@ -69,7 +69,7 @@
                 </div>
                 <div class="card-body">
                     <div class="row">
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <div class="card border-primary">
                                 <div class="card-body text-center">
                                     <i class="fas fa-folder-plus fa-3x text-primary mb-3"></i>
@@ -81,38 +81,25 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <div class="card border-success">
                                 <div class="card-body text-center">
-                                    <i class="fas fa-layer-group fa-3x text-success mb-3"></i>
-                                    <h5>Batch Sync</h5>
-                                    <p class="text-muted">Sync in batches of 10 (recommended, safe)</p>
-                                    <button class="btn btn-success btn-lg" onclick="startBatchSync()"
-                                        id="batch-sync-btn">
-                                        <i class="fas fa-sync-alt"></i> Batch Sync
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card border-info">
-                                <div class="card-body text-center">
-                                    <i class="fas fa-bolt fa-3x text-info mb-3"></i>
+                                    <i class="fas fa-bolt fa-3x text-success mb-3"></i>
                                     <h5>Quick Sync</h5>
-                                    <p class="text-muted">Sync only changed products (may timeout)</p>
-                                    <button class="btn btn-info btn-lg" onclick="syncProducts(true)"
+                                    <p class="text-muted">Sync only changed products (fast, recommended)</p>
+                                    <button class="btn btn-success btn-lg" onclick="syncProducts(true)"
                                         id="sync-btn-incremental">
                                         <i class="fas fa-sync-alt"></i> Quick Sync
                                     </button>
                                 </div>
                             </div>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <div class="card border-warning">
                                 <div class="card-body text-center">
                                     <i class="fas fa-sync fa-3x text-warning mb-3"></i>
                                     <h5>Full Sync</h5>
-                                    <p class="text-muted">Sync all products (slow, may timeout)</p>
+                                    <p class="text-muted">Sync all products (slow, 10-15 min)</p>
                                     <button class="btn btn-warning btn-lg" onclick="syncProducts(false)"
                                         id="sync-btn-full">
                                         <i class="fas fa-cloud-upload-alt"></i> Full Sync
@@ -241,62 +228,23 @@
     }
 
     function syncProducts(incremental = true) {
-        if (incremental) {
-            // For incremental sync, first fetch and show changed products
-            fetch('/api/wordpress/changed-products')
-                .then(response => response.json())
-                .then(data => {
-                    if (!data.success) {
-                        alert('Error fetching changed products: ' + (data.message || 'Unknown error'));
-                        return;
-                    }
-
-                    if (data.count === 0) {
-                        alert('✅ All products are up to date!\n\nNo products need syncing.');
-                        return;
-                    }
-
-                    // Build product list for confirmation
-                    let productList = data.products.slice(0, 10).map(p =>
-                        `  • ${p.name} (${p.category})`
-                    ).join('\n');
-
-                    if (data.count > 10) {
-                        productList += `\n  ... and ${data.count - 10} more`;
-                    }
-
-                    const confirmed = confirm(
-                        `📋 Products to Sync: ${data.count}\n\n` +
-                        productList + '\n\n' +
-                        `⏱️ Estimated Time: ${data.count < 5 ? '1-2' : '2-5'} minutes\n\n` +
-                        'Do you want to sync these products?'
-                    );
-
-                    if (confirmed) {
-                        performSync(incremental, data.count);
-                    }
-                })
-                .catch(error => {
-                    alert('Error: ' + error.message);
-                });
-        } else {
-            // For full sync, show standard confirmation
-            const confirmed = confirm(
-                `⚠️ WordPress Full Sync\n\n` +
-                'This will sync ALL 74 products to WordPress.\n\n' +
-                `⏱️ Estimated Time: 10-15 minutes\n\n` +
-                'Do you want to continue?'
-            );
-
-            if (confirmed) {
-                performSync(incremental, 74);
-            }
-        }
-    }
-
-    function performSync(incremental, productCount) {
+        // Show appropriate confirmation dialog
         const syncType = incremental ? 'Quick Sync' : 'Full Sync';
-        const timeEstimate = productCount < 5 ? '1-2 minutes' : (incremental ? '2-5 minutes' : '10-15 minutes');
+        const timeEstimate = incremental ? '1-5 minutes' : '10-15 minutes';
+        const description = incremental ?
+            'This will sync only products that have changed since the last sync.' :
+            'This will sync ALL 74 products to WordPress.';
+
+        const confirmed = confirm(
+            `⚠️ WordPress ${syncType}\n\n` +
+            `${description}\n\n` +
+            `⏱️ Estimated Time: ${timeEstimate}\n\n` +
+            'Do you want to continue?'
+        );
+
+        if (!confirmed) {
+            return; // User cancelled
+        }
 
         const syncBtnId = incremental ? 'sync-btn-incremental' : 'sync-btn-full';
         const syncBtn = document.getElementById(syncBtnId);
@@ -322,7 +270,7 @@
             }
         }, 1000);
 
-        syncStatus.innerHTML = `<p><i class="fas fa-spinner fa-spin"></i> Syncing ${productCount} product${productCount > 1 ? 's' : ''}... Please wait, this may take ${timeEstimate}.</p>`;
+        syncStatus.innerHTML = `<p><i class="fas fa-spinner fa-spin"></i> Running ${syncType}... Please wait, this may take ${timeEstimate}.</p>`;
 
         fetch('/api/wordpress/sync-all', {
             method: 'POST',
@@ -348,9 +296,8 @@
 
                     showResults(data, `${syncType} Complete`);
 
-                    // Don't auto-reload - let user see the results
-                    // They can manually refresh to update stats
-                    // location.reload();
+                    // Refresh stats
+                    location.reload();
                 }, 1000);
             })
             .catch(error => {
@@ -366,7 +313,6 @@
                 showResults({ success: false, message: error.message }, `${syncType} Failed`);
             });
     }
-
 
     function showResults(data, title) {
         const resultsCard = document.getElementById('results-card');
@@ -421,171 +367,6 @@
 
         // Scroll to results
         resultsCard.scrollIntoView({ behavior: 'smooth' });
-    }
-
-    // Batch sync functionality
-    let batchSyncRunning = false;
-    let totalSynced = 0;
-    let totalFailed = 0;
-    let allErrors = [];
-
-    function startBatchSync() {
-        if (batchSyncRunning) {
-            alert('Batch sync is already running!');
-            return;
-        }
-
-        // First, check how many products need syncing
-        fetch('/api/wordpress/changed-products')
-            .then(response => response.json())
-            .then(data => {
-                if (!data.success) {
-                    alert('Error fetching changed products: ' + (data.message || 'Unknown error'));
-                    return;
-                }
-
-                if (data.count === 0) {
-                    alert('✅ All products are up to date!\n\nNo products need syncing.');
-                    return;
-                }
-
-                const confirmed = confirm(
-                    `📋 Products to Sync: ${data.count}\n\n` +
-                    `This will sync products in batches of 10.\n` +
-                    `You can stop at any time.\n\n` +
-                    `⏱️ Estimated Time: ${Math.ceil(data.count / 10)} minutes\n\n` +
-                    'Do you want to start batch sync?'
-                );
-
-                if (confirmed) {
-                    performBatchSync(data.count);
-                }
-            })
-            .catch(error => {
-                alert('Error: ' + error.message);
-            });
-    }
-
-    function performBatchSync(totalPending) {
-        batchSyncRunning = true;
-        totalSynced = 0;
-        totalFailed = 0;
-        allErrors = [];
-
-        const batchBtn = document.getElementById('batch-sync-btn');
-        const progressCard = document.getElementById('progress-card');
-        const syncProgress = document.getElementById('sync-progress');
-        const progressText = document.getElementById('progress-text');
-        const syncStatus = document.getElementById('sync-status');
-
-        // Disable button
-        batchBtn.disabled = true;
-        batchBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing...';
-
-        // Show progress card
-        progressCard.style.display = 'block';
-
-        // Add stop button
-        syncStatus.innerHTML = `
-            <p><i class="fas fa-spinner fa-spin"></i> Syncing products in batches of 10...</p>
-            <p class="mb-2"><strong>Progress:</strong> <span id="batch-progress-text">0 / ${totalPending}</span></p>
-            <button class="btn btn-danger btn-sm" onclick="stopBatchSync()">
-                <i class="fas fa-stop"></i> Stop Sync
-            </button>
-        `;
-
-        syncNextBatch(totalPending);
-    }
-
-    function syncNextBatch(totalPending) {
-        if (!batchSyncRunning) {
-            finishBatchSync(totalPending, true);
-            return;
-        }
-
-        fetch('/api/wordpress/sync-batch', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ batch_size: 10 })
-        })
-            .then(response => response.json())
-            .then(data => {
-                if (!data.success) {
-                    throw new Error(data.message || 'Batch sync failed');
-                }
-
-                // Update totals
-                totalSynced += data.synced;
-                totalFailed += data.failed;
-                if (data.errors && data.errors.length > 0) {
-                    allErrors = allErrors.concat(data.errors);
-                }
-
-                // Update progress
-                const progress = Math.round((totalSynced / totalPending) * 100);
-                document.getElementById('sync-progress').style.width = progress + '%';
-                document.getElementById('progress-text').textContent = progress + '%';
-                document.getElementById('batch-progress-text').textContent = `${totalSynced} / ${totalPending}`;
-
-                // Check if done
-                if (data.remaining === 0) {
-                    finishBatchSync(totalPending, false);
-                } else {
-                    // Continue with next batch
-                    setTimeout(() => syncNextBatch(totalPending), 500);
-                }
-            })
-            .catch(error => {
-                batchSyncRunning = false;
-                document.getElementById('progress-card').style.display = 'none';
-                document.getElementById('batch-sync-btn').disabled = false;
-                document.getElementById('batch-sync-btn').innerHTML = '<i class="fas fa-sync-alt"></i> Batch Sync';
-
-                showResults({
-                    success: false,
-                    message: 'Batch sync failed: ' + error.message
-                }, 'Batch Sync Failed');
-            });
-    }
-
-    function stopBatchSync() {
-        if (confirm('Are you sure you want to stop the batch sync?')) {
-            batchSyncRunning = false;
-        }
-    }
-
-    function finishBatchSync(totalPending, wasStopped) {
-        batchSyncRunning = false;
-
-        // Update progress to 100%
-        const progress = Math.round((totalSynced / totalPending) * 100);
-        document.getElementById('sync-progress').style.width = progress + '%';
-        document.getElementById('progress-text').textContent = progress + '%';
-
-        setTimeout(() => {
-            document.getElementById('progress-card').style.display = 'none';
-            document.getElementById('batch-sync-btn').disabled = false;
-            document.getElementById('batch-sync-btn').innerHTML = '<i class="fas fa-sync-alt"></i> Batch Sync';
-
-            const title = wasStopped ? 'Batch Sync Stopped' : 'Batch Sync Complete';
-            const message = wasStopped
-                ? `Sync stopped by user. Synced ${totalSynced} products before stopping.`
-                : `Successfully synced ${totalSynced} products!`;
-
-            showResults({
-                success: true,
-                message: message,
-                synced: totalSynced,
-                failed: totalFailed,
-                total_products: totalPending,
-                errors: allErrors
-            }, title);
-
-            // Reload page to update stats
-            setTimeout(() => location.reload(), 3000);
-        }, 1000);
     }
 </script>
 {% endblock %}

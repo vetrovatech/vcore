@@ -208,7 +208,7 @@
     <div class="container-fluid">
         <div class="row">
             <!-- Sidebar -->
-            <nav class="col-md-2 d-none d-md-block sidebar p-3" id="sidebar">
+            <nav class="col-md-2 sidebar p-3" id="sidebar">
                 <div class="position-sticky">
                     <ul class="nav flex-column">
                         <li class="nav-item">
@@ -239,6 +239,12 @@
                             <a class="nav-link {% if request.endpoint and 'catalog' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('catalog_list') }}">
                                 <i class="bi bi-grid-3x3-gap"></i> Product Catalog
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and 'quote' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('quotes_list') }}">
+                                <i class="bi bi-file-earmark-text"></i> Quotes
                             </a>
                         </li>
                         <li class="nav-item">

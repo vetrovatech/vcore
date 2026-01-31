@@ -7,7 +7,7 @@ import pymysql
 # Install PyMySQL as MySQLdb for MySQL compatibility
 pymysql.install_as_MySQLdb()
 
-from models import db, User, Project, TaskTemplate, PromotorTask, DailyUpdate, Product
+from models import db, User, Project, TaskTemplate, PromotorTask, DailyUpdate, Product, Quote, QuoteItem
 from config import config
 from forms import (LoginForm, UserForm, ProjectForm, TaskTemplateForm, 
                    TaskAssignmentForm, TaskUpdateForm, DailyUpdateForm, ProductForm)
@@ -1090,6 +1090,409 @@ def wordpress_sync_product(product_id):
         db.session.commit()
     
     return jsonify(result)
+
+
+@app.route('/api/wordpress/sync-batch', methods=['POST'])
+@admin_required
+def wordpress_sync_batch():
+    """Sync a batch of products to WordPress (client-side batching)"""
+    from utils.wordpress_sync import WordPressSync
+    from models import Product
+    
+    # Get batch size from request (default: 10)
+    data = request.get_json() or {}
+    batch_size = data.get('batch_size', 10)
+    
+    # Get products that need syncing
+    products = Product.query.filter(
+        Product.is_active == True,
+        (Product.last_wordpress_sync == None) | 
+        (Product.updated_at > Product.last_wordpress_sync)
+    ).limit(batch_size).all()
+    
+    if not products:
+        return jsonify({
+            'success': True,
+            'message': 'All products are up to date!',
+            'synced': 0,
+            'remaining': 0,
+            'total_pending': 0
+        })
+    
+    # Get total pending count
+    total_pending = Product.query.filter(
+        Product.is_active == True,
+        (Product.last_wordpress_sync == None) | 
+        (Product.updated_at > Product.last_wordpress_sync)
+    ).count()
+    
+    # Sync this batch
+    wp_sync = WordPressSync()
+    synced = 0
+    failed = 0
+    errors = []
+    
+    for product in products:
+        result = wp_sync.sync_single_product(product)
+        if result.get('success'):
+            synced += 1
+            db.session.commit()
+        else:
+            failed += 1
+            errors.append({
+                'product_name': product.product_name,
+                'error': result.get('message', 'Unknown error')
+            })
+    
+    remaining = total_pending - synced
+    
+    return jsonify({
+        'success': True,
+        'synced': synced,
+        'failed': failed,
+        'batch_size': len(products),
+        'remaining': remaining,
+        'total_pending': total_pending,
+        'errors': errors,
+        'message': f'Synced {synced} of {len(products)} products in this batch'
+    })
+
+
+# ============================================================================
+# QUOTE MANAGEMENT ROUTES
+# ============================================================================
+
+@app.route('/quotes')
+@login_required
+def quotes_list():
+    """List all quotes with search and filter"""
+    from datetime import datetime
+    
+    # Get filter parameters
+    search_query = request.args.get('search', '')
+    status_filter = request.args.get('status', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    
+    # Import Quote model
+    from models import Quote
+    
+    # Build query
+    query = Quote.query
+    
+    if search_query:
+        query = query.filter(
+            (Quote.customer_name.ilike(f'%{search_query}%')) |
+            (Quote.quote_number.ilike(f'%{search_query}%'))
+        )
+    
+    if status_filter:
+        query = query.filter_by(status=status_filter)
+    
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, '%Y-%m-%d').date()
+            query = query.filter(Quote.quote_date >= from_date)
+        except ValueError:
+            pass
+    
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, '%Y-%m-%d').date()
+            query = query.filter(Quote.quote_date <= to_date)
+        except ValueError:
+            pass
+    
+    # Get quotes ordered by date (newest first)
+    quotes = query.order_by(Quote.quote_date.desc()).all()
+    
+    return render_template('quotes/list.html',
+                         quotes=quotes,
+                         search_query=search_query,
+                         status_filter=status_filter,
+                         date_from=date_from,
+                         date_to=date_to)
+
+
+@app.route('/quotes/new', methods=['GET', 'POST'])
+@login_required
+def quote_new():
+    """Create new quote"""
+    from models import Quote, QuoteItem
+    from datetime import date, timedelta
+    
+    if request.method == 'POST':
+        # Get form data
+        data = request.form
+        
+        # Generate quote number
+        quote_number = Quote.generate_quote_number()
+        
+        # Parse dates
+        quote_date = datetime.strptime(data.get('quote_date'), '%Y-%m-%d').date()
+        expected_date = datetime.strptime(data.get('expected_date'), '%Y-%m-%d').date() if data.get('expected_date') else None
+        
+        # Create quote
+        quote = Quote(
+            quote_number=quote_number,
+            quote_date=quote_date,
+            expected_date=expected_date,
+            customer_name=data.get('customer_name'),
+            customer_address=data.get('customer_address'),
+            customer_city=data.get('customer_city'),
+            customer_state=data.get('customer_state'),
+            customer_phone=data.get('customer_phone'),
+            customer_email=data.get('customer_email'),
+            invoice_to=data.get('invoice_to'),
+            dispatch_to=data.get('dispatch_to'),
+            self_pickup=bool(data.get('self_pickup')),
+            delivery_charges=float(data.get('delivery_charges', 0)),
+            installation_charges=float(data.get('installation_charges', 0)),
+            freight_charges=float(data.get('freight_charges', 0)),
+            transport_charges=float(data.get('transport_charges', 0)),
+            gst_percentage=float(data.get('gst_percentage', 18)),
+            payment_terms=data.get('payment_terms'),
+            status=data.get('status', 'Draft'),
+            created_by=current_user.id
+        )
+        
+        db.session.add(quote)
+        db.session.flush()  # Get quote ID
+        
+        # Add quote items
+        item_count = int(data.get('item_count', 0))
+        for i in range(item_count):
+            particular = data.get(f'item_{i}_particular')
+            if particular:  # Only add if particular is provided
+                item = QuoteItem(
+                    quote_id=quote.id,
+                    item_number=i + 1,
+                    particular=particular,
+                    size_width=data.get(f'item_{i}_size_width'),
+                    size_height=data.get(f'item_{i}_size_height'),
+                    unit=data.get(f'item_{i}_unit', 'MM'),
+                    chargeable_size_width=data.get(f'item_{i}_chargeable_width'),
+                    chargeable_size_height=data.get(f'item_{i}_chargeable_height'),
+                    quantity=int(data.get(f'item_{i}_quantity', 1)),
+                    rate_sqper=float(data.get(f'item_{i}_rate', 0)),
+                    total=float(data.get(f'item_{i}_total', 0))
+                )
+                db.session.add(item)
+        
+        # Calculate totals
+        quote.calculate_totals()
+        
+        db.session.commit()
+        flash(f'Quote {quote_number} created successfully!', 'success')
+        return redirect(url_for('quote_view', id=quote.id))
+    
+    # GET request - show form
+    from datetime import date, timedelta
+    default_payment_terms = "For Confirmation the order need to give 100% of Quotation Value"
+    
+    return render_template('quotes/form.html',
+                         title='New Quote',
+                         quote=None,
+                         default_quote_date=date.today(),
+                         default_expected_date=date.today() + timedelta(days=8),
+                         default_payment_terms=default_payment_terms)
+
+
+@app.route('/quotes/<int:id>')
+@login_required
+def quote_view(id):
+    """View quote details"""
+    from models import Quote
+    quote = Quote.query.get_or_404(id)
+    return render_template('quotes/view.html', quote=quote)
+
+
+@app.route('/quotes/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+def quote_edit(id):
+    """Edit existing quote"""
+    from models import Quote, QuoteItem
+    
+    quote = Quote.query.get_or_404(id)
+    
+    if request.method == 'POST':
+        data = request.form
+        
+        # Update quote fields
+        quote.quote_date = datetime.strptime(data.get('quote_date'), '%Y-%m-%d').date()
+        quote.expected_date = datetime.strptime(data.get('expected_date'), '%Y-%m-%d').date() if data.get('expected_date') else None
+        quote.customer_name = data.get('customer_name')
+        quote.customer_address = data.get('customer_address')
+        quote.customer_city = data.get('customer_city')
+        quote.customer_state = data.get('customer_state')
+        quote.customer_phone = data.get('customer_phone')
+        quote.customer_email = data.get('customer_email')
+        quote.invoice_to = data.get('invoice_to')
+        quote.dispatch_to = data.get('dispatch_to')
+        quote.self_pickup = bool(data.get('self_pickup'))
+        quote.delivery_charges = float(data.get('delivery_charges', 0))
+        quote.installation_charges = float(data.get('installation_charges', 0))
+        quote.freight_charges = float(data.get('freight_charges', 0))
+        quote.transport_charges = float(data.get('transport_charges', 0))
+        quote.gst_percentage = float(data.get('gst_percentage', 18))
+        quote.payment_terms = data.get('payment_terms')
+        quote.status = data.get('status', 'Draft')
+        
+        # Delete existing items
+        QuoteItem.query.filter_by(quote_id=quote.id).delete()
+        
+        # Add updated items
+        item_count = int(data.get('item_count', 0))
+        for i in range(item_count):
+            particular = data.get(f'item_{i}_particular')
+            if particular:
+                item = QuoteItem(
+                    quote_id=quote.id,
+                    item_number=i + 1,
+                    particular=particular,
+                    size_width=data.get(f'item_{i}_size_width'),
+                    size_height=data.get(f'item_{i}_size_height'),
+                    unit=data.get(f'item_{i}_unit', 'MM'),
+                    chargeable_size_width=data.get(f'item_{i}_chargeable_width'),
+                    chargeable_size_height=data.get(f'item_{i}_chargeable_height'),
+                    quantity=int(data.get(f'item_{i}_quantity', 1)),
+                    rate_sqper=float(data.get(f'item_{i}_rate', 0)),
+                    total=float(data.get(f'item_{i}_total', 0))
+                )
+                db.session.add(item)
+        
+        # Recalculate totals
+        quote.calculate_totals()
+        quote.updated_at = datetime.utcnow()
+        
+        db.session.commit()
+        flash(f'Quote {quote.quote_number} updated successfully!', 'success')
+        return redirect(url_for('quote_view', id=quote.id))
+    
+    # GET request - show form with existing data
+    return render_template('quotes/form.html',
+                         title='Edit Quote',
+                         quote=quote)
+
+
+@app.route('/quotes/<int:id>/delete', methods=['POST'])
+@admin_required
+def quote_delete(id):
+    """Delete quote"""
+    from models import Quote
+    quote = Quote.query.get_or_404(id)
+    quote_number = quote.quote_number
+    db.session.delete(quote)
+    db.session.commit()
+    flash(f'Quote {quote_number} deleted successfully!', 'success')
+    return redirect(url_for('quotes_list'))
+
+
+@app.route('/quotes/<int:id>/duplicate', methods=['POST'])
+@login_required
+def quote_duplicate(id):
+    """Duplicate an existing quote"""
+    from models import Quote, QuoteItem
+    from datetime import date
+    
+    original_quote = Quote.query.get_or_404(id)
+    
+    # Create new quote with same data
+    new_quote = Quote(
+        quote_number=Quote.generate_quote_number(),
+        quote_date=date.today(),
+        expected_date=original_quote.expected_date,
+        customer_name=original_quote.customer_name,
+        customer_address=original_quote.customer_address,
+        customer_city=original_quote.customer_city,
+        customer_state=original_quote.customer_state,
+        customer_phone=original_quote.customer_phone,
+        customer_email=original_quote.customer_email,
+        invoice_to=original_quote.invoice_to,
+        dispatch_to=original_quote.dispatch_to,
+        self_pickup=original_quote.self_pickup,
+        delivery_charges=original_quote.delivery_charges,
+        installation_charges=original_quote.installation_charges,
+        freight_charges=original_quote.freight_charges,
+        transport_charges=original_quote.transport_charges,
+        gst_percentage=original_quote.gst_percentage,
+        payment_terms=original_quote.payment_terms,
+        status='Draft',
+        created_by=current_user.id
+    )
+    
+    db.session.add(new_quote)
+    db.session.flush()
+    
+    # Duplicate items
+    for original_item in original_quote.items:
+        new_item = QuoteItem(
+            quote_id=new_quote.id,
+            item_number=original_item.item_number,
+            particular=original_item.particular,
+            size_width=original_item.size_width,
+            size_height=original_item.size_height,
+            unit=original_item.unit,
+            chargeable_size_width=original_item.chargeable_size_width,
+            chargeable_size_height=original_item.chargeable_size_height,
+            quantity=original_item.quantity,
+            first_sqper=original_item.first_sqper,
+            rate_sqper=original_item.rate_sqper,
+            total=original_item.total
+        )
+        db.session.add(new_item)
+    
+    new_quote.calculate_totals()
+    db.session.commit()
+    
+    flash(f'Quote duplicated as {new_quote.quote_number}!', 'success')
+    return redirect(url_for('quote_edit', id=new_quote.id))
+
+
+@app.route('/quotes/<int:id>/print')
+@login_required
+def quote_print(id):
+    """Show print-friendly version of quote"""
+    from models import Quote
+    quote = Quote.query.get_or_404(id)
+    return render_template('quotes/print.html', quote=quote)
+
+
+# ============================================================================
+# QUOTE API ROUTES
+# ============================================================================
+
+@app.route('/api/quotes/next-number')
+@login_required
+def api_quote_next_number():
+    """Get next available quote number"""
+    from models import Quote
+    next_number = Quote.generate_quote_number()
+    return jsonify({'quote_number': next_number})
+
+
+@app.route('/api/products/search')
+@login_required
+def api_products_search():
+    """Search products for quote (autocomplete)"""
+    query = request.args.get('q', '')
+    
+    if len(query) < 2:
+        return jsonify([])
+    
+    products = Product.query.filter(
+        Product.is_active == True,
+        Product.product_name.ilike(f'%{query}%')
+    ).limit(10).all()
+    
+    results = [{
+        'id': p.id,
+        'name': p.product_name,
+        'category': p.category,
+        'price': p.price
+    } for p in products]
+    
+    return jsonify(results)
 
 
 # ============================================================================

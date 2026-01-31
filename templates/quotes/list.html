@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Quotes - VCore{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-file-earmark-text"></i> Quotes</h2>
+    <a href="{{ url_for('quote_new') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> New Quote
+    </a>
+</div>
+
+<!-- Search and Filter -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('quotes_list') }}" class="row g-3">
+            <div class="col-md-3">
+                <input type="text" class="form-control" name="search" placeholder="Search customer or quote #"
+                    value="{{ search_query }}">
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" name="status">
+                    <option value="">All Status</option>
+                    <option value="Draft" {% if status_filter=='Draft' %}selected{% endif %}>Draft</option>
+                    <option value="Sent" {% if status_filter=='Sent' %}selected{% endif %}>Sent</option>
+                    <option value="Accepted" {% if status_filter=='Accepted' %}selected{% endif %}>Accepted</option>
+                    <option value="Rejected" {% if status_filter=='Rejected' %}selected{% endif %}>Rejected</option>
+                    <option value="Expired" {% if status_filter=='Expired' %}selected{% endif %}>Expired</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <input type="date" class="form-control" name="date_from" placeholder="From Date"
+                    value="{{ date_from }}">
+            </div>
+            <div class="col-md-2">
+                <input type="date" class="form-control" name="date_to" placeholder="To Date" value="{{ date_to }}">
+            </div>
+            <div class="col-md-3">
+                <button type="submit" class="btn btn-primary me-2">
+                    <i class="bi bi-search"></i> Search
+                </button>
+                <a href="{{ url_for('quotes_list') }}" class="btn btn-secondary">
+                    <i class="bi bi-x-circle"></i> Clear
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Quotes Table -->
+<div class="card">
+    <div class="card-body">
+        {% if quotes %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Quote #</th>
+                        <th>Date</th>
+                        <th>Customer</th>
+                        <th>Total</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for quote in quotes %}
+                    <tr>
+                        <td><strong>{{ quote.quote_number }}</strong></td>
+                        <td>{{ quote.quote_date.strftime('%d %b %Y') }}</td>
+                        <td>{{ quote.customer_name }}</td>
+                        <td>₹{{ "{:,.2f}".format(quote.total) }}</td>
+                        <td>
+                            <span class="badge bg-{{ quote.get_status_badge_class() }}">
+                                {{ quote.status }}
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{{ url_for('quote_view', id=quote.id) }}" class="btn btn-sm btn-info" title="View">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                            <a href="{{ url_for('quote_edit', id=quote.id) }}" class="btn btn-sm btn-warning"
+                                title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <a href="{{ url_for('quote_print', id=quote.id) }}" class="btn btn-sm btn-success"
+                                target="_blank" title="Print/PDF">
+                                <i class="bi bi-printer"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-inbox fs-1 text-muted"></i>
+            <p class="text-muted mt-3">No quotes found. Create your first quote to get started!</p>
+            <a href="{{ url_for('quote_new') }}" class="btn btn-primary mt-2">
+                <i class="bi bi-plus-circle"></i> Create Quote
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

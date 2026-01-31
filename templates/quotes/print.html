@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Quote {{ quote.quote_number }}</title>
+    <style>
+        /* Screen styles */
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 11pt;
+            line-height: 1.4;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .print-container {
+            max-width: 210mm;
+            margin: 0 auto;
+            background: white;
+            padding: 20mm;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .no-print {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #2563eb;
+            color: white;
+            border-radius: 5px;
+        }
+
+        .no-print button {
+            background: white;
+            color: #2563eb;
+            border: none;
+            padding: 10px 20px;
+            font-size: 14pt;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 0 5px;
+        }
+
+        .no-print button:hover {
+            background: #f0f0f0;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+        }
+
+        .company-name {
+            font-size: 20pt;
+            font-weight: bold;
+            color: #2563eb;
+        }
+
+        .company-details {
+            font-size: 9pt;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .quote-info {
+            margin: 20px 0;
+        }
+
+        .info-table {
+            width: 100%;
+            margin-bottom: 15px;
+        }
+
+        .info-table td {
+            padding: 5px;
+            vertical-align: top;
+        }
+
+        .label {
+            font-weight: bold;
+            width: 120px;
+        }
+
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        .items-table th {
+            background-color: #f0f0f0;
+            border: 1px solid #333;
+            padding: 8px;
+            text-align: left;
+            font-size: 10pt;
+        }
+
+        .items-table td {
+            border: 1px solid #333;
+            padding: 6px;
+            font-size: 10pt;
+        }
+
+        .text-right {
+            text-align: right;
+        }
+
+        .totals-table {
+            width: 50%;
+            margin-left: auto;
+            margin-top: 20px;
+        }
+
+        .totals-table td {
+            padding: 5px;
+        }
+
+        .total-row {
+            font-weight: bold;
+            font-size: 12pt;
+            border-top: 2px solid #333;
+        }
+
+        .payment-terms {
+            margin-top: 30px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-left: 4px solid #2563eb;
+        }
+
+        .footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 9pt;
+            color: #666;
+        }
+
+        /* Print styles */
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+
+            .print-container {
+                max-width: 100%;
+                box-shadow: none;
+                padding: 0;
+            }
+
+            .no-print {
+                display: none;
+            }
+        }
+
+        @page {
+            size: A4;
+            margin: 15mm;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="print-container">
+        <!-- Print/Save buttons (hidden when printing) -->
+        <div class="no-print">
+            <h3 style="margin-top: 0;">Quote Preview</h3>
+            <button onclick="window.print()">
+                🖨️ Print / Save as PDF
+            </button>
+            <button onclick="window.close()">
+                ✕ Close
+            </button>
+            <p style="font-size: 10pt; margin-top: 10px;">
+                Click "Print / Save as PDF" and choose "Save as PDF" in the print dialog
+            </p>
+        </div>
+
+        <!-- Header -->
+        <div class="header">
+            <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 10px;">
+                <img src="{{ url_for('static', filename='images/vetrovalogo.png') }}" alt="Glassy India Logo"
+                    style="max-height: 60px; margin-right: 15px;" onerror="this.style.display='none'">
+                <div style="text-align: left;">
+                    <div class="company-name">GLASSY INDIA</div>
+                    <div class="company-details" style="text-align: left;">
+                        VETROVA TECH SERVICES PRIVATE LIMITED
+                    </div>
+                </div>
+            </div>
+            <div class="company-details" style="text-align: center;">
+                Bangalore Seley Glass - A/2, Bommasandra Industrial Area, Bengaluru, Karnataka 560099<br>
+                ☎ +91 85500 11196 | 📧 rohit@glassy.in | 🌐 www.glassy.in
+            </div>
+        </div>
+
+        <!-- Quote Information -->
+        <div class="quote-info">
+            <table class="info-table">
+                <tr>
+                    <td style="width: 50%;">
+                        <table>
+                            <tr>
+                                <td class="label">Quotation Date:</td>
+                                <td>{{ quote.quote_date.strftime('%d %b, %Y') }}</td>
+                            </tr>
+                            <tr>
+                                <td class="label">Expected Date:</td>
+                                <td>{{ quote.expected_date.strftime('%d %b, %Y') if quote.expected_date else 'N/A' }}
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                    <td style="width: 50%; text-align: right;">
+                        <table style="margin-left: auto;">
+                            <tr>
+                                <td class="label">Invoice No:</td>
+                                <td><strong>{{ quote.quote_number }}</strong></td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+
+            <table class="info-table">
+                <tr>
+                    <td style="width: 50%;">
+                        <div class="label">Invoice to:</div>
+                        <div><strong>{{ quote.customer_name }}</strong></div>
+                        {% if quote.customer_address %}
+                        <div>{{ quote.customer_address }}</div>
+                        {% endif %}
+                        {% if quote.customer_city or quote.customer_state %}
+                        <div>{{ quote.customer_city }}{% if quote.customer_city and quote.customer_state %}, {% endif
+                            %}{{ quote.customer_state }}</div>
+                        {% endif %}
+                        {% if quote.customer_phone %}
+                        <div>Phone: {{ quote.customer_phone }}</div>
+                        {% endif %}
+                    </td>
+                    <td style="width: 50%;">
+                        <div class="label">Dispatch to:</div>
+                        <div>{{ quote.dispatch_to or quote.customer_address or 'Same as invoice address' }}</div>
+                        {% if quote.self_pickup %}
+                        <div><strong>Self Pickup</strong></div>
+                        {% endif %}
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Line Items -->
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th style="width: 5%;">S. No</th>
+                    <th style="width: 35%;">Particular</th>
+                    <th style="width: 10%;">Size (W)</th>
+                    <th style="width: 10%;">Size (H)</th>
+                    <th style="width: 8%;">Unit</th>
+                    <th style="width: 8%;">Qty</th>
+                    <th style="width: 12%;">Rate/sqper</th>
+                    <th style="width: 12%;">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in quote.items %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ item.particular }}</td>
+                    <td class="text-right">{{ item.size_width or '-' }}</td>
+                    <td class="text-right">{{ item.size_height or '-' }}</td>
+                    <td>{{ item.unit or 'MM' }}</td>
+                    <td class="text-right">{{ item.quantity }}</td>
+                    <td class="text-right">{{ "{:,.2f}".format(item.rate_sqper) }}</td>
+                    <td class="text-right">{{ "{:,.2f}".format(item.total) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- Totals -->
+        <table class="totals-table">
+            <tr>
+                <td>Subtotal:</td>
+                <td class="text-right">{{ "{:,.2f}".format(quote.subtotal) }}</td>
+            </tr>
+            {% if quote.delivery_charges > 0 %}
+            <tr>
+                <td>Delivery Charges:</td>
+                <td class="text-right">{{ "{:,.2f}".format(quote.delivery_charges) }}</td>
+            </tr>
+            {% endif %}
+            {% if quote.installation_charges > 0 %}
+            <tr>
+                <td>Installation Charges:</td>
+                <td class="text-right">{{ "{:,.2f}".format(quote.installation_charges) }}</td>
+            </tr>
+            {% endif %}
+            {% if quote.freight_charges > 0 %}
+            <tr>
+                <td>Freight Charges:</td>
+                <td class="text-right">{{ "{:,.2f}".format(quote.freight_charges) }}</td>
+            </tr>
+            {% endif %}
+            {% if quote.transport_charges > 0 %}
+            <tr>
+                <td>Transport Charges:</td>
+                <td class="text-right">{{ "{:,.2f}".format(quote.transport_charges) }}</td>
+            </tr>
+            {% endif %}
+            <tr>
+                <td>GST @ {{ quote.gst_percentage }}%:</td>
+                <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount) }}</td>
+            </tr>
+            <tr>
+                <td>Round Off:</td>
+                <td class="text-right">{{ "{:,.2f}".format(quote.round_off) }}</td>
+            </tr>
+            <tr class="total-row">
+                <td>Total:</td>
+                <td class="text-right">₹{{ "{:,.2f}".format(quote.total) }}</td>
+            </tr>
+        </table>
+
+        <!-- Account Details -->
+        <div style="margin-top: 30px; font-size: 10pt;">
+            <strong>ACCOUNT DETAILS:</strong><br>
+            Name: Vetrova Tech Services Private Limited<br>
+            Customer ID: 917321550000158<br>
+            IFSC Code: UTIB0000158<br>
+            Paytm/UPI: 9513(0)<br>
+        </div>
+
+        <!-- Payment Terms -->
+        {% if quote.payment_terms %}
+        <div class="payment-terms">
+            <strong>PAYMENT TERMS:</strong><br>
+            {{ quote.payment_terms }}
+        </div>
+        {% endif %}
+
+        <!-- Footer -->
+        <div class="footer">
+            <p><strong>For VETROVA TECH SERVICES PRIVATE LIMITED</strong><br>
+                (Authorized Signatory)</p>
+        </div>
+    </div>
+</body>
+
+</html>

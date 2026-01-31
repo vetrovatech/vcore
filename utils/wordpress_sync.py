@@ -98,17 +98,20 @@ class WordPressSync:
                     'skipped': 0
                 }
             
-            # Prepare product data
+            # Prepare product data and keep track of product objects
             products_data = []
+            product_map = {}  # Map product ID to product object
             for product in products:
                 product_dict = self._prepare_product_data(product)
                 products_data.append(product_dict)
+                product_map[product.id] = product
             
             # Send to WordPress in batches (smaller batches to avoid timeout)
             batch_size = 3  # Reduced from 10 to handle image uploads
             total_success = 0
             total_failed = 0
             errors = []
+            synced_product_ids = []  # Track successfully synced products
             
             for i in range(0, len(products_data), batch_size):
                 batch = products_data[i:i + batch_size]
@@ -125,12 +128,27 @@ class WordPressSync:
                     total_success += result.get('success', 0)
                     total_failed += result.get('failed', 0)
                     errors.extend(result.get('errors', []))
+                    
+                    # Track successfully synced product IDs
+                    if result.get('product_ids'):
+                        synced_product_ids.extend(result.get('product_ids', []))
                 else:
                     total_failed += len(batch)
                     errors.append({
                         'batch': f'{i}-{i+len(batch)}',
                         'error': response.text
                     })
+            
+            # Update database for successfully synced products
+            if synced_product_ids:
+                sync_timestamp = datetime.utcnow()
+                for product_id in synced_product_ids:
+                    if product_id in product_map:
+                        product = product_map[product_id]
+                        product.last_wordpress_sync = sync_timestamp
+                
+                # Commit the changes
+                db_connection.commit()
             
             return {
                 'success': True,
@@ -220,11 +238,18 @@ class WordPressSync:
                 Product.wordpress_id.isnot(None)
             ).count()
             
+            # Count products that need syncing (changed since last sync OR never synced)
+            pending_sync = Product.query.filter(
+                Product.is_active == True,
+                (Product.last_wordpress_sync == None) | 
+                (Product.updated_at > Product.last_wordpress_sync)
+            ).count()
+            
             return {
                 'success': True,
                 'total_products': total_products,
                 'synced_products': synced_products,
-                'pending_sync': total_products - synced_products
+                'pending_sync': pending_sync
             }
         except Exception as e:
             return {

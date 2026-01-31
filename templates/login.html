@@ -33,8 +33,7 @@
 
                         <div class="mb-3">
                             {{ form.username.label(class="form-label") }}
-                            {{ form.username(class="form-control form-control-lg", placeholder="Enter username or
-                            email") }}
+                            {{ form.username(class="form-control form-control-lg", placeholder="Enter Username") }}
                             {% if form.username.errors %}
                             <div class="text-danger small mt-1">
                                 {% for error in form.username.errors %}{{ error }}{% endfor %}

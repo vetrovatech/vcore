@@ -23,5 +23,5 @@ COPY templates/ ./templates/
 ENV PORT=8080
 
 # Run Flask app with gunicorn
-CMD ["gunicorn", "-b", "0.0.0.0:8080", "-w", "1", "--timeout", "30", "app:app"]
+CMD ["gunicorn", "-b", "0.0.0.0:8080", "-w", "1", "--timeout", "120", "app:app"]
 

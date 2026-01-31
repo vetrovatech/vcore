@@ -328,3 +328,160 @@ class Product(db.Model):
         return f'<Product {self.product_name} ({self.category})>'
 
 
+class Quote(db.Model):
+    """Quote model for customer quotations"""
+    __tablename__ = 'quotes'
+    
+    # Primary key
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Quote identification
+    quote_number = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    quote_date = db.Column(db.Date, nullable=False, index=True)
+    expected_date = db.Column(db.Date, nullable=True)  # Expected delivery/completion date
+    
+    # Customer information
+    customer_name = db.Column(db.String(200), nullable=False, index=True)
+    customer_address = db.Column(db.Text, nullable=True)
+    customer_city = db.Column(db.String(100), nullable=True)
+    customer_state = db.Column(db.String(100), nullable=True)
+    customer_phone = db.Column(db.String(20), nullable=True)
+    customer_email = db.Column(db.String(120), nullable=True)
+    
+    # Billing and shipping
+    invoice_to = db.Column(db.Text, nullable=True)  # Billing address if different
+    dispatch_to = db.Column(db.Text, nullable=True)  # Shipping address if different
+    self_pickup = db.Column(db.Boolean, default=False, nullable=False)
+    
+    # Financial details
+    subtotal = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    delivery_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    installation_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    freight_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    transport_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    gst_percentage = db.Column(db.Numeric(5, 2), default=18.00, nullable=False)
+    gst_amount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    round_off = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    total = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    
+    # Terms and status
+    payment_terms = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='Draft', index=True)  # Draft, Sent, Accepted, Rejected, Expired
+    
+    # Metadata
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    items = db.relationship('QuoteItem', backref='quote', lazy=True, cascade='all, delete-orphan')
+    creator = db.relationship('User', foreign_keys=[created_by], backref='quotes')
+    
+    # Indexes
+    __table_args__ = (
+        db.Index('idx_quote_date_status', 'quote_date', 'status'),
+        db.Index('idx_customer_name', 'customer_name'),
+    )
+    
+    def calculate_totals(self):
+        """Calculate all totals based on items and charges"""
+        # Calculate subtotal from items
+        self.subtotal = sum(item.total for item in self.items)
+        
+        # Calculate taxable amount (subtotal + all charges except GST)
+        taxable_amount = (
+            self.subtotal + 
+            self.delivery_charges + 
+            self.installation_charges + 
+            self.freight_charges + 
+            self.transport_charges
+        )
+        
+        # Calculate GST
+        self.gst_amount = (taxable_amount * self.gst_percentage) / 100
+        
+        # Calculate total before round-off
+        total_before_roundoff = taxable_amount + self.gst_amount
+        
+        # Calculate round-off to nearest rupee
+        rounded_total = round(total_before_roundoff)
+        self.round_off = rounded_total - total_before_roundoff
+        self.total = rounded_total
+    
+    @classmethod
+    def generate_quote_number(cls):
+        """Generate next quote number in format GI-XXXX"""
+        # Get the latest quote number
+        latest_quote = cls.query.order_by(cls.id.desc()).first()
+        
+        if latest_quote and latest_quote.quote_number:
+            # Extract number from format GI-XXXX
+            try:
+                last_number = int(latest_quote.quote_number.split('-')[1])
+                next_number = last_number + 1
+            except (IndexError, ValueError):
+                next_number = 4193  # Start from sample quote number
+        else:
+            next_number = 4193  # Start from sample quote number
+        
+        return f'GI-{next_number}'
+    
+    def get_status_badge_class(self):
+        """Get Bootstrap badge class based on status"""
+        status_classes = {
+            'Draft': 'secondary',
+            'Sent': 'info',
+            'Accepted': 'success',
+            'Rejected': 'danger',
+            'Expired': 'warning'
+        }
+        return status_classes.get(self.status, 'secondary')
+    
+    def __repr__(self):
+        return f'<Quote {self.quote_number} - {self.customer_name}>'
+
+
+class QuoteItem(db.Model):
+    """Quote item model for individual line items in a quote"""
+    __tablename__ = 'quote_items'
+    
+    # Primary key
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Foreign key
+    quote_id = db.Column(db.Integer, db.ForeignKey('quotes.id'), nullable=False, index=True)
+    
+    # Item details
+    item_number = db.Column(db.Integer, nullable=False)  # Line item number (1, 2, 3...)
+    particular = db.Column(db.String(300), nullable=False)  # Product name/description
+    
+    # Dimensions
+    size_width = db.Column(db.String(50), nullable=True)  # Actual size width
+    size_height = db.Column(db.String(50), nullable=True)  # Actual size height
+    unit = db.Column(db.String(20), nullable=True)  # MM, sqft, etc.
+    chargeable_size_width = db.Column(db.String(50), nullable=True)  # Chargeable size width
+    chargeable_size_height = db.Column(db.String(50), nullable=True)  # Chargeable size height
+    
+    # Pricing
+    quantity = db.Column(db.Integer, nullable=False, default=1)
+    first_sqper = db.Column(db.Numeric(10, 2), nullable=True)  # First rate (if different)
+    rate_sqper = db.Column(db.Numeric(10, 2), nullable=False)  # Rate per unit
+    total = db.Column(db.Numeric(10, 2), nullable=False)  # Calculated total
+    
+    # Metadata
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Indexes
+    __table_args__ = (
+        db.Index('idx_quote_item', 'quote_id', 'item_number'),
+    )
+    
+    def calculate_total(self):
+        """Calculate total for this line item"""
+        self.total = self.quantity * self.rate_sqper
+    
+    def __repr__(self):
+        return f'<QuoteItem {self.item_number} - {self.particular}>'
+
+
