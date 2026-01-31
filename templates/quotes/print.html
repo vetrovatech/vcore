@@ -8,8 +8,8 @@
         /* Screen styles */
         body {
             font-family: Arial, sans-serif;
-            font-size: 11pt;
-            line-height: 1.4;
+            font-size: 10pt;
+            line-height: 1.3;
             margin: 0;
             padding: 20px;
             background-color: #f5f5f5;
@@ -19,7 +19,7 @@
             max-width: 210mm;
             margin: 0 auto;
             background: white;
-            padding: 20mm;
+            padding: 15mm;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
         }
 
@@ -49,94 +49,133 @@
 
         .header {
             text-align: center;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #333;
-            padding-bottom: 10px;
+            margin-bottom: 15px;
+            border: 2px solid #000;
+            padding: 10px;
+        }
+
+        .company-logo {
+            max-height: 50px;
+            margin-bottom: 5px;
         }
 
         .company-name {
-            font-size: 20pt;
+            font-size: 18pt;
             font-weight: bold;
-            color: #2563eb;
+            color: #000;
         }
 
         .company-details {
-            font-size: 9pt;
-            color: #666;
-            margin-top: 5px;
+            font-size: 8pt;
+            color: #333;
+            margin-top: 3px;
         }
 
         .quote-info {
-            margin: 20px 0;
+            margin: 10px 0;
+            border: 1px solid #000;
         }
 
-        .info-table {
-            width: 100%;
-            margin-bottom: 15px;
+        .info-row {
+            display: flex;
+            border-bottom: 1px solid #000;
         }
 
-        .info-table td {
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-cell {
             padding: 5px;
-            vertical-align: top;
+            border-right: 1px solid #000;
+            font-size: 9pt;
         }
 
-        .label {
+        .info-cell:last-child {
+            border-right: none;
+        }
+
+        .info-label {
             font-weight: bold;
-            width: 120px;
+            min-width: 100px;
         }
 
         .items-table {
             width: 100%;
             border-collapse: collapse;
-            margin: 20px 0;
+            margin: 10px 0;
+            font-size: 8pt;
+        }
+
+        .items-table th,
+        .items-table td {
+            border: 1px solid #000;
+            padding: 4px 2px;
+            text-align: center;
         }
 
         .items-table th {
             background-color: #f0f0f0;
-            border: 1px solid #333;
-            padding: 8px;
-            text-align: left;
-            font-size: 10pt;
+            font-weight: bold;
+            font-size: 7pt;
         }
 
-        .items-table td {
-            border: 1px solid #333;
-            padding: 6px;
-            font-size: 10pt;
+        .items-table .group-row {
+            background-color: #f9f9f9;
+            font-weight: bold;
+        }
+
+        .items-table .sub-item-row td:first-child {
+            padding-left: 15px;
+            text-align: left;
+        }
+
+        .text-left {
+            text-align: left !important;
         }
 
         .text-right {
-            text-align: right;
+            text-align: right !important;
+        }
+
+        .totals-section {
+            margin-top: 10px;
+            page-break-inside: avoid;
         }
 
         .totals-table {
             width: 50%;
             margin-left: auto;
-            margin-top: 20px;
+            font-size: 9pt;
         }
 
         .totals-table td {
-            padding: 5px;
+            padding: 3px 5px;
         }
 
         .total-row {
             font-weight: bold;
-            font-size: 12pt;
-            border-top: 2px solid #333;
+            border-top: 2px solid #000;
+        }
+
+        .account-details {
+            margin-top: 15px;
+            padding: 8px;
+            border: 1px solid #000;
+            font-size: 8pt;
         }
 
         .payment-terms {
-            margin-top: 30px;
-            padding: 10px;
-            background-color: #f9f9f9;
-            border-left: 4px solid #2563eb;
+            margin-top: 10px;
+            padding: 8px;
+            border: 1px solid #000;
+            font-size: 8pt;
         }
 
         .footer {
-            margin-top: 40px;
+            margin-top: 20px;
             text-align: center;
-            font-size: 9pt;
-            color: #666;
+            font-size: 8pt;
         }
 
         /* Print styles */
@@ -159,7 +198,7 @@
 
         @page {
             size: A4;
-            margin: 15mm;
+            margin: 10mm;
         }
     </style>
 </head>
@@ -182,158 +221,180 @@
 
         <!-- Header -->
         <div class="header">
-            <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 10px;">
-                <img src="{{ url_for('static', filename='images/vetrovalogo.png') }}" alt="Glassy India Logo"
-                    style="max-height: 60px; margin-right: 15px;" onerror="this.style.display='none'">
-                <div style="text-align: left;">
-                    <div class="company-name">GLASSY INDIA</div>
-                    <div class="company-details" style="text-align: left;">
-                        VETROVA TECH SERVICES PRIVATE LIMITED
-                    </div>
-                </div>
-            </div>
-            <div class="company-details" style="text-align: center;">
-                Bangalore Seley Glass - A/2, Bommasandra Industrial Area, Bengaluru, Karnataka 560099<br>
+            <img src="{{ url_for('static', filename='images/vetrovalogo.png') }}" alt="Logo" class="company-logo"
+                onerror="this.style.display='none'">
+            <div class="company-name">GLASSY INDIA</div>
+            <div class="company-details">
+                VETROVA TECH SERVICES PRIVATE LIMITED<br>
+                Address: Bangalore Seley Glass - A/2, Bommasandra Industrial Area, Bengaluru, Karnataka 560099<br>
                 ☎ +91 85500 11196 | 📧 rohit@glassy.in | 🌐 www.glassy.in
             </div>
         </div>
 
         <!-- Quote Information -->
         <div class="quote-info">
-            <table class="info-table">
-                <tr>
-                    <td style="width: 50%;">
-                        <table>
-                            <tr>
-                                <td class="label">Quotation Date:</td>
-                                <td>{{ quote.quote_date.strftime('%d %b, %Y') }}</td>
-                            </tr>
-                            <tr>
-                                <td class="label">Expected Date:</td>
-                                <td>{{ quote.expected_date.strftime('%d %b, %Y') if quote.expected_date else 'N/A' }}
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                    <td style="width: 50%; text-align: right;">
-                        <table style="margin-left: auto;">
-                            <tr>
-                                <td class="label">Invoice No:</td>
-                                <td><strong>{{ quote.quote_number }}</strong></td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-
-            <table class="info-table">
-                <tr>
-                    <td style="width: 50%;">
-                        <div class="label">Invoice to:</div>
-                        <div><strong>{{ quote.customer_name }}</strong></div>
-                        {% if quote.customer_address %}
-                        <div>{{ quote.customer_address }}</div>
-                        {% endif %}
-                        {% if quote.customer_city or quote.customer_state %}
-                        <div>{{ quote.customer_city }}{% if quote.customer_city and quote.customer_state %}, {% endif
-                            %}{{ quote.customer_state }}</div>
-                        {% endif %}
-                        {% if quote.customer_phone %}
-                        <div>Phone: {{ quote.customer_phone }}</div>
-                        {% endif %}
-                    </td>
-                    <td style="width: 50%;">
-                        <div class="label">Dispatch to:</div>
-                        <div>{{ quote.dispatch_to or quote.customer_address or 'Same as invoice address' }}</div>
-                        {% if quote.self_pickup %}
-                        <div><strong>Self Pickup</strong></div>
-                        {% endif %}
-                    </td>
-                </tr>
-            </table>
+            <div class="info-row">
+                <div class="info-cell info-label">Quotation Date:</div>
+                <div class="info-cell" style="flex: 1;">{{ quote.quote_date.strftime('%d %b, %Y') }}</div>
+                <div class="info-cell info-label">Invoice No:</div>
+                <div class="info-cell" style="flex: 1;"><strong>{{ quote.quote_number }}</strong></div>
+            </div>
+            <div class="info-row">
+                <div class="info-cell info-label">Expected Date:</div>
+                <div class="info-cell" style="flex: 1;">{{ quote.expected_date.strftime('%d %b, %Y') if
+                    quote.expected_date else 'N/A' }}</div>
+                <div class="info-cell info-label">8th Feb, 2026</div>
+                <div class="info-cell" style="flex: 1;"></div>
+            </div>
         </div>
 
-        <!-- Line Items -->
+        <!-- Customer Details -->
+        <div class="quote-info" style="margin-top: 5px;">
+            <div class="info-row">
+                <div class="info-cell" style="width: 50%;">
+                    <div class="info-label">Invoice to:</div>
+                    <div><strong>{{ quote.customer_name }}</strong></div>
+                    {% if quote.customer_address %}<div>{{ quote.customer_address }}</div>{% endif %}
+                    {% if quote.customer_city or quote.customer_state %}
+                    <div>{{ quote.customer_city }}{% if quote.customer_city and quote.customer_state %}, {% endif %}{{
+                        quote.customer_state }}</div>
+                    {% endif %}
+                </div>
+                <div class="info-cell" style="width: 50%;">
+                    <div class="info-label">Dispatch to:</div>
+                    <div>{{ quote.dispatch_to or quote.customer_address or 'Same as invoice address' }}</div>
+                    {% if quote.self_pickup %}<div><strong>Self pickup</strong></div>{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Line Items Table -->
         <table class="items-table">
             <thead>
                 <tr>
-                    <th style="width: 5%;">S. No</th>
-                    <th style="width: 35%;">Particular</th>
-                    <th style="width: 10%;">Size (W)</th>
-                    <th style="width: 10%;">Size (H)</th>
-                    <th style="width: 8%;">Unit</th>
-                    <th style="width: 8%;">Qty</th>
-                    <th style="width: 12%;">Rate/sqper</th>
-                    <th style="width: 12%;">Total</th>
+                    <th rowspan="2" style="width: 3%;">S. No</th>
+                    <th rowspan="2" style="width: 15%;">Particular</th>
+                    <th colspan="2" style="width: 12%;">Actual size<br>(mm)</th>
+                    <th rowspan="2" style="width: 5%;">unit</th>
+                    <th colspan="2" style="width: 12%;">Chargeable size<br>(mm)</th>
+                    <th rowspan="2" style="width: 5%;">Qty</th>
+                    <th rowspan="2" style="width: 8%;">Unit square</th>
+                    <th rowspan="2" style="width: 10%;">Rate/ square</th>
+                    <th rowspan="2" style="width: 10%;">Total</th>
+                </tr>
+                <tr>
+                    <th>width</th>
+                    <th>Height</th>
+                    <th>width</th>
+                    <th>Height</th>
                 </tr>
             </thead>
             <tbody>
-                {% for item in quote.items %}
+                {% set ns = namespace(group_num=0) %}
+                {% for item in quote.items if not item.parent_id %}
+                {% set ns.group_num = ns.group_num + 1 %}
+                {% if item.is_group %}
+                <!-- Group Row -->
+                <tr class="group-row">
+                    <td>{{ ns.group_num }}</td>
+                    <td colspan="10" class="text-left"><strong>{{ item.particular }}</strong></td>
+                </tr>
+
+                <!-- Sub-items -->
+                {% set sub_items = item.children|sort(attribute='sort_order') %}
+                {% for sub_item in sub_items %}
+                <tr class="sub-item-row">
+                    <td>&nbsp;</td>
+                    <td class="text-left" style="padding-left: 20px;">{{ sub_item.particular }}</td>
+                    <td>{{ sub_item.actual_width if sub_item.actual_width else '-' }}</td>
+                    <td>{{ sub_item.actual_height if sub_item.actual_height else '-' }}</td>
+                    <td>{{ sub_item.unit or 'MM' }}</td>
+                    <td>{{ sub_item.chargeable_width if sub_item.chargeable_width else '-' }}</td>
+                    <td>{{ sub_item.chargeable_height if sub_item.chargeable_height else '-' }}</td>
+                    <td>{{ sub_item.quantity }}</td>
+                    <td class="text-right">{{ "{:.4f}".format(sub_item.unit_square) if sub_item.unit_square else
+                        '0.0000' }}</td>
+                    <td class="text-right">{{ "{:,.2f}".format(sub_item.rate_sqper) }}</td>
+                    <td class="text-right">{{ "{:,.2f}".format(sub_item.total) }}</td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <!-- Regular item (no group) -->
                 <tr>
-                    <td>{{ loop.index }}</td>
-                    <td>{{ item.particular }}</td>
-                    <td class="text-right">{{ item.size_width or '-' }}</td>
-                    <td class="text-right">{{ item.size_height or '-' }}</td>
+                    <td>{{ ns.group_num }}</td>
+                    <td class="text-left">{{ item.particular }}</td>
+                    <td>{{ item.actual_width if item.actual_width else '-' }}</td>
+                    <td>{{ item.actual_height if item.actual_height else '-' }}</td>
                     <td>{{ item.unit or 'MM' }}</td>
-                    <td class="text-right">{{ item.quantity }}</td>
+                    <td>{{ item.chargeable_width if item.chargeable_width else '-' }}</td>
+                    <td>{{ item.chargeable_height if item.chargeable_height else '-' }}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td class="text-right">{{ "{:.4f}".format(item.unit_square) if item.unit_square else '0.0000' }}
+                    </td>
                     <td class="text-right">{{ "{:,.2f}".format(item.rate_sqper) }}</td>
                     <td class="text-right">{{ "{:,.2f}".format(item.total) }}</td>
                 </tr>
+                {% endif %}
                 {% endfor %}
             </tbody>
         </table>
 
         <!-- Totals -->
-        <table class="totals-table">
-            <tr>
-                <td>Subtotal:</td>
-                <td class="text-right">{{ "{:,.2f}".format(quote.subtotal) }}</td>
-            </tr>
-            {% if quote.delivery_charges > 0 %}
-            <tr>
-                <td>Delivery Charges:</td>
-                <td class="text-right">{{ "{:,.2f}".format(quote.delivery_charges) }}</td>
-            </tr>
-            {% endif %}
-            {% if quote.installation_charges > 0 %}
-            <tr>
-                <td>Installation Charges:</td>
-                <td class="text-right">{{ "{:,.2f}".format(quote.installation_charges) }}</td>
-            </tr>
-            {% endif %}
-            {% if quote.freight_charges > 0 %}
-            <tr>
-                <td>Freight Charges:</td>
-                <td class="text-right">{{ "{:,.2f}".format(quote.freight_charges) }}</td>
-            </tr>
-            {% endif %}
-            {% if quote.transport_charges > 0 %}
-            <tr>
-                <td>Transport Charges:</td>
-                <td class="text-right">{{ "{:,.2f}".format(quote.transport_charges) }}</td>
-            </tr>
-            {% endif %}
-            <tr>
-                <td>GST @ {{ quote.gst_percentage }}%:</td>
-                <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount) }}</td>
-            </tr>
-            <tr>
-                <td>Round Off:</td>
-                <td class="text-right">{{ "{:,.2f}".format(quote.round_off) }}</td>
-            </tr>
-            <tr class="total-row">
-                <td>Total:</td>
-                <td class="text-right">₹{{ "{:,.2f}".format(quote.total) }}</td>
-            </tr>
-        </table>
+        <div class="totals-section">
+            <table class="totals-table">
+                <tr>
+                    <td>Subtotal:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.subtotal) }}</td>
+                </tr>
+                {% if quote.delivery_charges > 0 %}
+                <tr>
+                    <td>Delivery Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.delivery_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.installation_charges > 0 %}
+                <tr>
+                    <td>Installation Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.installation_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.freight_charges > 0 %}
+                <tr>
+                    <td>Freight Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.freight_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.transport_charges > 0 %}
+                <tr>
+                    <td>Transport Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.transport_charges) }}</td>
+                </tr>
+                {% endif %}
+                <tr>
+                    <td>GST @ {{ quote.gst_percentage }}%:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount) }}</td>
+                </tr>
+                <tr>
+                    <td>Round Off:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.round_off) }}</td>
+                </tr>
+                <tr class="total-row">
+                    <td><strong>Total:</strong></td>
+                    <td class="text-right"><strong>₹{{ "{:,.2f}".format(quote.total) }}</strong></td>
+                </tr>
+            </table>
+            <div style="text-align: right; font-size: 8pt; margin-top: 5px;">
+                <strong>In words: Ninety Four Thousand Six Hundred and Ten rupees</strong>
+            </div>
+        </div>
 
         <!-- Account Details -->
-        <div style="margin-top: 30px; font-size: 10pt;">
+        <div class="account-details">
             <strong>ACCOUNT DETAILS:</strong><br>
             Name: Vetrova Tech Services Private Limited<br>
             Customer ID: 917321550000158<br>
             IFSC Code: UTIB0000158<br>
-            Paytm/UPI: 9513(0)<br>
+            Paytm/UPI: 9513(0)
         </div>
 
         <!-- Payment Terms -->

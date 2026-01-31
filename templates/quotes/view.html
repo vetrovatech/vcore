@@ -127,31 +127,72 @@
                 <thead class="table-light">
                     <tr>
                         <th style="width: 5%">#</th>
-                        <th style="width: 30%">Particular</th>
-                        <th style="width: 10%">Size (W×H)</th>
+                        <th style="width: 25%">Particular</th>
+                        <th style="width: 10%">Actual Size</th>
+                        <th style="width: 10%">Chargeable Size</th>
                         <th style="width: 8%">Unit</th>
                         <th style="width: 8%">Qty</th>
-                        <th style="width: 12%">Rate</th>
+                        <th style="width: 10%">Unit Sq</th>
+                        <th style="width: 12%">Rate/Sq</th>
                         <th style="width: 12%">Total</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for item in quote.items %}
+                    {% set ns = namespace(group_num=0) %}
+                    {% for item in quote.items if not item.parent_id %}
+                    {% set ns.group_num = ns.group_num + 1 %}
+                    {% if item.is_group %}
+                    <!-- Group Row -->
+                    <tr class="table-secondary">
+                        <td><strong>{{ ns.group_num }}</strong></td>
+                        <td colspan="8"><strong>{{ item.particular }}</strong></td>
+                    </tr>
+
+                    <!-- Sub-items -->
+                    {% set sub_items = item.children|sort(attribute='sort_order') %}
+                    {% for sub_item in sub_items %}
                     <tr>
-                        <td>{{ loop.index }}</td>
+                        <td>&nbsp;</td>
+                        <td style="padding-left: 30px;">{{ sub_item.particular }}</td>
+                        <td>
+                            {% if sub_item.actual_width and sub_item.actual_height %}
+                            {{ sub_item.actual_width }} × {{ sub_item.actual_height }}
+                            {% else %}-{% endif %}
+                        </td>
+                        <td>
+                            {% if sub_item.chargeable_width and sub_item.chargeable_height %}
+                            {{ sub_item.chargeable_width }} × {{ sub_item.chargeable_height }}
+                            {% else %}-{% endif %}
+                        </td>
+                        <td>{{ sub_item.unit or 'MM' }}</td>
+                        <td>{{ sub_item.quantity }}</td>
+                        <td>{{ "{:.4f}".format(sub_item.unit_square) if sub_item.unit_square else '-' }}</td>
+                        <td>₹{{ "{:,.2f}".format(sub_item.rate_sqper) }}</td>
+                        <td>₹{{ "{:,.2f}".format(sub_item.total) }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <!-- Regular item (no group) -->
+                    <tr>
+                        <td>{{ ns.group_num }}</td>
                         <td>{{ item.particular }}</td>
                         <td>
-                            {% if item.size_width and item.size_height %}
-                            {{ item.size_width }} × {{ item.size_height }}
-                            {% else %}
-                            -
-                            {% endif %}
+                            {% if item.actual_width and item.actual_height %}
+                            {{ item.actual_width }} × {{ item.actual_height }}
+                            {% else %}-{% endif %}
                         </td>
-                        <td>{{ item.unit or '-' }}</td>
+                        <td>
+                            {% if item.chargeable_width and item.chargeable_height %}
+                            {{ item.chargeable_width }} × {{ item.chargeable_height }}
+                            {% else %}-{% endif %}
+                        </td>
+                        <td>{{ item.unit or 'MM' }}</td>
                         <td>{{ item.quantity }}</td>
+                        <td>{{ "{:.4f}".format(item.unit_square) if item.unit_square else '-' }}</td>
                         <td>₹{{ "{:,.2f}".format(item.rate_sqper) }}</td>
                         <td>₹{{ "{:,.2f}".format(item.total) }}</td>
                     </tr>
+                    {% endif %}
                     {% endfor %}
                 </tbody>
             </table>

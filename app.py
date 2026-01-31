@@ -1217,74 +1217,138 @@ def quotes_list():
 @app.route('/quotes/new', methods=['GET', 'POST'])
 @login_required
 def quote_new():
-    """Create new quote"""
+    """Create new quote with hierarchical items"""
     from models import Quote, QuoteItem
     from datetime import date, timedelta
     
     if request.method == 'POST':
-        # Get form data
-        data = request.form
-        
-        # Generate quote number
-        quote_number = Quote.generate_quote_number()
-        
-        # Parse dates
-        quote_date = datetime.strptime(data.get('quote_date'), '%Y-%m-%d').date()
-        expected_date = datetime.strptime(data.get('expected_date'), '%Y-%m-%d').date() if data.get('expected_date') else None
-        
-        # Create quote
-        quote = Quote(
-            quote_number=quote_number,
-            quote_date=quote_date,
-            expected_date=expected_date,
-            customer_name=data.get('customer_name'),
-            customer_address=data.get('customer_address'),
-            customer_city=data.get('customer_city'),
-            customer_state=data.get('customer_state'),
-            customer_phone=data.get('customer_phone'),
-            customer_email=data.get('customer_email'),
-            invoice_to=data.get('invoice_to'),
-            dispatch_to=data.get('dispatch_to'),
-            self_pickup=bool(data.get('self_pickup')),
-            delivery_charges=float(data.get('delivery_charges', 0)),
-            installation_charges=float(data.get('installation_charges', 0)),
-            freight_charges=float(data.get('freight_charges', 0)),
-            transport_charges=float(data.get('transport_charges', 0)),
-            gst_percentage=float(data.get('gst_percentage', 18)),
-            payment_terms=data.get('payment_terms'),
-            status=data.get('status', 'Draft'),
-            created_by=current_user.id
-        )
-        
-        db.session.add(quote)
-        db.session.flush()  # Get quote ID
-        
-        # Add quote items
-        item_count = int(data.get('item_count', 0))
-        for i in range(item_count):
-            particular = data.get(f'item_{i}_particular')
-            if particular:  # Only add if particular is provided
+        try:
+            # Get form data
+            data = request.form
+            
+            # Generate quote number
+            quote_number = Quote.generate_quote_number()
+            
+            # Parse dates
+            quote_date = datetime.strptime(data.get('quote_date'), '%Y-%m-%d').date()
+            expected_date = datetime.strptime(data.get('expected_date'), '%Y-%m-%d').date() if data.get('expected_date') else None
+            
+            # Create quote
+            quote = Quote(
+                quote_number=quote_number,
+                quote_date=quote_date,
+                expected_date=expected_date,
+                customer_name=data.get('customer_name'),
+                customer_address=data.get('customer_address'),
+                customer_city=data.get('customer_city'),
+                customer_state=data.get('customer_state'),
+                customer_phone=data.get('customer_phone'),
+                customer_email=data.get('customer_email'),
+                invoice_to=data.get('invoice_to'),
+                dispatch_to=data.get('dispatch_to'),
+                self_pickup=bool(data.get('self_pickup')),
+                delivery_charges=float(data.get('delivery_charges', 0)),
+                installation_charges=float(data.get('installation_charges', 0)),
+                freight_charges=float(data.get('freight_charges', 0)),
+                transport_charges=float(data.get('transport_charges', 0)),
+                gst_percentage=float(data.get('gst_percentage', 18)),
+                payment_terms=data.get('payment_terms'),
+                status=data.get('status', 'Draft'),
+                created_by=current_user.id
+            )
+            
+            db.session.add(quote)
+            db.session.flush()  # Get quote ID
+            
+            # Process items - they come as items[0][field], items[1][field], etc.
+            items_data = {}
+            for key in data.keys():
+                if key.startswith('items['):
+                    # Parse items[0][particular] -> index=0, field=particular
+                    import re
+                    match = re.match(r'items\[(\d+)\]\[(\w+)\]', key)
+                    if match:
+                        index = int(match.group(1))
+                        field = match.group(2)
+                        if index not in items_data:
+                            items_data[index] = {}
+                        items_data[index][field] = data.get(key)
+            
+            # Create items in order, tracking parent IDs
+            parent_id_map = {}  # Maps form item index to database ID
+            index_to_group_id = {}  # Maps form index to group identifier (e.g., "group-1")
+            
+            for index in sorted(items_data.keys()):
+                item_data = items_data[index]
+                particular = item_data.get('particular')
+                
+                if not particular:
+                    continue
+                
+                is_group = item_data.get('is_group') == 'true'
+                parent_id_str = item_data.get('parent_id')  # This will be like "group-1", "group-2"
+                
+                # Determine actual parent_id by looking up the group identifier
+                actual_parent_id = None
+                if parent_id_str:
+                    # Find which index created this group
+                    for idx, group_id in index_to_group_id.items():
+                        if group_id == parent_id_str:
+                            actual_parent_id = parent_id_map.get(idx)
+                            break
+                
+                # Create item
                 item = QuoteItem(
                     quote_id=quote.id,
-                    item_number=i + 1,
+                    parent_id=actual_parent_id,
+                    is_group=is_group,
+                    sort_order=index,
+                    item_number=int(item_data.get('item_number', index + 1)),
                     particular=particular,
-                    size_width=data.get(f'item_{i}_size_width'),
-                    size_height=data.get(f'item_{i}_size_height'),
-                    unit=data.get(f'item_{i}_unit', 'MM'),
-                    chargeable_size_width=data.get(f'item_{i}_chargeable_width'),
-                    chargeable_size_height=data.get(f'item_{i}_chargeable_height'),
-                    quantity=int(data.get(f'item_{i}_quantity', 1)),
-                    rate_sqper=float(data.get(f'item_{i}_rate', 0)),
-                    total=float(data.get(f'item_{i}_total', 0))
+                    actual_width=float(item_data.get('actual_width')) if item_data.get('actual_width') else None,
+                    actual_height=float(item_data.get('actual_height')) if item_data.get('actual_height') else None,
+                    chargeable_width=float(item_data.get('chargeable_width')) if item_data.get('chargeable_width') else None,
+                    chargeable_height=float(item_data.get('chargeable_height')) if item_data.get('chargeable_height') else None,
+                    unit=item_data.get('unit', 'MM'),
+                    quantity=int(item_data.get('quantity', 1)) if not is_group else 1,
+                    rate_sqper=float(item_data.get('rate_sqper', 0)) if not is_group else 0,
+                    total=float(item_data.get('total', 0)) if not is_group else 0
                 )
+                
+                # Calculate unit square if dimensions provided
+                if item.chargeable_width and item.chargeable_height:
+                    item.calculate_unit_square()
+                
+                # Calculate total if not a group
+                if not is_group:
+                    item.calculate_total()
+                
                 db.session.add(item)
-        
-        # Calculate totals
-        quote.calculate_totals()
-        
-        db.session.commit()
-        flash(f'Quote {quote_number} created successfully!', 'success')
-        return redirect(url_for('quote_view', id=quote.id))
+                db.session.flush()  # Get item ID
+                
+                # Store mapping: form index -> database ID
+                parent_id_map[index] = item.id
+                
+                # If this is a group, also store its group identifier
+                if is_group:
+                    # The group identifier would be in the dataset.itemId from JavaScript
+                    # For now, we'll use the index as the identifier
+                    index_to_group_id[index] = f"group-{item.item_number}"
+            
+            # Calculate quote totals
+            quote.subtotal = float(data.get('subtotal', 0))
+            quote.gst_amount = float(data.get('gst_amount', 0))
+            quote.round_off = float(data.get('round_off', 0))
+            quote.total = float(data.get('total', 0))
+            
+            db.session.commit()
+            flash(f'Quote {quote_number} created successfully!', 'success')
+            return redirect(url_for('quote_view', id=quote.id))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error creating quote: {str(e)}', 'danger')
+            return redirect(url_for('quote_new'))
     
     # GET request - show form
     from datetime import date, timedelta
@@ -1310,64 +1374,124 @@ def quote_view(id):
 @app.route('/quotes/<int:id>/edit', methods=['GET', 'POST'])
 @login_required
 def quote_edit(id):
-    """Edit existing quote"""
+    """Edit existing quote with hierarchical items"""
     from models import Quote, QuoteItem
     
     quote = Quote.query.get_or_404(id)
     
     if request.method == 'POST':
-        data = request.form
-        
-        # Update quote fields
-        quote.quote_date = datetime.strptime(data.get('quote_date'), '%Y-%m-%d').date()
-        quote.expected_date = datetime.strptime(data.get('expected_date'), '%Y-%m-%d').date() if data.get('expected_date') else None
-        quote.customer_name = data.get('customer_name')
-        quote.customer_address = data.get('customer_address')
-        quote.customer_city = data.get('customer_city')
-        quote.customer_state = data.get('customer_state')
-        quote.customer_phone = data.get('customer_phone')
-        quote.customer_email = data.get('customer_email')
-        quote.invoice_to = data.get('invoice_to')
-        quote.dispatch_to = data.get('dispatch_to')
-        quote.self_pickup = bool(data.get('self_pickup'))
-        quote.delivery_charges = float(data.get('delivery_charges', 0))
-        quote.installation_charges = float(data.get('installation_charges', 0))
-        quote.freight_charges = float(data.get('freight_charges', 0))
-        quote.transport_charges = float(data.get('transport_charges', 0))
-        quote.gst_percentage = float(data.get('gst_percentage', 18))
-        quote.payment_terms = data.get('payment_terms')
-        quote.status = data.get('status', 'Draft')
-        
-        # Delete existing items
-        QuoteItem.query.filter_by(quote_id=quote.id).delete()
-        
-        # Add updated items
-        item_count = int(data.get('item_count', 0))
-        for i in range(item_count):
-            particular = data.get(f'item_{i}_particular')
-            if particular:
+        try:
+            data = request.form
+            
+            # Update quote fields
+            quote.quote_date = datetime.strptime(data.get('quote_date'), '%Y-%m-%d').date()
+            quote.expected_date = datetime.strptime(data.get('expected_date'), '%Y-%m-%d').date() if data.get('expected_date') else None
+            quote.customer_name = data.get('customer_name')
+            quote.customer_address = data.get('customer_address')
+            quote.customer_city = data.get('customer_city')
+            quote.customer_state = data.get('customer_state')
+            quote.customer_phone = data.get('customer_phone')
+            quote.customer_email = data.get('customer_email')
+            quote.invoice_to = data.get('invoice_to')
+            quote.dispatch_to = data.get('dispatch_to')
+            quote.self_pickup = bool(data.get('self_pickup'))
+            quote.delivery_charges = float(data.get('delivery_charges', 0))
+            quote.installation_charges = float(data.get('installation_charges', 0))
+            quote.freight_charges = float(data.get('freight_charges', 0))
+            quote.transport_charges = float(data.get('transport_charges', 0))
+            quote.gst_percentage = float(data.get('gst_percentage', 18))
+            quote.payment_terms = data.get('payment_terms')
+            quote.status = data.get('status', 'Draft')
+            
+            # Delete existing items (cascade will handle children)
+            QuoteItem.query.filter_by(quote_id=quote.id).delete()
+            
+            # Process items - same logic as quote_new
+            items_data = {}
+            for key in data.keys():
+                if key.startswith('items['):
+                    import re
+                    match = re.match(r'items\[(\d+)\]\[(\w+)\]', key)
+                    if match:
+                        index = int(match.group(1))
+                        field = match.group(2)
+                        if index not in items_data:
+                            items_data[index] = {}
+                        items_data[index][field] = data.get(key)
+            
+            # Create items in order, tracking parent IDs
+            parent_id_map = {}  # Maps form item index to database ID
+            index_to_group_id = {}  # Maps form index to group identifier
+            
+            for index in sorted(items_data.keys()):
+                item_data = items_data[index]
+                particular = item_data.get('particular')
+                
+                if not particular:
+                    continue
+                
+                is_group = item_data.get('is_group') == 'true'
+                parent_id_str = item_data.get('parent_id')
+                
+                # Determine actual parent_id by looking up the group identifier
+                actual_parent_id = None
+                if parent_id_str:
+                    for idx, group_id in index_to_group_id.items():
+                        if group_id == parent_id_str:
+                            actual_parent_id = parent_id_map.get(idx)
+                            break
+                
+                # Create item
                 item = QuoteItem(
                     quote_id=quote.id,
-                    item_number=i + 1,
+                    parent_id=actual_parent_id,
+                    is_group=is_group,
+                    sort_order=index,
+                    item_number=int(item_data.get('item_number', index + 1)),
                     particular=particular,
-                    size_width=data.get(f'item_{i}_size_width'),
-                    size_height=data.get(f'item_{i}_size_height'),
-                    unit=data.get(f'item_{i}_unit', 'MM'),
-                    chargeable_size_width=data.get(f'item_{i}_chargeable_width'),
-                    chargeable_size_height=data.get(f'item_{i}_chargeable_height'),
-                    quantity=int(data.get(f'item_{i}_quantity', 1)),
-                    rate_sqper=float(data.get(f'item_{i}_rate', 0)),
-                    total=float(data.get(f'item_{i}_total', 0))
+                    actual_width=float(item_data.get('actual_width')) if item_data.get('actual_width') else None,
+                    actual_height=float(item_data.get('actual_height')) if item_data.get('actual_height') else None,
+                    chargeable_width=float(item_data.get('chargeable_width')) if item_data.get('chargeable_width') else None,
+                    chargeable_height=float(item_data.get('chargeable_height')) if item_data.get('chargeable_height') else None,
+                    unit=item_data.get('unit', 'MM'),
+                    quantity=int(item_data.get('quantity', 1)) if not is_group else 1,
+                    rate_sqper=float(item_data.get('rate_sqper', 0)) if not is_group else 0,
+                    total=float(item_data.get('total', 0)) if not is_group else 0
                 )
+                
+                # Calculate unit square if dimensions provided
+                if item.chargeable_width and item.chargeable_height:
+                    item.calculate_unit_square()
+                
+                # Calculate total if not a group
+                if not is_group:
+                    item.calculate_total()
+                
                 db.session.add(item)
-        
-        # Recalculate totals
-        quote.calculate_totals()
-        quote.updated_at = datetime.utcnow()
-        
-        db.session.commit()
-        flash(f'Quote {quote.quote_number} updated successfully!', 'success')
-        return redirect(url_for('quote_view', id=quote.id))
+                db.session.flush()
+                
+                # Store mapping: form index -> database ID
+                parent_id_map[index] = item.id
+                
+                # If this is a group, also store its group identifier
+                if is_group:
+                    index_to_group_id[index] = f"group-{item.item_number}"
+            
+            # Update quote totals
+            quote.subtotal = float(data.get('subtotal', 0))
+            quote.gst_amount = float(data.get('gst_amount', 0))
+            quote.round_off = float(data.get('round_off', 0))
+            quote.total = float(data.get('total', 0))
+            quote.updated_at = datetime.utcnow()
+            
+            db.session.commit()
+            flash(f'Quote {quote.quote_number} updated successfully!', 'success')
+            return redirect(url_for('quote_view', id=quote.id))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error updating quote: {str(e)}', 'danger')
+            return redirect(url_for('quote_edit', id=id))
     
     # GET request - show form with existing data
     return render_template('quotes/form.html',

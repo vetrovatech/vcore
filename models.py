@@ -442,29 +442,37 @@ class Quote(db.Model):
 
 
 class QuoteItem(db.Model):
-    """Quote item model for individual line items in a quote"""
+    """Quote item model for individual line items in a quote with hierarchical support"""
     __tablename__ = 'quote_items'
     
     # Primary key
     id = db.Column(db.Integer, primary_key=True)
     
-    # Foreign key
+    # Foreign keys
     quote_id = db.Column(db.Integer, db.ForeignKey('quotes.id'), nullable=False, index=True)
+    parent_id = db.Column(db.Integer, db.ForeignKey('quote_items.id'), nullable=True)  # For hierarchical structure
+    
+    # Grouping and ordering
+    is_group = db.Column(db.Boolean, default=False)  # True for parent/group items
+    sort_order = db.Column(db.Integer, default=0)  # Custom ordering
     
     # Item details
     item_number = db.Column(db.Integer, nullable=False)  # Line item number (1, 2, 3...)
     particular = db.Column(db.String(300), nullable=False)  # Product name/description
     
-    # Dimensions
-    size_width = db.Column(db.String(50), nullable=True)  # Actual size width
-    size_height = db.Column(db.String(50), nullable=True)  # Actual size height
-    unit = db.Column(db.String(20), nullable=True)  # MM, sqft, etc.
-    chargeable_size_width = db.Column(db.String(50), nullable=True)  # Chargeable size width
-    chargeable_size_height = db.Column(db.String(50), nullable=True)  # Chargeable size height
+    # Actual dimensions (what was measured/ordered)
+    actual_width = db.Column(db.Numeric(10, 2), nullable=True)
+    actual_height = db.Column(db.Numeric(10, 2), nullable=True)
+    
+    # Chargeable dimensions (what is billed - can differ from actual)
+    chargeable_width = db.Column(db.Numeric(10, 2), nullable=True)
+    chargeable_height = db.Column(db.Numeric(10, 2), nullable=True)
+    
+    unit = db.Column(db.String(20), nullable=True, default='MM')  # MM, sqft, etc.
+    unit_square = db.Column(db.Numeric(10, 4), nullable=True)  # Calculated area in square meters
     
     # Pricing
     quantity = db.Column(db.Integer, nullable=False, default=1)
-    first_sqper = db.Column(db.Numeric(10, 2), nullable=True)  # First rate (if different)
     rate_sqper = db.Column(db.Numeric(10, 2), nullable=False)  # Rate per unit
     total = db.Column(db.Numeric(10, 2), nullable=False)  # Calculated total
     
@@ -472,14 +480,55 @@ class QuoteItem(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
+    # Relationships
+    children = db.relationship('QuoteItem', 
+                              backref=db.backref('parent', remote_side=[id]),
+                              cascade='all, delete-orphan',
+                              order_by='QuoteItem.sort_order')
+    
     # Indexes
     __table_args__ = (
         db.Index('idx_quote_item', 'quote_id', 'item_number'),
+        db.Index('idx_parent_item', 'parent_id'),
     )
+    
+    def calculate_unit_square(self):
+        """Calculate unit square (area) from chargeable dimensions"""
+        if self.chargeable_width and self.chargeable_height and self.unit == 'MM':
+            # Convert MM² to M²
+            area_mm2 = float(self.chargeable_width) * float(self.chargeable_height)
+            self.unit_square = area_mm2 / 1000000  # Convert to square meters
+        elif self.chargeable_width and self.chargeable_height:
+            # For other units, just multiply
+            self.unit_square = float(self.chargeable_width) * float(self.chargeable_height)
     
     def calculate_total(self):
         """Calculate total for this line item"""
-        self.total = self.quantity * self.rate_sqper
+        if self.is_group:
+            # For group items, total is sum of children
+            self.total = sum(child.total for child in self.children) if self.children else 0
+        else:
+            # For regular items, calculate from quantity and rate
+            self.total = self.quantity * self.rate_sqper
+    
+    def get_display_number(self, parent_number=None):
+        """Get hierarchical display number (e.g., 1, 1.1, 1.2, 2, 2.1)"""
+        if parent_number:
+            # This is a sub-item
+            siblings = [c for c in self.parent.children if c.id <= self.id]
+            sub_number = len(siblings)
+            return f"{parent_number}.{sub_number}"
+        else:
+            # This is a top-level item
+            return str(self.item_number)
+    
+    def get_all_children(self):
+        """Get all children recursively"""
+        all_children = []
+        for child in self.children:
+            all_children.append(child)
+            all_children.extend(child.get_all_children())
+        return all_children
     
     def __repr__(self):
         return f'<QuoteItem {self.item_number} - {self.particular}>'

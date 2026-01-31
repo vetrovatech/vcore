@@ -1,54 +1,24 @@
 {% extends "base.html" %}
 
-{% block title %}{{ title }} - VCore{% endblock %}
-
-{% block extra_css %}
-<style>
-    .quote-items-table {
-        width: 100%;
-        font-size: 0.9rem;
-    }
-
-    .quote-items-table input {
-        font-size: 0.85rem;
-        padding: 0.25rem 0.5rem;
-    }
-
-    .item-row {
-        border-bottom: 1px solid #dee2e6;
-    }
-</style>
-{% endblock %}
+{% block title %}{{ 'Edit Quote' if quote else 'New Quote' }} - VCore{% endblock %}
 
 {% block content %}
-<div class="mb-4">
-    <h2><i class="bi bi-file-earmark-text"></i> {{ title }}</h2>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-file-earmark-text"></i> {{ 'Edit Quote' if quote else 'New Quote' }}</h2>
+    <a href="{{ url_for('quotes_list') }}" class="btn btn-secondary">
+        <i class="bi bi-arrow-left"></i> Back to List
+    </a>
 </div>
 
 <form method="POST" id="quoteForm">
-    <div class="row">
-        <!-- Customer Information -->
-        <div class="col-md-6">
-            <div class="card mb-4">
-                <div class="card-header">
-                    <h5 class="mb-0">Customer Information</h5>
-                </div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label">Quote Number</label>
-                        <input type="text" class="form-control"
-                            value="{{ quote.quote_number if quote else 'Auto-generated' }}" disabled>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Quote Date *</label>
-                        <input type="date" class="form-control" name="quote_date"
-                            value="{{ quote.quote_date if quote else default_quote_date }}" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Expected Date</label>
-                        <input type="date" class="form-control" name="expected_date"
-                            value="{{ quote.expected_date if quote else default_expected_date }}">
-                    </div>
+    <!-- Customer Information -->
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">Customer Information</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
                     <div class="mb-3">
                         <label class="form-label">Customer Name *</label>
                         <input type="text" class="form-control" name="customer_name"
@@ -71,74 +41,65 @@
                                 value="{{ quote.customer_state if quote else '' }}">
                         </div>
                     </div>
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Phone</label>
-                            <input type="tel" class="form-control" name="customer_phone"
-                                value="{{ quote.customer_phone if quote else '' }}">
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Email</label>
-                            <input type="email" class="form-control" name="customer_email"
-                                value="{{ quote.customer_email if quote else '' }}">
-                        </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label">Phone</label>
+                        <input type="tel" class="form-control" name="customer_phone"
+                            value="{{ quote.customer_phone if quote else '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-control" name="customer_email"
+                            value="{{ quote.customer_email if quote else '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Dispatch To</label>
+                        <textarea class="form-control" name="dispatch_to"
+                            rows="2">{{ quote.dispatch_to if quote else '' }}</textarea>
+                        <small class="text-muted">Leave blank to use customer address</small>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- Quote Details -->
-        <div class="col-md-6">
-            <div class="card mb-4">
-                <div class="card-header">
-                    <h5 class="mb-0">Quote Details</h5>
+    <!-- Quote Details -->
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">Quote Details</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Quote Date *</label>
+                    <input type="date" class="form-control" name="quote_date"
+                        value="{{ quote.quote_date.strftime('%Y-%m-%d') if quote else '' }}" required>
                 </div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label">Status</label>
-                        <select class="form-select" name="status">
-                            <option value="Draft" {% if not quote or quote.status=='Draft' %}selected{% endif %}>Draft
-                            </option>
-                            <option value="Sent" {% if quote and quote.status=='Sent' %}selected{% endif %}>Sent
-                            </option>
-                            <option value="Accepted" {% if quote and quote.status=='Accepted' %}selected{% endif %}>
-                                Accepted</option>
-                            <option value="Rejected" {% if quote and quote.status=='Rejected' %}selected{% endif %}>
-                                Rejected</option>
-                            <option value="Expired" {% if quote and quote.status=='Expired' %}selected{% endif %}>
-                                Expired</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Payment Terms</label>
-                        <textarea class="form-control" name="payment_terms"
-                            rows="3">{{ quote.payment_terms if quote else default_payment_terms }}</textarea>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Delivery Charges (₹)</label>
-                        <input type="number" step="0.01" class="form-control charge-input" name="delivery_charges"
-                            value="{{ quote.delivery_charges if quote else 0 }}">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Installation Charges (₹)</label>
-                        <input type="number" step="0.01" class="form-control charge-input" name="installation_charges"
-                            value="{{ quote.installation_charges if quote else 0 }}">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Freight Charges (₹)</label>
-                        <input type="number" step="0.01" class="form-control charge-input" name="freight_charges"
-                            value="{{ quote.freight_charges if quote else 0 }}">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Transport Charges (₹)</label>
-                        <input type="number" step="0.01" class="form-control charge-input" name="transport_charges"
-                            value="{{ quote.transport_charges if quote else 0 }}">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">GST (%)</label>
-                        <input type="number" step="0.01" class="form-control" name="gst_percentage" id="gst_percentage"
-                            value="{{ quote.gst_percentage if quote else 18 }}">
-                    </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Expected Date</label>
+                    <input type="date" class="form-control" name="expected_date"
+                        value="{{ quote.expected_date.strftime('%Y-%m-%d') if quote and quote.expected_date else '' }}">
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" name="status">
+                        <option value="Draft" {{ 'selected' if quote and quote.status=='Draft' else '' }}>Draft</option>
+                        <option value="Sent" {{ 'selected' if quote and quote.status=='Sent' else '' }}>Sent</option>
+                        <option value="Accepted" {{ 'selected' if quote and quote.status=='Accepted' else '' }}>Accepted
+                        </option>
+                        <option value="Rejected" {{ 'selected' if quote and quote.status=='Rejected' else '' }}>Rejected
+                        </option>
+                        <option value="Expired" {{ 'selected' if quote and quote.status=='Expired' else '' }}>Expired
+                        </option>
+                    </select>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">
+                        <input type="checkbox" name="self_pickup" {{ 'checked' if quote and quote.self_pickup else ''
+                            }}>
+                        Self Pickup
+                    </label>
                 </div>
             </div>
         </div>
@@ -146,120 +107,180 @@
 
     <!-- Line Items -->
     <div class="card mb-4">
-        <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
             <h5 class="mb-0">Line Items</h5>
-            <button type="button" class="btn btn-sm btn-primary" onclick="addItem()">
-                <i class="bi bi-plus-circle"></i> Add Item
+            <button type="button" class="btn btn-sm btn-light" onclick="addGroup()">
+                <i class="bi bi-plus-circle"></i> Add Group
             </button>
         </div>
-        <div class="card-body">
+        <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table quote-items-table" id="itemsTable">
-                    <thead>
+                <table class="table table-sm mb-0" id="itemsTable">
+                    <thead class="table-light">
                         <tr>
-                            <th style="width: 5%">#</th>
-                            <th style="width: 25%">Product/Description</th>
-                            <th style="width: 10%">Width</th>
-                            <th style="width: 10%">Height</th>
-                            <th style="width: 8%">Unit</th>
-                            <th style="width: 8%">Qty</th>
-                            <th style="width: 12%">Rate</th>
-                            <th style="width: 12%">Total</th>
-                            <th style="width: 5%"></th>
+                            <th style="width: 5%;">S.No</th>
+                            <th style="width: 15%;">Particular</th>
+                            <th style="width: 8%;">Actual W</th>
+                            <th style="width: 8%;">Actual H</th>
+                            <th style="width: 6%;">Unit</th>
+                            <th style="width: 8%;">Charge W</th>
+                            <th style="width: 8%;">Charge H</th>
+                            <th style="width: 6%;">Qty</th>
+                            <th style="width: 8%;">Unit Sq</th>
+                            <th style="width: 10%;">Rate/Sq</th>
+                            <th style="width: 10%;">Total</th>
+                            <th style="width: 8%;">Action</th>
                         </tr>
                     </thead>
                     <tbody id="itemsBody">
-                        {% if quote and quote.items %}
-                        {% for item in quote.items %}
-                        <tr class="item-row" data-item-index="{{ loop.index0 }}">
-                            <td>{{ loop.index }}</td>
-                            <td><input type="text" class="form-control form-control-sm"
-                                    name="item_{{ loop.index0 }}_particular" value="{{ item.particular }}" required>
-                            </td>
-                            <td><input type="text" class="form-control form-control-sm"
-                                    name="item_{{ loop.index0 }}_size_width" value="{{ item.size_width }}"></td>
-                            <td><input type="text" class="form-control form-control-sm"
-                                    name="item_{{ loop.index0 }}_size_height" value="{{ item.size_height }}"></td>
-                            <td><input type="text" class="form-control form-control-sm"
-                                    name="item_{{ loop.index0 }}_unit" value="{{ item.unit }}" placeholder="MM"></td>
-                            <td><input type="number" class="form-control form-control-sm item-qty"
-                                    name="item_{{ loop.index0 }}_quantity" value="{{ item.quantity }}" min="1" required>
-                            </td>
-                            <td><input type="number" step="0.01" class="form-control form-control-sm item-rate"
-                                    name="item_{{ loop.index0 }}_rate" value="{{ item.rate_sqper }}" required></td>
-                            <td><input type="number" step="0.01" class="form-control form-control-sm item-total"
-                                    name="item_{{ loop.index0 }}_total" value="{{ item.total }}" readonly></td>
-                            <td><button type="button" class="btn btn-sm btn-danger" onclick="removeItem(this)"><i
-                                        class="bi bi-trash"></i></button></td>
-                        </tr>
-                        {% endfor %}
-                        {% else %}
-                        <tr class="item-row" data-item-index="0">
-                            <td>1</td>
-                            <td><input type="text" class="form-control form-control-sm" name="item_0_particular"
-                                    required></td>
-                            <td><input type="text" class="form-control form-control-sm" name="item_0_size_width"></td>
-                            <td><input type="text" class="form-control form-control-sm" name="item_0_size_height"></td>
-                            <td><input type="text" class="form-control form-control-sm" name="item_0_unit"
-                                    placeholder="MM"></td>
-                            <td><input type="number" class="form-control form-control-sm item-qty"
-                                    name="item_0_quantity" value="1" min="1" required></td>
-                            <td><input type="number" step="0.01" class="form-control form-control-sm item-rate"
-                                    name="item_0_rate" required></td>
-                            <td><input type="number" step="0.01" class="form-control form-control-sm item-total"
-                                    name="item_0_total" readonly></td>
-                            <td><button type="button" class="btn btn-sm btn-danger" onclick="removeItem(this)"><i
-                                        class="bi bi-trash"></i></button></td>
-                        </tr>
-                        {% endif %}
+                        <!-- Items will be added dynamically -->
                     </tbody>
                 </table>
             </div>
-            <input type="hidden" name="item_count" id="item_count"
-                value="{{ quote.items|length if quote and quote.items else 1 }}">
         </div>
     </div>
 
-    <!-- Totals Summary -->
+    <!-- Charges and Totals -->
     <div class="row">
-        <div class="col-md-6 offset-md-6">
-            <div class="card">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0">Additional Charges</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Delivery Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="delivery_charges"
+                                name="delivery_charges" value="{{ quote.delivery_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Installation Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="installation_charges"
+                                name="installation_charges" value="{{ quote.installation_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Freight Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="freight_charges"
+                                name="freight_charges" value="{{ quote.freight_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Transport Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="transport_charges"
+                                name="transport_charges" value="{{ quote.transport_charges if quote else 0 }}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0">Totals</h6>
+                </div>
                 <div class="card-body">
                     <table class="table table-sm mb-0">
                         <tr>
-                            <td><strong>Subtotal:</strong></td>
-                            <td class="text-end" id="subtotal">₹0.00</td>
+                            <td>Subtotal:</td>
+                            <td class="text-end"><strong id="subtotal_display">0.00</strong></td>
                         </tr>
                         <tr>
-                            <td><strong>GST (<span id="gst_percent">18</span>%):</strong></td>
-                            <td class="text-end" id="gst_amount">₹0.00</td>
+                            <td>
+                                GST
+                                <input type="number" step="0.01" class="form-control form-control-sm d-inline-block"
+                                    id="gst_percentage" name="gst_percentage"
+                                    value="{{ quote.gst_percentage if quote else 18 }}" style="width: 60px;"> %
+                            </td>
+                            <td class="text-end"><strong id="gst_display">0.00</strong></td>
                         </tr>
                         <tr>
-                            <td><strong>Round Off:</strong></td>
-                            <td class="text-end" id="round_off">₹0.00</td>
+                            <td>Round Off:</td>
+                            <td class="text-end"><strong id="roundoff_display">0.00</strong></td>
                         </tr>
-                        <tr class="table-active">
+                        <tr class="table-primary">
                             <td><strong>Total:</strong></td>
-                            <td class="text-end"><strong id="total">₹0.00</strong></td>
+                            <td class="text-end"><strong id="total_display">0.00</strong></td>
                         </tr>
                     </table>
+
+                    <!-- Hidden fields for form submission -->
+                    <input type="hidden" id="subtotal" name="subtotal">
+                    <input type="hidden" id="gst_amount" name="gst_amount">
+                    <input type="hidden" id="round_off" name="round_off">
+                    <input type="hidden" id="total" name="total">
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- Payment Terms -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h6 class="mb-0">Payment Terms</h6>
+        </div>
+        <div class="card-body">
+            <textarea class="form-control" name="payment_terms"
+                rows="3">{{ quote.payment_terms if quote else 'For Confirmation the order need to give 100% of Quotation Value' }}</textarea>
+        </div>
+    </div>
+
     <!-- Form Actions -->
-    <div class="mt-4 mb-5">
-        <button type="submit" class="btn btn-primary">
+    <div class="mb-5">
+        <button type="submit" class="btn btn-primary btn-lg">
             <i class="bi bi-save"></i> Save Quote
         </button>
-        <a href="{{ url_for('quotes_list') }}" class="btn btn-secondary">
+        <a href="{{ url_for('quotes_list') }}" class="btn btn-secondary btn-lg">
             <i class="bi bi-x-circle"></i> Cancel
         </a>
     </div>
 </form>
-{% endblock %}
 
-{% block extra_js %}
-<script src="{{ url_for('static', filename='js/quote_form.js') }}"></script>
+{%if quote%}
+<script>
+    // Pre-populate existing items when editing
+    window.existingQuoteData = {
+        items: [
+            {%for item in quote.items if not item.parent_id %}
+    {
+        id: {{ item.id }},
+        is_group: {{ 'true' if item.is_group else 'false' }},
+        item_number: {{ item.item_number }},
+        particular: "{{item.particular|replace('"', '\\"')}}",
+            actual_width: {{ item.actual_width if item.actual_width else 'null' }},
+        actual_height: {{ item.actual_height if item.actual_height else 'null' }},
+        chargeable_width: {{ item.chargeable_width if item.chargeable_width else 'null' }},
+        chargeable_height: {{ item.chargeable_height if item.chargeable_height else 'null' }},
+        unit: "{{item.unit or 'MM'}}",
+            quantity: {{ item.quantity }},
+        unit_square: {{ item.unit_square if item.unit_square else 0 }},
+        rate_sqper: {{ item.rate_sqper }},
+        total: {{ item.total }},
+        children: [
+            {%if item.is_group %}
+    {%for child in item.children | sort(attribute = 'sort_order') %}
+    {
+        id: {{ child.id }},
+        particular: "{{child.particular|replace('"', '\\"')}}",
+            actual_width: {{ child.actual_width if child.actual_width else 'null' }},
+        actual_height: {{ child.actual_height if child.actual_height else 'null' }},
+        chargeable_width: {{ child.chargeable_width if child.chargeable_width else 'null' }},
+        chargeable_height: {{ child.chargeable_height if child.chargeable_height else 'null' }},
+        unit: "{{child.unit or 'MM'}}",
+            quantity: {{ child.quantity }},
+        unit_square: {{ child.unit_square if child.unit_square else 0 }},
+        rate_sqper: {{ child.rate_sqper }},
+        total: {{ child.total }}
+    } {{ ',' if not loop.last else '' }}
+    {% endfor %}
+    {% endif %}
+            ]
+        }{{ ',' if not loop.last else '' }}
+    {% endfor %}
+    ]
+};
+</script>
+{% endif %}
+
+<script src="{{ url_for('static', filename='js/quote_form_enhanced.js') }}"></script>
 {% endblock %}
