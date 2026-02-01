@@ -499,6 +499,8 @@ class QuoteItem(db.Model):
     # Additional item details
     hole = db.Column(db.Integer, default=0, nullable=False)  # Number of holes
     cutout = db.Column(db.Integer, default=0, nullable=False)  # Number of cutouts
+    hole_price = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Price per hole (group level)
+    cutout_price = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Price per cutout (group level)
     
     # Metadata
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -539,10 +541,20 @@ class QuoteItem(db.Model):
             self.total = sum(child.total for child in self.children) if self.children else 0
         else:
             # For regular items, calculate from unit_square and rate
+            base_total = 0
             if self.unit_square:
-                self.total = float(self.unit_square) * float(self.rate_sqper) * self.quantity
+                base_total = float(self.unit_square) * float(self.rate_sqper) * self.quantity
             else:
-                self.total = self.quantity * self.rate_sqper
+                base_total = self.quantity * self.rate_sqper
+            
+            # Add hole and cutout charges from parent group
+            hole_charge = 0
+            cutout_charge = 0
+            if self.parent:
+                hole_charge = float(self.hole) * float(self.parent.hole_price)
+                cutout_charge = float(self.cutout) * float(self.parent.cutout_price)
+            
+            self.total = base_total + hole_charge + cutout_charge
     
     def get_display_number(self, parent_number=None):
         """Get hierarchical display number (e.g., 1, 1.1, 1.2, 2, 2.1)"""

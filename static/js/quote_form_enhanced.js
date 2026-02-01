@@ -46,18 +46,31 @@ function loadExistingItems(items) {
 
             row.innerHTML = `
                 <td class="item-number" style="font-weight: bold;">${groupCounter}</td>
-                <td colspan="10">
-                    <div style="display: flex; align-items: center; gap: 10px;">
+                <td colspan="12">
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                         <input type="text" class="form-control form-control-sm particular-input" 
                                name="items[${itemCounter}][particular]" 
                                value="${item.particular}"
                                placeholder="Product Group (e.g., 8mm Toughened Glass)"
-                               style="font-weight: bold;" required>
+                               style="font-weight: bold; flex: 1; min-width: 200px;" required>
                         <label class="form-label mb-0" style="white-space: nowrap;">Chargeable Extra (MM):</label>
                         <input type="number" class="form-control form-control-sm chargeable-extra-input" 
                                name="items[${itemCounter}][chargeable_extra]" 
                                value="${item.chargeable_extra || 30}"
                                style="width: 80px;" min="0">
+                        <label class="form-label mb-0" style="white-space: nowrap;">Hole Price:</label>
+                        <input type="number" step="0.01" class="form-control form-control-sm hole-price-input" 
+                               name="items[${itemCounter}][hole_price]" 
+                               value="${item.hole_price || 400}"
+                               style="width: 80px;" min="0">
+                        <label class="form-label mb-0" style="white-space: nowrap;">Cutout Price:</label>
+                        <input type="number" step="0.01" class="form-control form-control-sm cutout-price-input" 
+                               name="items[${itemCounter}][cutout_price]" 
+                               value="${item.cutout_price || 100}"
+                               style="width: 80px;" min="0">
+                        <button type="button" class="btn btn-sm btn-primary" onclick="recalculateGroupItems(this)" title="Recalculate all items in this group">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
                         <input type="hidden" name="items[${itemCounter}][is_group]" value="true">
                         <input type="hidden" name="items[${itemCounter}][item_number]" value="${groupCounter}">
                         <button type="button" class="btn btn-sm btn-success" onclick="addSubItem(this)" title="Add Sub-item">
@@ -155,6 +168,18 @@ function addSubItemWithData(groupRow, data) {
                    placeholder="0.0000" readonly>
         </td>
         <td>
+            <input type="number" class="form-control form-control-sm hole-input" 
+                   name="items[${itemCounter}][hole]" 
+                   value="${data.hole || 0}"
+                   min="0" onchange="calculateItemTotal(this)">
+        </td>
+        <td>
+            <input type="number" class="form-control form-control-sm cutout-input" 
+                   name="items[${itemCounter}][cutout]" 
+                   value="${data.cutout || 0}"
+                   min="0" onchange="calculateItemTotal(this)">
+        </td>
+        <td>
             <input type="number" step="0.01" class="form-control form-control-sm rate-input" 
                    name="items[${itemCounter}][rate_sqper]" 
                    value="${data.rate_sqper}"
@@ -198,17 +223,30 @@ function addGroup() {
 
     row.innerHTML = `
         <td class="item-number" style="font-weight: bold;">${groupCounter}</td>
-        <td colspan="10">
-            <div style="display: flex; align-items: center; gap: 10px;">
+        <td colspan="12">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                 <input type="text" class="form-control form-control-sm particular-input" 
                        name="items[${itemCounter}][particular]" 
                        placeholder="Product Group (e.g., 8mm Toughened Glass)"
-                       style="font-weight: bold;" required>
+                       style="font-weight: bold; flex: 1; min-width: 200px;" required>
                 <label class="form-label mb-0" style="white-space: nowrap;">Chargeable Extra (MM):</label>
                 <input type="number" class="form-control form-control-sm chargeable-extra-input" 
                        name="items[${itemCounter}][chargeable_extra]" 
                        value="30"
                        style="width: 80px;" min="0">
+                <label class="form-label mb-0" style="white-space: nowrap;">Hole Price:</label>
+                <input type="number" step="0.01" class="form-control form-control-sm hole-price-input" 
+                       name="items[${itemCounter}][hole_price]" 
+                       value="400"
+                       style="width: 80px;" min="0">
+                <label class="form-label mb-0" style="white-space: nowrap;">Cutout Price:</label>
+                <input type="number" step="0.01" class="form-control form-control-sm cutout-price-input" 
+                       name="items[${itemCounter}][cutout_price]" 
+                       value="100"
+                       style="width: 80px;" min="0">
+                <button type="button" class="btn btn-sm btn-primary" onclick="recalculateGroupItems(this)" title="Recalculate all items in this group">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </button>
                 <input type="hidden" name="items[${itemCounter}][is_group]" value="true">
                 <input type="hidden" name="items[${itemCounter}][item_number]" value="${groupCounter}">
                 <button type="button" class="btn btn-sm btn-success" onclick="addSubItem(this)" title="Add Sub-item">
@@ -293,6 +331,16 @@ function addSubItem(button) {
                    placeholder="0.0000" readonly>
         </td>
         <td>
+            <input type="number" class="form-control form-control-sm hole-input" 
+                   name="items[${itemCounter}][hole]" 
+                   value="0" min="0" onchange="calculateItemTotal(this)">
+        </td>
+        <td>
+            <input type="number" class="form-control form-control-sm cutout-input" 
+                   name="items[${itemCounter}][cutout]" 
+                   value="0" min="0" onchange="calculateItemTotal(this)">
+        </td>
+        <td>
             <input type="number" step="0.01" class="form-control form-control-sm rate-input" 
                    name="items[${itemCounter}][rate_sqper]" 
                    placeholder="Rate" onchange="calculateItemTotal(this)" required>
@@ -360,7 +408,7 @@ function removeItem(button) {
 }
 
 /**
- * Calculate total for a single item using: Area (Sq Mtr) × Rate / Sq Mtr × Quantity
+ * Calculate total for a single item using: Area (Sq Mtr) × Rate / Sq Mtr × Quantity + Hole/Cutout charges
  */
 function calculateItemTotal(input) {
     const row = input.closest('.item-row');
@@ -386,10 +434,25 @@ function calculateItemTotal(input) {
         unitSquareInput.value = unitSquare.toFixed(4);
     }
 
-    // Calculate total: Area (Sq Mtr) × Rate / Sq Mtr × Quantity
+    // Calculate base total: Area (Sq Mtr) × Rate / Sq Mtr × Quantity
     const quantity = parseInt(row.querySelector('.qty-input')?.value) || 0;
     const rate = parseFloat(row.querySelector('.rate-input')?.value) || 0;
-    const total = unitSquare * rate * quantity;
+    let total = unitSquare * rate * quantity;
+
+    // Add hole and cutout charges from parent group
+    const holes = parseInt(row.querySelector('.hole-input')?.value) || 0;
+    const cutouts = parseInt(row.querySelector('.cutout-input')?.value) || 0;
+
+    // Get pricing from parent group row
+    const parentId = row.dataset.parentId;
+    if (parentId) {
+        const groupRow = document.querySelector(`[data-item-id="${parentId}"]`);
+        if (groupRow) {
+            const holePrice = parseFloat(groupRow.querySelector('.hole-price-input')?.value) || 0;
+            const cutoutPrice = parseFloat(groupRow.querySelector('.cutout-price-input')?.value) || 0;
+            total += (holes * holePrice) + (cutouts * cutoutPrice);
+        }
+    }
 
     // Update total display
     const totalInput = row.querySelector('.total-display');
@@ -475,4 +538,54 @@ function updateTotals() {
     document.getElementById('gst_amount').value = gstAmount.toFixed(2);
     document.getElementById('round_off').value = roundOff.toFixed(2);
     document.getElementById('total').value = roundedTotal.toFixed(2);
+}
+
+/**
+ * Recalculate all sub-items when group-level values change
+ * This function is called when the refresh button is clicked
+ */
+function recalculateGroupItems(button) {
+    const groupRow = button.closest('.group-row');
+    const groupId = groupRow.dataset.itemId;
+
+    // Get the group-level values
+    const chargeableExtra = parseFloat(groupRow.querySelector('.chargeable-extra-input').value) || 30;
+    const holePrice = parseFloat(groupRow.querySelector('.hole-price-input').value) || 0;
+    const cutoutPrice = parseFloat(groupRow.querySelector('.cutout-price-input').value) || 0;
+
+    // Find all sub-items for this group
+    const subItems = document.querySelectorAll(`[data-parent-id="${groupId}"]`);
+
+    // Recalculate each sub-item
+    subItems.forEach(subItem => {
+        // Update chargeable dimensions based on actual dimensions and chargeable extra
+        const actualWidthInput = subItem.querySelector('.actual-width');
+        const actualHeightInput = subItem.querySelector('.actual-height');
+        const actualWidth = parseFloat(actualWidthInput?.value) || 0;
+        const actualHeight = parseFloat(actualHeightInput?.value) || 0;
+
+        if (actualWidth > 0 && actualHeight > 0) {
+            const chargeableWidthInput = subItem.querySelector('.chargeable-width');
+            const chargeableHeightInput = subItem.querySelector('.chargeable-height');
+
+            if (chargeableWidthInput && chargeableHeightInput) {
+                chargeableWidthInput.value = actualWidth + chargeableExtra;
+                chargeableHeightInput.value = actualHeight + chargeableExtra;
+            }
+        }
+
+        // Trigger recalculation of the total
+        const anyInput = subItem.querySelector('.qty-input');
+        if (anyInput) {
+            calculateItemTotal(anyInput);
+        }
+    });
+
+    // Show a brief visual feedback
+    button.classList.add('btn-success');
+    button.classList.remove('btn-primary');
+    setTimeout(() => {
+        button.classList.remove('btn-success');
+        button.classList.add('btn-primary');
+    }, 500);
 }

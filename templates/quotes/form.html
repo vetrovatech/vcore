@@ -77,7 +77,7 @@
                         value="{{ quote.quote_date.strftime('%Y-%m-%d') if quote else '' }}" required>
                 </div>
                 <div class="col-md-3 mb-3">
-                    <label class="form-label">Expected Date</label>
+                    <label class="form-label">Expected Delivery Date</label>
                     <input type="date" class="form-control" name="expected_date"
                         value="{{ quote.expected_date.strftime('%Y-%m-%d') if quote and quote.expected_date else '' }}">
                 </div>
@@ -131,17 +131,19 @@
                     <thead class="table-light">
                         <tr>
                             <th style="width: 5%;">S.No</th>
-                            <th style="width: 15%;">Particular</th>
-                            <th style="width: 8%;">Actual W</th>
-                            <th style="width: 8%;">Actual H</th>
-                            <th style="width: 6%;">Unit</th>
-                            <th style="width: 8%;">Charge W</th>
-                            <th style="width: 8%;">Charge H</th>
-                            <th style="width: 6%;">Qty</th>
-                            <th style="width: 8%;">Area (Sq Mtr)</th>
-                            <th style="width: 10%;">Rate / Sq Mtr</th>
-                            <th style="width: 10%;">Total</th>
-                            <th style="width: 8%;">Action</th>
+                            <th style="width: 13%;">Particular</th>
+                            <th style="width: 7%;">Actual W</th>
+                            <th style="width: 7%;">Actual H</th>
+                            <th style="width: 5%;">Unit</th>
+                            <th style="width: 7%;">Charge W</th>
+                            <th style="width: 7%;">Charge H</th>
+                            <th style="width: 5%;">Qty</th>
+                            <th style="width: 7%;">Area (Sq Mtr)</th>
+                            <th style="width: 5%;">Holes</th>
+                            <th style="width: 5%;">Cutouts</th>
+                            <th style="width: 9%;">Rate / Sq Mtr</th>
+                            <th style="width: 9%;">Total</th>
+                            <th style="width: 9%;">Action</th>
                         </tr>
                     </thead>
                     <tbody id="itemsBody">
@@ -172,16 +174,6 @@
                             <label class="form-label">Transport Charges</label>
                             <input type="number" step="0.01" class="form-control charge-input" id="transport_charges"
                                 name="transport_charges" value="{{ quote.transport_charges if quote else 0 }}">
-                        </div>
-                        <div class="col-md-6 mb-2">
-                            <label class="form-label">Cutout Charges</label>
-                            <input type="number" step="0.01" class="form-control charge-input" id="cutout_charges"
-                                name="cutout_charges" value="{{ quote.cutout_charges if quote else 0 }}">
-                        </div>
-                        <div class="col-md-6 mb-2">
-                            <label class="form-label">Holes Charges</label>
-                            <input type="number" step="0.01" class="form-control charge-input" id="holes_charges"
-                                name="holes_charges" value="{{ quote.holes_charges if quote else 0 }}">
                         </div>
                         <div class="col-md-6 mb-2">
                             <label class="form-label">Shape Cutting Charges</label>
@@ -219,6 +211,9 @@
                             <input type="number" step="0.01" class="form-control charge-input" id="frosted_charges"
                                 name="frosted_charges" value="{{ quote.frosted_charges if quote else 0 }}">
                         </div>
+                        <!-- Hidden fields for cutout and holes charges - set to 0 -->
+                        <input type="hidden" id="cutout_charges" name="cutout_charges" value="0">
+                        <input type="hidden" id="holes_charges" name="holes_charges" value="0">
                     </div>
                 </div>
             </div>
@@ -270,8 +265,15 @@
             <h6 class="mb-0">Payment Terms</h6>
         </div>
         <div class="card-body">
-            <textarea class="form-control" name="payment_terms"
-                rows="3">{{ quote.payment_terms if quote else 'For Confirmation the order need to give 100% of Quotation Value' }}</textarea>
+            <textarea class="form-control" name="payment_terms" rows="8">{{ quote.payment_terms if quote else 'Payment & Commercial Terms
+
+•  Payment by crossed cheque only in favour of Vetrova Tech Services Private Limited.
+•  50% advance on order confirmation; balance 50% at delivery.
+•  Delivery: Minimum 8 working days from confirmation and advance receipt.
+•  Transport: Material dispatched at customer\'s risk; insurance, if any, on customer\'s behalf—claims subject to insurer settlement only.
+•  Quality Claims: Must be reported in writing within 3 working days of delivery.
+•  Cancellation: No cancellation or alteration of confirmed toughened glass orders.
+•  Disputes: Arbitration applicable.' }}</textarea>
         </div>
     </div>
 
@@ -307,6 +309,8 @@
         rate_sqper: {{item.rate_sqper}},
         total: {{item.total}},
         chargeable_extra: {{item.chargeable_extra if item.chargeable_extra else 30}},
+        hole_price: {{item.hole_price if item.hole_price else 0}},
+        cutout_price: {{item.cutout_price if item.cutout_price else 0}},
         children: [
             {%if item.is_group %}
     {%for child in item.children | sort(attribute = 'sort_order') %}
@@ -321,7 +325,9 @@
             quantity: {{child.quantity}},
         unit_square: {{child.unit_square if child.unit_square else 0}},
         rate_sqper: {{child.rate_sqper}},
-        total: {{child.total}}
+        total: {{child.total}},
+        hole: {{child.hole if child.hole else 0}},
+        cutout: {{child.cutout if child.cutout else 0}}
     } {{',' if not loop.last else ''}}
     {% endfor %}
     {% endif %}

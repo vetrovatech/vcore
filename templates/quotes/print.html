@@ -240,7 +240,7 @@
                 <div class="info-cell" style="flex: 1;"><strong>{{ quote.quote_number }}</strong></div>
             </div>
             <div class="info-row">
-                <div class="info-cell info-label">Expected Date:</div>
+                <div class="info-cell info-label">Expected Delivery Date:</div>
                 <div class="info-cell" style="flex: 1;">{{ quote.expected_date.strftime('%d %b, %Y') if
                     quote.expected_date else 'N/A' }}</div>
                 <div class="info-cell info-label">Status:</div>
@@ -273,14 +273,16 @@
             <thead>
                 <tr>
                     <th rowspan="2" style="width: 3%;">S. No</th>
-                    <th rowspan="2" style="width: 15%;">Particular</th>
-                    <th colspan="2" style="width: 12%;">Actual size<br>(mm)</th>
-                    <th rowspan="2" style="width: 5%;">unit</th>
-                    <th colspan="2" style="width: 12%;">Chargeable size<br>(mm)</th>
-                    <th rowspan="2" style="width: 5%;">Qty</th>
-                    <th rowspan="2" style="width: 8%;">Area (Sq Mtr)</th>
-                    <th rowspan="2" style="width: 10%;">Rate / Sq Mtr</th>
-                    <th rowspan="2" style="width: 10%;">Total</th>
+                    <th rowspan="2" style="width: 13%;">Particular</th>
+                    <th colspan="2" style="width: 10%;">Actual size<br>(mm)</th>
+                    <th rowspan="2" style="width: 4%;">unit</th>
+                    <th colspan="2" style="width: 10%;">Chargeable size<br>(mm)</th>
+                    <th rowspan="2" style="width: 4%;">Qty</th>
+                    <th rowspan="2" style="width: 7%;">Area (Sq Mtr)</th>
+                    <th rowspan="2" style="width: 4%;">Holes</th>
+                    <th rowspan="2" style="width: 4%;">Cutouts</th>
+                    <th rowspan="2" style="width: 9%;">Rate / Sq Mtr</th>
+                    <th rowspan="2" style="width: 9%;">Total</th>
                 </tr>
                 <tr>
                     <th>width</th>
@@ -297,7 +299,7 @@
                 <!-- Group Row -->
                 <tr class="group-row">
                     <td>{{ ns.group_num }}</td>
-                    <td colspan="10" class="text-left"><strong>{{ item.particular }}</strong></td>
+                    <td colspan="12" class="text-left"><strong>{{ item.particular }}</strong></td>
                 </tr>
 
                 <!-- Sub-items -->
@@ -314,6 +316,8 @@
                     <td>{{ sub_item.quantity }}</td>
                     <td class="text-right">{{ "{:.4f}".format(sub_item.unit_square) if sub_item.unit_square else
                         '0.0000' }}</td>
+                    <td>{{ sub_item.hole or 0 }}</td>
+                    <td>{{ sub_item.cutout or 0 }}</td>
                     <td class="text-right">{{ "{:,.2f}".format(sub_item.rate_sqper) }}</td>
                     <td class="text-right">{{ "{:,.2f}".format(sub_item.total) }}</td>
                 </tr>
