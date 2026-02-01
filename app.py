@@ -1171,6 +1171,7 @@ def quotes_list():
     # Get filter parameters
     search_query = request.args.get('search', '')
     status_filter = request.args.get('status', '')
+    quote_type_filter = request.args.get('quote_type', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
     
@@ -1188,6 +1189,9 @@ def quotes_list():
     
     if status_filter:
         query = query.filter_by(status=status_filter)
+    
+    if quote_type_filter:
+        query = query.filter_by(quote_type=quote_type_filter)
     
     if date_from:
         try:
@@ -1210,6 +1214,7 @@ def quotes_list():
                          quotes=quotes,
                          search_query=search_query,
                          status_filter=status_filter,
+                         quote_type_filter=quote_type_filter,
                          date_from=date_from,
                          date_to=date_to)
 
@@ -1251,9 +1256,19 @@ def quote_new():
                 installation_charges=float(data.get('installation_charges', 0)),
                 freight_charges=float(data.get('freight_charges', 0)),
                 transport_charges=float(data.get('transport_charges', 0)),
+                cutout_charges=float(data.get('cutout_charges', 0)),
+                holes_charges=float(data.get('holes_charges', 0)),
+                shape_cutting_charges=float(data.get('shape_cutting_charges', 0)),
+                jumbo_size_charges=float(data.get('jumbo_size_charges', 0)),
+                template_charges=float(data.get('template_charges', 0)),
+                handling_charges=float(data.get('handling_charges', 0)),
+                polish_charges=float(data.get('polish_charges', 0)),
+                document_charges=float(data.get('document_charges', 0)),
+                frosted_charges=float(data.get('frosted_charges', 0)),
                 gst_percentage=float(data.get('gst_percentage', 18)),
                 payment_terms=data.get('payment_terms'),
                 status=data.get('status', 'Draft'),
+                quote_type=data.get('quote_type', 'B2B'),
                 created_by=current_user.id
             )
             
@@ -1280,12 +1295,13 @@ def quote_new():
             
             for index in sorted(items_data.keys()):
                 item_data = items_data[index]
-                particular = item_data.get('particular')
+                particular = item_data.get('particular', '')
+                is_group = item_data.get('is_group') == 'true'
                 
-                if not particular:
+                # Skip only if it's a group without a particular (groups must have a name)
+                if is_group and not particular:
                     continue
                 
-                is_group = item_data.get('is_group') == 'true'
                 parent_id_str = item_data.get('parent_id')  # This will be like "group-1", "group-2"
                 
                 # Determine actual parent_id by looking up the group identifier
@@ -1310,9 +1326,12 @@ def quote_new():
                     chargeable_width=float(item_data.get('chargeable_width')) if item_data.get('chargeable_width') else None,
                     chargeable_height=float(item_data.get('chargeable_height')) if item_data.get('chargeable_height') else None,
                     unit=item_data.get('unit', 'MM'),
+                    chargeable_extra=int(item_data.get('chargeable_extra', 30)),
                     quantity=int(item_data.get('quantity', 1)) if not is_group else 1,
                     rate_sqper=float(item_data.get('rate_sqper', 0)) if not is_group else 0,
-                    total=float(item_data.get('total', 0)) if not is_group else 0
+                    total=float(item_data.get('total', 0)) if not is_group else 0,
+                    hole=int(item_data.get('hole', 0)) if not is_group else 0,
+                    cutout=int(item_data.get('cutout', 0)) if not is_group else 0
                 )
                 
                 # Calculate unit square if dimensions provided
@@ -1399,9 +1418,19 @@ def quote_edit(id):
             quote.installation_charges = float(data.get('installation_charges', 0))
             quote.freight_charges = float(data.get('freight_charges', 0))
             quote.transport_charges = float(data.get('transport_charges', 0))
+            quote.cutout_charges = float(data.get('cutout_charges', 0))
+            quote.holes_charges = float(data.get('holes_charges', 0))
+            quote.shape_cutting_charges = float(data.get('shape_cutting_charges', 0))
+            quote.jumbo_size_charges = float(data.get('jumbo_size_charges', 0))
+            quote.template_charges = float(data.get('template_charges', 0))
+            quote.handling_charges = float(data.get('handling_charges', 0))
+            quote.polish_charges = float(data.get('polish_charges', 0))
+            quote.document_charges = float(data.get('document_charges', 0))
+            quote.frosted_charges = float(data.get('frosted_charges', 0))
             quote.gst_percentage = float(data.get('gst_percentage', 18))
             quote.payment_terms = data.get('payment_terms')
             quote.status = data.get('status', 'Draft')
+            quote.quote_type = data.get('quote_type', 'B2B')
             
             # Delete existing items (cascade will handle children)
             QuoteItem.query.filter_by(quote_id=quote.id).delete()
@@ -1425,12 +1454,12 @@ def quote_edit(id):
             
             for index in sorted(items_data.keys()):
                 item_data = items_data[index]
-                particular = item_data.get('particular')
-                
-                if not particular:
-                    continue
-                
+                particular = item_data.get('particular', '')
                 is_group = item_data.get('is_group') == 'true'
+                
+                # Skip only if it's a group without a particular (groups must have a name)
+                if is_group and not particular:
+                    continue
                 parent_id_str = item_data.get('parent_id')
                 
                 # Determine actual parent_id by looking up the group identifier
@@ -1454,9 +1483,12 @@ def quote_edit(id):
                     chargeable_width=float(item_data.get('chargeable_width')) if item_data.get('chargeable_width') else None,
                     chargeable_height=float(item_data.get('chargeable_height')) if item_data.get('chargeable_height') else None,
                     unit=item_data.get('unit', 'MM'),
+                    chargeable_extra=int(item_data.get('chargeable_extra', 30)),
                     quantity=int(item_data.get('quantity', 1)) if not is_group else 1,
                     rate_sqper=float(item_data.get('rate_sqper', 0)) if not is_group else 0,
-                    total=float(item_data.get('total', 0)) if not is_group else 0
+                    total=float(item_data.get('total', 0)) if not is_group else 0,
+                    hole=int(item_data.get('hole', 0)) if not is_group else 0,
+                    cutout=int(item_data.get('cutout', 0)) if not is_group else 0
                 )
                 
                 # Calculate unit square if dimensions provided

@@ -61,6 +61,10 @@
                         </td>
                     </tr>
                     <tr>
+                        <th>Quote Type:</th>
+                        <td><span class="badge bg-info">{{ quote.quote_type }}</span></td>
+                    </tr>
+                    <tr>
                         <th>Created By:</th>
                         <td>{{ quote.creator.username }}</td>
                     </tr>
@@ -132,8 +136,8 @@
                         <th style="width: 10%">Chargeable Size</th>
                         <th style="width: 8%">Unit</th>
                         <th style="width: 8%">Qty</th>
-                        <th style="width: 10%">Unit Sq</th>
-                        <th style="width: 12%">Rate/Sq</th>
+                        <th style="width: 10%">Area (Sq Mtr)</th>
+                        <th style="width: 12%">Rate / Sq Mtr</th>
                         <th style="width: 12%">Total</th>
                     </tr>
                 </thead>
@@ -210,28 +214,70 @@
                         <td><strong>Subtotal:</strong></td>
                         <td class="text-end">₹{{ "{:,.2f}".format(quote.subtotal) }}</td>
                     </tr>
-                    {% if quote.delivery_charges > 0 %}
-                    <tr>
-                        <td>Delivery Charges:</td>
-                        <td class="text-end">₹{{ "{:,.2f}".format(quote.delivery_charges) }}</td>
-                    </tr>
-                    {% endif %}
                     {% if quote.installation_charges > 0 %}
                     <tr>
                         <td>Installation Charges:</td>
                         <td class="text-end">₹{{ "{:,.2f}".format(quote.installation_charges) }}</td>
                     </tr>
                     {% endif %}
-                    {% if quote.freight_charges > 0 %}
-                    <tr>
-                        <td>Freight Charges:</td>
-                        <td class="text-end">₹{{ "{:,.2f}".format(quote.freight_charges) }}</td>
-                    </tr>
-                    {% endif %}
                     {% if quote.transport_charges > 0 %}
                     <tr>
                         <td>Transport Charges:</td>
                         <td class="text-end">₹{{ "{:,.2f}".format(quote.transport_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if quote.cutout_charges > 0 %}
+                    <tr>
+                        <td>Cutout Charges:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.cutout_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if quote.holes_charges > 0 %}
+                    <tr>
+                        <td>Holes Charges:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.holes_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if quote.shape_cutting_charges > 0 %}
+                    <tr>
+                        <td>Shape Cutting Charges:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.shape_cutting_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if quote.jumbo_size_charges > 0 %}
+                    <tr>
+                        <td>Jumbo Size Charges:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.jumbo_size_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if quote.template_charges > 0 %}
+                    <tr>
+                        <td>Template Charges:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.template_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if quote.handling_charges > 0 %}
+                    <tr>
+                        <td>Handling Charges:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.handling_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if quote.polish_charges > 0 %}
+                    <tr>
+                        <td>Polish Charges:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.polish_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if quote.document_charges > 0 %}
+                    <tr>
+                        <td>Document Charges:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.document_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if quote.frosted_charges > 0 %}
+                    <tr>
+                        <td>Frosted Charges:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.frosted_charges) }}</td>
                     </tr>
                     {% endif %}
                     <tr>

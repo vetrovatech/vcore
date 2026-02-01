@@ -359,6 +359,15 @@ class Quote(db.Model):
     installation_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     freight_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     transport_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    cutout_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    holes_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    shape_cutting_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    jumbo_size_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    template_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    handling_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    polish_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    document_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    frosted_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     gst_percentage = db.Column(db.Numeric(5, 2), default=18.00, nullable=False)
     gst_amount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     round_off = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
@@ -367,6 +376,7 @@ class Quote(db.Model):
     # Terms and status
     payment_terms = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default='Draft', index=True)  # Draft, Sent, Accepted, Rejected, Expired
+    quote_type = db.Column(db.Enum('B2B', 'B2C'), default='B2B', nullable=False)  # B2B or B2C quote
     
     # Metadata
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
@@ -394,7 +404,16 @@ class Quote(db.Model):
             self.delivery_charges + 
             self.installation_charges + 
             self.freight_charges + 
-            self.transport_charges
+            self.transport_charges +
+            self.cutout_charges +
+            self.holes_charges +
+            self.shape_cutting_charges +
+            self.jumbo_size_charges +
+            self.template_charges +
+            self.handling_charges +
+            self.polish_charges +
+            self.document_charges +
+            self.frosted_charges
         )
         
         # Calculate GST
@@ -469,12 +488,17 @@ class QuoteItem(db.Model):
     chargeable_height = db.Column(db.Numeric(10, 2), nullable=True)
     
     unit = db.Column(db.String(20), nullable=True, default='MM')  # MM, sqft, etc.
+    chargeable_extra = db.Column(db.Integer, default=30, nullable=False)  # Extra MM to add to chargeable dimensions
     unit_square = db.Column(db.Numeric(10, 4), nullable=True)  # Calculated area in square meters
     
     # Pricing
     quantity = db.Column(db.Integer, nullable=False, default=1)
     rate_sqper = db.Column(db.Numeric(10, 2), nullable=False)  # Rate per unit
     total = db.Column(db.Numeric(10, 2), nullable=False)  # Calculated total
+    
+    # Additional item details
+    hole = db.Column(db.Integer, default=0, nullable=False)  # Number of holes
+    cutout = db.Column(db.Integer, default=0, nullable=False)  # Number of cutouts
     
     # Metadata
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -493,23 +517,32 @@ class QuoteItem(db.Model):
     )
     
     def calculate_unit_square(self):
-        """Calculate unit square (area) from chargeable dimensions"""
+        """Calculate unit square (area) from chargeable dimensions in Sq Mtr"""
         if self.chargeable_width and self.chargeable_height and self.unit == 'MM':
-            # Convert MM² to M²
+            # Convert MM² to M² (Sq Mtr)
             area_mm2 = float(self.chargeable_width) * float(self.chargeable_height)
             self.unit_square = area_mm2 / 1000000  # Convert to square meters
         elif self.chargeable_width and self.chargeable_height:
             # For other units, just multiply
             self.unit_square = float(self.chargeable_width) * float(self.chargeable_height)
     
+    def apply_chargeable_extra(self):
+        """Apply chargeable extra to actual dimensions to get chargeable dimensions"""
+        if self.actual_width and self.actual_height:
+            self.chargeable_width = float(self.actual_width) + float(self.chargeable_extra)
+            self.chargeable_height = float(self.actual_height) + float(self.chargeable_extra)
+    
     def calculate_total(self):
-        """Calculate total for this line item"""
+        """Calculate total for this line item using Area in Sq Mtr × Rate / Sq Mtr"""
         if self.is_group:
             # For group items, total is sum of children
             self.total = sum(child.total for child in self.children) if self.children else 0
         else:
-            # For regular items, calculate from quantity and rate
-            self.total = self.quantity * self.rate_sqper
+            # For regular items, calculate from unit_square and rate
+            if self.unit_square:
+                self.total = float(self.unit_square) * float(self.rate_sqper) * self.quantity
+            else:
+                self.total = self.quantity * self.rate_sqper
     
     def get_display_number(self, parent_number=None):
         """Get hierarchical display number (e.g., 1, 1.1, 1.2, 2, 2.1)"""

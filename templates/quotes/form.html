@@ -95,6 +95,18 @@
                     </select>
                 </div>
                 <div class="col-md-3 mb-3">
+                    <label class="form-label">Quote Type</label>
+                    <select class="form-select" name="quote_type" {{ 'disabled' if quote else '' }}>
+                        <option value="B2B" {{ 'selected' if quote and quote.quote_type=='B2B' else 'selected' }}>B2B
+                        </option>
+                        <option value="B2C" {{ 'selected' if quote and quote.quote_type=='B2C' else '' }}>B2C</option>
+                    </select>
+                    {% if quote %}
+                    <input type="hidden" name="quote_type" value="{{ quote.quote_type }}">
+                    <small class="text-muted">Quote type cannot be changed after creation</small>
+                    {% endif %}
+                </div>
+                <div class="col-md-3 mb-3">
                     <label class="form-label">
                         <input type="checkbox" name="self_pickup" {{ 'checked' if quote and quote.self_pickup else ''
                             }}>
@@ -126,8 +138,8 @@
                             <th style="width: 8%;">Charge W</th>
                             <th style="width: 8%;">Charge H</th>
                             <th style="width: 6%;">Qty</th>
-                            <th style="width: 8%;">Unit Sq</th>
-                            <th style="width: 10%;">Rate/Sq</th>
+                            <th style="width: 8%;">Area (Sq Mtr)</th>
+                            <th style="width: 10%;">Rate / Sq Mtr</th>
                             <th style="width: 10%;">Total</th>
                             <th style="width: 8%;">Action</th>
                         </tr>
@@ -149,25 +161,63 @@
                 </div>
                 <div class="card-body">
                     <div class="row">
-                        <div class="col-md-6 mb-2">
-                            <label class="form-label">Delivery Charges</label>
-                            <input type="number" step="0.01" class="form-control charge-input" id="delivery_charges"
-                                name="delivery_charges" value="{{ quote.delivery_charges if quote else 0 }}">
-                        </div>
+
                         <div class="col-md-6 mb-2">
                             <label class="form-label">Installation Charges</label>
                             <input type="number" step="0.01" class="form-control charge-input" id="installation_charges"
                                 name="installation_charges" value="{{ quote.installation_charges if quote else 0 }}">
                         </div>
-                        <div class="col-md-6 mb-2">
-                            <label class="form-label">Freight Charges</label>
-                            <input type="number" step="0.01" class="form-control charge-input" id="freight_charges"
-                                name="freight_charges" value="{{ quote.freight_charges if quote else 0 }}">
-                        </div>
+
                         <div class="col-md-6 mb-2">
                             <label class="form-label">Transport Charges</label>
                             <input type="number" step="0.01" class="form-control charge-input" id="transport_charges"
                                 name="transport_charges" value="{{ quote.transport_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Cutout Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="cutout_charges"
+                                name="cutout_charges" value="{{ quote.cutout_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Holes Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="holes_charges"
+                                name="holes_charges" value="{{ quote.holes_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Shape Cutting Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input"
+                                id="shape_cutting_charges" name="shape_cutting_charges"
+                                value="{{ quote.shape_cutting_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Jumbo Size Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="jumbo_size_charges"
+                                name="jumbo_size_charges" value="{{ quote.jumbo_size_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Template Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="template_charges"
+                                name="template_charges" value="{{ quote.template_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Handling Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="handling_charges"
+                                name="handling_charges" value="{{ quote.handling_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Polish Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="polish_charges"
+                                name="polish_charges" value="{{ quote.polish_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Document Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="document_charges"
+                                name="document_charges" value="{{ quote.document_charges if quote else 0 }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Frosted Charges</label>
+                            <input type="number" step="0.01" class="form-control charge-input" id="frosted_charges"
+                                name="frosted_charges" value="{{ quote.frosted_charges if quote else 0 }}">
                         </div>
                     </div>
                 </div>
@@ -243,39 +293,40 @@
         items: [
             {%for item in quote.items if not item.parent_id %}
     {
-        id: {{ item.id }},
-        is_group: {{ 'true' if item.is_group else 'false' }},
-        item_number: {{ item.item_number }},
+        id: {{item.id}},
+        is_group: {{'true' if item.is_group else 'false'}},
+        item_number: {{item.item_number}},
         particular: "{{item.particular|replace('"', '\\"')}}",
-            actual_width: {{ item.actual_width if item.actual_width else 'null' }},
-        actual_height: {{ item.actual_height if item.actual_height else 'null' }},
-        chargeable_width: {{ item.chargeable_width if item.chargeable_width else 'null' }},
-        chargeable_height: {{ item.chargeable_height if item.chargeable_height else 'null' }},
+            actual_width: {{item.actual_width if item.actual_width else 'null'}},
+        actual_height: {{item.actual_height if item.actual_height else 'null'}},
+        chargeable_width: {{item.chargeable_width if item.chargeable_width else 'null'}},
+        chargeable_height: {{item.chargeable_height if item.chargeable_height else 'null'}},
         unit: "{{item.unit or 'MM'}}",
-            quantity: {{ item.quantity }},
-        unit_square: {{ item.unit_square if item.unit_square else 0 }},
-        rate_sqper: {{ item.rate_sqper }},
-        total: {{ item.total }},
+            quantity: {{item.quantity}},
+        unit_square: {{item.unit_square if item.unit_square else 0}},
+        rate_sqper: {{item.rate_sqper}},
+        total: {{item.total}},
+        chargeable_extra: {{item.chargeable_extra if item.chargeable_extra else 30}},
         children: [
             {%if item.is_group %}
     {%for child in item.children | sort(attribute = 'sort_order') %}
     {
-        id: {{ child.id }},
+        id: {{child.id}},
         particular: "{{child.particular|replace('"', '\\"')}}",
-            actual_width: {{ child.actual_width if child.actual_width else 'null' }},
-        actual_height: {{ child.actual_height if child.actual_height else 'null' }},
-        chargeable_width: {{ child.chargeable_width if child.chargeable_width else 'null' }},
-        chargeable_height: {{ child.chargeable_height if child.chargeable_height else 'null' }},
+            actual_width: {{child.actual_width if child.actual_width else 'null'}},
+        actual_height: {{child.actual_height if child.actual_height else 'null'}},
+        chargeable_width: {{child.chargeable_width if child.chargeable_width else 'null'}},
+        chargeable_height: {{child.chargeable_height if child.chargeable_height else 'null'}},
         unit: "{{child.unit or 'MM'}}",
-            quantity: {{ child.quantity }},
-        unit_square: {{ child.unit_square if child.unit_square else 0 }},
-        rate_sqper: {{ child.rate_sqper }},
-        total: {{ child.total }}
-    } {{ ',' if not loop.last else '' }}
+            quantity: {{child.quantity}},
+        unit_square: {{child.unit_square if child.unit_square else 0}},
+        rate_sqper: {{child.rate_sqper}},
+        total: {{child.total}}
+    } {{',' if not loop.last else ''}}
     {% endfor %}
     {% endif %}
             ]
-        }{{ ',' if not loop.last else '' }}
+        }{{',' if not loop.last else ''}}
     {% endfor %}
     ]
 };

@@ -243,8 +243,8 @@
                 <div class="info-cell info-label">Expected Date:</div>
                 <div class="info-cell" style="flex: 1;">{{ quote.expected_date.strftime('%d %b, %Y') if
                     quote.expected_date else 'N/A' }}</div>
-                <div class="info-cell info-label">8th Feb, 2026</div>
-                <div class="info-cell" style="flex: 1;"></div>
+                <div class="info-cell info-label">Status:</div>
+                <div class="info-cell" style="flex: 1;">{{ quote.status }}</div>
             </div>
         </div>
 
@@ -278,8 +278,8 @@
                     <th rowspan="2" style="width: 5%;">unit</th>
                     <th colspan="2" style="width: 12%;">Chargeable size<br>(mm)</th>
                     <th rowspan="2" style="width: 5%;">Qty</th>
-                    <th rowspan="2" style="width: 8%;">Unit square</th>
-                    <th rowspan="2" style="width: 10%;">Rate/ square</th>
+                    <th rowspan="2" style="width: 8%;">Area (Sq Mtr)</th>
+                    <th rowspan="2" style="width: 10%;">Rate / Sq Mtr</th>
                     <th rowspan="2" style="width: 10%;">Total</th>
                 </tr>
                 <tr>
@@ -346,22 +346,10 @@
                     <td>Subtotal:</td>
                     <td class="text-right">{{ "{:,.2f}".format(quote.subtotal) }}</td>
                 </tr>
-                {% if quote.delivery_charges > 0 %}
-                <tr>
-                    <td>Delivery Charges:</td>
-                    <td class="text-right">{{ "{:,.2f}".format(quote.delivery_charges) }}</td>
-                </tr>
-                {% endif %}
                 {% if quote.installation_charges > 0 %}
                 <tr>
                     <td>Installation Charges:</td>
                     <td class="text-right">{{ "{:,.2f}".format(quote.installation_charges) }}</td>
-                </tr>
-                {% endif %}
-                {% if quote.freight_charges > 0 %}
-                <tr>
-                    <td>Freight Charges:</td>
-                    <td class="text-right">{{ "{:,.2f}".format(quote.freight_charges) }}</td>
                 </tr>
                 {% endif %}
                 {% if quote.transport_charges > 0 %}
@@ -370,6 +358,68 @@
                     <td class="text-right">{{ "{:,.2f}".format(quote.transport_charges) }}</td>
                 </tr>
                 {% endif %}
+                {% if quote.cutout_charges > 0 %}
+                <tr>
+                    <td>Cutout Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.cutout_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.holes_charges > 0 %}
+                <tr>
+                    <td>Holes Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.holes_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.shape_cutting_charges > 0 %}
+                <tr>
+                    <td>Shape Cutting Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.shape_cutting_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.jumbo_size_charges > 0 %}
+                <tr>
+                    <td>Jumbo Size Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.jumbo_size_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.template_charges > 0 %}
+                <tr>
+                    <td>Template Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.template_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.handling_charges > 0 %}
+                <tr>
+                    <td>Handling Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.handling_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.polish_charges > 0 %}
+                <tr>
+                    <td>Polish Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.polish_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.document_charges > 0 %}
+                <tr>
+                    <td>Document Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.document_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if quote.frosted_charges > 0 %}
+                <tr>
+                    <td>Frosted Charges:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.frosted_charges) }}</td>
+                </tr>
+                {% endif %}
+                <tr style="border-top: 1px solid #000;">
+                    <td><strong>Total Before GST:</strong></td>
+                    <td class="text-right"><strong>{{ "{:,.2f}".format(quote.subtotal + quote.installation_charges +
+                            quote.transport_charges + quote.cutout_charges + quote.holes_charges +
+                            quote.shape_cutting_charges + quote.jumbo_size_charges + quote.template_charges +
+                            quote.handling_charges + quote.polish_charges + quote.document_charges +
+                            quote.frosted_charges) }}</strong></td>
+                </tr>
                 <tr>
                     <td>GST @ {{ quote.gst_percentage }}%:</td>
                     <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount) }}</td>
@@ -383,18 +433,15 @@
                     <td class="text-right"><strong>₹{{ "{:,.2f}".format(quote.total) }}</strong></td>
                 </tr>
             </table>
-            <div style="text-align: right; font-size: 8pt; margin-top: 5px;">
-                <strong>In words: Ninety Four Thousand Six Hundred and Ten rupees</strong>
-            </div>
         </div>
 
         <!-- Account Details -->
         <div class="account-details">
             <strong>ACCOUNT DETAILS:</strong><br>
             Name: Vetrova Tech Services Private Limited<br>
-            Customer ID: 917321550000158<br>
-            IFSC Code: UTIB0000158<br>
-            Paytm/UPI: 9513(0)
+            Customer ID: 6712518680<br>
+            Account No: 10249972220<br>
+            IFSC Code: IDFB0080158
         </div>
 
         <!-- Payment Terms -->

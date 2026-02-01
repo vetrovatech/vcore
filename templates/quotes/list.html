@@ -29,6 +29,13 @@
                 </select>
             </div>
             <div class="col-md-2">
+                <select class="form-select" name="quote_type">
+                    <option value="">All Types</option>
+                    <option value="B2B" {% if quote_type_filter=='B2B' %}selected{% endif %}>B2B</option>
+                    <option value="B2C" {% if quote_type_filter=='B2C' %}selected{% endif %}>B2C</option>
+                </select>
+            </div>
+            <div class="col-md-2">
                 <input type="date" class="form-control" name="date_from" placeholder="From Date"
                     value="{{ date_from }}">
             </div>
@@ -58,6 +65,7 @@
                         <th>Quote #</th>
                         <th>Date</th>
                         <th>Customer</th>
+                        <th>Type</th>
                         <th>Total</th>
                         <th>Status</th>
                         <th>Actions</th>
@@ -69,6 +77,11 @@
                         <td><strong>{{ quote.quote_number }}</strong></td>
                         <td>{{ quote.quote_date.strftime('%d %b %Y') }}</td>
                         <td>{{ quote.customer_name }}</td>
+                        <td>
+                            <span class="badge bg-{{ 'primary' if quote.quote_type == 'B2B' else 'info' }}">
+                                {{ quote.quote_type or 'B2B' }}
+                            </span>
+                        </td>
                         <td>₹{{ "{:,.2f}".format(quote.total) }}</td>
                         <td>
                             <span class="badge bg-{{ quote.get_status_badge_class() }}">

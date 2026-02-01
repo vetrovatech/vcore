@@ -2,6 +2,7 @@
  * Enhanced Quote Form JavaScript
  * Handles hierarchical quote items with groups and sub-items
  * Matches sample quote format with detailed specifications
+ * Phase 2: Chargeable Extra, Sq Mtr calculations, and new charge fields
  */
 
 let itemCounter = 0;
@@ -45,13 +46,18 @@ function loadExistingItems(items) {
 
             row.innerHTML = `
                 <td class="item-number" style="font-weight: bold;">${groupCounter}</td>
-                <td colspan="9">
+                <td colspan="10">
                     <div style="display: flex; align-items: center; gap: 10px;">
                         <input type="text" class="form-control form-control-sm particular-input" 
                                name="items[${itemCounter}][particular]" 
                                value="${item.particular}"
                                placeholder="Product Group (e.g., 8mm Toughened Glass)"
                                style="font-weight: bold;" required>
+                        <label class="form-label mb-0" style="white-space: nowrap;">Chargeable Extra (MM):</label>
+                        <input type="number" class="form-control form-control-sm chargeable-extra-input" 
+                               name="items[${itemCounter}][chargeable_extra]" 
+                               value="${item.chargeable_extra || 30}"
+                               style="width: 80px;" min="0">
                         <input type="hidden" name="items[${itemCounter}][is_group]" value="true">
                         <input type="hidden" name="items[${itemCounter}][item_number]" value="${groupCounter}">
                         <button type="button" class="btn btn-sm btn-success" onclick="addSubItem(this)" title="Add Sub-item">
@@ -85,6 +91,7 @@ function addSubItemWithData(groupRow, data) {
     const groupNumber = groupRow.querySelector('.item-number').textContent;
     const existingSubItems = document.querySelectorAll(`[data-parent-id="${groupId}"]`);
     const subNumber = existingSubItems.length + 1;
+    const chargeableExtra = parseInt(groupRow.querySelector('.chargeable-extra-input')?.value) || 30;
 
     const tbody = document.getElementById('itemsBody');
     const row = document.createElement('tr');
@@ -98,22 +105,23 @@ function addSubItemWithData(groupRow, data) {
         <td>
             <input type="text" class="form-control form-control-sm particular-input" 
                    name="items[${itemCounter}][particular]" 
-                   value="${data.particular}"
-                   placeholder="Product description" required>
+                   value="${data.particular || ''}"
+                   placeholder="Product description">
             <input type="hidden" name="items[${itemCounter}][parent_id]" value="${groupId}">
             <input type="hidden" name="items[${itemCounter}][is_group]" value="false">
+            <input type="hidden" name="items[${itemCounter}][chargeable_extra]" value="${chargeableExtra}">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input" 
+            <input type="number" step="0.01" class="form-control form-control-sm size-input actual-width" 
                    name="items[${itemCounter}][actual_width]" 
                    value="${data.actual_width || ''}"
-                   placeholder="Width">
+                   placeholder="Width" onchange="applyChargeableExtra(this)">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input" 
+            <input type="number" step="0.01" class="form-control form-control-sm size-input actual-height" 
                    name="items[${itemCounter}][actual_height]" 
                    value="${data.actual_height || ''}"
-                   placeholder="Height">
+                   placeholder="Height" onchange="applyChargeableExtra(this)">
         </td>
         <td>
             <select class="form-select form-select-sm" name="items[${itemCounter}][unit]">
@@ -141,10 +149,10 @@ function addSubItemWithData(groupRow, data) {
                    min="1" onchange="calculateItemTotal(this)" required>
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm unit-square-display" 
+            <input type="number" step="0.0001" class="form-control form-control-sm unit-square-display" 
                    name="items[${itemCounter}][unit_square]" 
-                   value="${data.unit_square.toFixed(4)}"
-                   placeholder="0.00" readonly>
+                   value="${data.unit_square ? data.unit_square.toFixed(4) : ''}"
+                   placeholder="0.0000" readonly>
         </td>
         <td>
             <input type="number" step="0.01" class="form-control form-control-sm rate-input" 
@@ -155,7 +163,7 @@ function addSubItemWithData(groupRow, data) {
         <td>
             <input type="number" step="0.01" class="form-control form-control-sm total-display" 
                    name="items[${itemCounter}][total]" 
-                   value="${data.total.toFixed(2)}"
+                   value="${data.total ? data.total.toFixed(2) : ''}"
                    placeholder="0.00" readonly>
         </td>
         <td>
@@ -190,12 +198,17 @@ function addGroup() {
 
     row.innerHTML = `
         <td class="item-number" style="font-weight: bold;">${groupCounter}</td>
-        <td colspan="9">
+        <td colspan="10">
             <div style="display: flex; align-items: center; gap: 10px;">
                 <input type="text" class="form-control form-control-sm particular-input" 
                        name="items[${itemCounter}][particular]" 
                        placeholder="Product Group (e.g., 8mm Toughened Glass)"
                        style="font-weight: bold;" required>
+                <label class="form-label mb-0" style="white-space: nowrap;">Chargeable Extra (MM):</label>
+                <input type="number" class="form-control form-control-sm chargeable-extra-input" 
+                       name="items[${itemCounter}][chargeable_extra]" 
+                       value="30"
+                       style="width: 80px;" min="0">
                 <input type="hidden" name="items[${itemCounter}][is_group]" value="true">
                 <input type="hidden" name="items[${itemCounter}][item_number]" value="${groupCounter}">
                 <button type="button" class="btn btn-sm btn-success" onclick="addSubItem(this)" title="Add Sub-item">
@@ -219,6 +232,7 @@ function addSubItem(button) {
     const groupRow = button.closest('.group-row');
     const groupId = groupRow.dataset.itemId;
     const groupNumber = groupRow.querySelector('.item-number').textContent;
+    const chargeableExtra = parseInt(groupRow.querySelector('.chargeable-extra-input')?.value) || 30;
 
     // Count existing sub-items for this group
     const existingSubItems = document.querySelectorAll(`[data-parent-id="${groupId}"]`);
@@ -236,19 +250,20 @@ function addSubItem(button) {
         <td>
             <input type="text" class="form-control form-control-sm particular-input" 
                    name="items[${itemCounter}][particular]" 
-                   placeholder="Product description" required>
+                   placeholder="Product description">
             <input type="hidden" name="items[${itemCounter}][parent_id]" value="${groupId}">
             <input type="hidden" name="items[${itemCounter}][is_group]" value="false">
+            <input type="hidden" name="items[${itemCounter}][chargeable_extra]" value="${chargeableExtra}">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input" 
+            <input type="number" step="0.01" class="form-control form-control-sm size-input actual-width" 
                    name="items[${itemCounter}][actual_width]" 
-                   placeholder="Width">
+                   placeholder="Width" onchange="applyChargeableExtra(this)">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input" 
+            <input type="number" step="0.01" class="form-control form-control-sm size-input actual-height" 
                    name="items[${itemCounter}][actual_height]" 
-                   placeholder="Height">
+                   placeholder="Height" onchange="applyChargeableExtra(this)">
         </td>
         <td>
             <select class="form-select form-select-sm" name="items[${itemCounter}][unit]">
@@ -273,9 +288,9 @@ function addSubItem(button) {
                    value="1" min="1" onchange="calculateItemTotal(this)" required>
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm unit-square-display" 
+            <input type="number" step="0.0001" class="form-control form-control-sm unit-square-display" 
                    name="items[${itemCounter}][unit_square]" 
-                   placeholder="0.00" readonly>
+                   placeholder="0.0000" readonly>
         </td>
         <td>
             <input type="number" step="0.01" class="form-control form-control-sm rate-input" 
@@ -307,6 +322,25 @@ function addSubItem(button) {
 }
 
 /**
+ * Apply chargeable extra to actual dimensions
+ */
+function applyChargeableExtra(input) {
+    const row = input.closest('.item-row');
+    const actualWidth = parseFloat(row.querySelector('.actual-width')?.value) || 0;
+    const actualHeight = parseFloat(row.querySelector('.actual-height')?.value) || 0;
+    const chargeableExtra = parseInt(row.querySelector('input[name*="[chargeable_extra]"]')?.value) || 30;
+
+    if (actualWidth > 0) {
+        row.querySelector('.chargeable-width').value = (actualWidth + chargeableExtra).toFixed(2);
+    }
+    if (actualHeight > 0) {
+        row.querySelector('.chargeable-height').value = (actualHeight + chargeableExtra).toFixed(2);
+    }
+
+    calculateItemTotal(input);
+}
+
+/**
  * Remove an item (group or sub-item)
  */
 function removeItem(button) {
@@ -326,7 +360,7 @@ function removeItem(button) {
 }
 
 /**
- * Calculate total for a single item
+ * Calculate total for a single item using: Area (Sq Mtr) × Rate / Sq Mtr × Quantity
  */
 function calculateItemTotal(input) {
     const row = input.closest('.item-row');
@@ -339,7 +373,7 @@ function calculateItemTotal(input) {
     let unitSquare = 0;
     if (chargeableWidth && chargeableHeight) {
         if (unit === 'MM') {
-            // Convert MM² to M²
+            // Convert MM² to M² (Sq Mtr)
             unitSquare = (chargeableWidth * chargeableHeight) / 1000000;
         } else {
             unitSquare = chargeableWidth * chargeableHeight;
@@ -352,10 +386,10 @@ function calculateItemTotal(input) {
         unitSquareInput.value = unitSquare.toFixed(4);
     }
 
-    // Calculate total
+    // Calculate total: Area (Sq Mtr) × Rate / Sq Mtr × Quantity
     const quantity = parseInt(row.querySelector('.qty-input')?.value) || 0;
     const rate = parseFloat(row.querySelector('.rate-input')?.value) || 0;
-    const total = quantity * rate;
+    const total = unitSquare * rate * quantity;
 
     // Update total display
     const totalInput = row.querySelector('.total-display');
@@ -391,7 +425,7 @@ function renumberItems() {
 }
 
 /**
- * Update all totals (subtotal, GST, grand total)
+ * Update all totals (subtotal, GST, grand total) including new charge fields
  */
 function updateTotals() {
     // Calculate subtotal from all sub-items (not groups)
@@ -400,14 +434,24 @@ function updateTotals() {
         subtotal += parseFloat(input.value) || 0;
     });
 
-    // Get charges
-    const deliveryCharges = parseFloat(document.getElementById('delivery_charges')?.value) || 0;
-    const installationCharges = parseFloat(document.getElementById('installation_charges')?.value) || 0;
-    const freightCharges = parseFloat(document.getElementById('freight_charges')?.value) || 0;
-    const transportCharges = parseFloat(document.getElementById('transport_charges')?.value) || 0;
+    // Get all charges
 
-    // Calculate taxable amount
-    const taxableAmount = subtotal + deliveryCharges + installationCharges + freightCharges + transportCharges;
+    const installationCharges = parseFloat(document.getElementById('installation_charges')?.value) || 0;
+    const transportCharges = parseFloat(document.getElementById('transport_charges')?.value) || 0;
+    const cutoutCharges = parseFloat(document.getElementById('cutout_charges')?.value) || 0;
+    const holesCharges = parseFloat(document.getElementById('holes_charges')?.value) || 0;
+    const shapeCuttingCharges = parseFloat(document.getElementById('shape_cutting_charges')?.value) || 0;
+    const jumboSizeCharges = parseFloat(document.getElementById('jumbo_size_charges')?.value) || 0;
+    const templateCharges = parseFloat(document.getElementById('template_charges')?.value) || 0;
+    const handlingCharges = parseFloat(document.getElementById('handling_charges')?.value) || 0;
+    const polishCharges = parseFloat(document.getElementById('polish_charges')?.value) || 0;
+    const documentCharges = parseFloat(document.getElementById('document_charges')?.value) || 0;
+    const frostedCharges = parseFloat(document.getElementById('frosted_charges')?.value) || 0;
+
+    // Calculate taxable amount (subtotal + all charges)
+    const taxableAmount = subtotal + installationCharges + transportCharges + cutoutCharges +
+        holesCharges + shapeCuttingCharges + jumboSizeCharges +
+        templateCharges + handlingCharges + polishCharges + documentCharges + frostedCharges;
 
     // Calculate GST
     const gstPercentage = parseFloat(document.getElementById('gst_percentage')?.value) || 18;
@@ -431,17 +475,4 @@ function updateTotals() {
     document.getElementById('gst_amount').value = gstAmount.toFixed(2);
     document.getElementById('round_off').value = roundOff.toFixed(2);
     document.getElementById('total').value = roundedTotal.toFixed(2);
-}
-
-/**
- * Copy actual size to chargeable size
- */
-function copyActualToChargeable(row) {
-    const actualWidth = row.querySelector('input[name*="[actual_width]"]').value;
-    const actualHeight = row.querySelector('input[name*="[actual_height]"]').value;
-
-    row.querySelector('input[name*="[chargeable_width]"]').value = actualWidth;
-    row.querySelector('input[name*="[chargeable_height]"]').value = actualHeight;
-
-    calculateItemTotal(row.querySelector('.chargeable-width'));
 }
