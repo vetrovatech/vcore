@@ -7,7 +7,7 @@ import pymysql
 # Install PyMySQL as MySQLdb for MySQL compatibility
 pymysql.install_as_MySQLdb()
 
-from models import db, User, Project, TaskTemplate, PromotorTask, DailyUpdate, Product, Quote, QuoteItem
+from models import db, User, Project, TaskTemplate, PromotorTask, DailyUpdate, Product, Quote, QuoteItem, Supplier, GlassType, SupplierPricing
 from config import config
 from forms import (LoginForm, UserForm, ProjectForm, TaskTemplateForm, 
                    TaskAssignmentForm, TaskUpdateForm, DailyUpdateForm, ProductForm)
@@ -1649,6 +1649,401 @@ def api_products_search():
     } for p in products]
     
     return jsonify(results)
+
+
+@app.route('/api/glass-types')
+@login_required
+def api_glass_types():
+    """API endpoint to get glass types with pricing for quote form"""
+    glass_types = GlassType.query.filter_by(is_active=True).all()
+    
+    result = []
+    for gt in glass_types:
+        suppliers_pricing = []
+        for pricing in gt.pricing:
+            if pricing.is_active and pricing.is_currently_valid():
+                suppliers_pricing.append({
+                    'supplier_id': pricing.supplier_id,
+                    'supplier_name': pricing.supplier.name,
+                    'rate_per_sqm': float(pricing.rate_per_sqm),
+                    'hole_price': float(pricing.hole_price),
+                    'cutout_price': float(pricing.cutout_price),
+                    'big_hole_price': float(pricing.big_hole_price),
+                    'big_cutout_price': float(pricing.big_cutout_price),
+                    'frosting_charge_per_sqm': float(pricing.frosting_charge_per_sqm),
+                    'lead_time_days': pricing.lead_time_days
+                })
+        
+        result.append({
+            'id': gt.id,
+            'name': gt.name,
+            'category': gt.category,
+            'thickness_mm': float(gt.thickness_mm) if gt.thickness_mm else None,
+            'is_frosted': gt.is_frosted,
+            'is_tinted': gt.is_tinted,
+            'suppliers': suppliers_pricing,
+            'best_price': float(gt.get_best_price()) if gt.get_best_price() else None
+        })
+    
+    return jsonify(result)
+
+
+# ============================================================================
+# SUPPLIER MANAGEMENT ROUTES
+# ============================================================================
+
+@app.route('/suppliers')
+@login_required
+def suppliers_list():
+    """List all suppliers"""
+    from models import Supplier
+    
+    search_query = request.args.get('search', '')
+    
+    query = Supplier.query
+    
+    if search_query:
+        query = query.filter(
+            (Supplier.name.ilike(f'%{search_query}%')) |
+            (Supplier.contact_person.ilike(f'%{search_query}%')) |
+            (Supplier.city.ilike(f'%{search_query}%'))
+        )
+    
+    suppliers = query.filter_by(is_active=True).order_by(Supplier.name).all()
+    
+    return render_template('suppliers/list.html',
+                         suppliers=suppliers,
+                         search_query=search_query)
+
+
+@app.route('/suppliers/new', methods=['GET', 'POST'])
+@login_required
+def supplier_new():
+    """Create new supplier"""
+    from models import Supplier
+    
+    if request.method == 'POST':
+        try:
+            data = request.form
+            
+            supplier = Supplier(
+                name=data.get('name'),
+                contact_person=data.get('contact_person'),
+                phone=data.get('phone'),
+                email=data.get('email'),
+                address=data.get('address'),
+                city=data.get('city'),
+                state=data.get('state'),
+                pincode=data.get('pincode'),
+                gstin=data.get('gstin'),
+                pan=data.get('pan'),
+                bank_name=data.get('bank_name'),
+                account_number=data.get('account_number'),
+                ifsc_code=data.get('ifsc_code'),
+                branch=data.get('branch'),
+                payment_terms=data.get('payment_terms'),
+                lead_time_days=int(data.get('lead_time_days')) if data.get('lead_time_days') else None,
+                min_order_value=float(data.get('min_order_value')) if data.get('min_order_value') else None,
+                notes=data.get('notes'),
+                is_active=True
+            )
+            
+            db.session.add(supplier)
+            db.session.commit()
+            
+            flash(f'Supplier "{supplier.name}" created successfully!', 'success')
+            return redirect(url_for('suppliers_list'))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error creating supplier: {str(e)}', 'danger')
+            return redirect(url_for('supplier_new'))
+    
+    return render_template('suppliers/form.html', title='New Supplier', supplier=None)
+
+
+@app.route('/suppliers/<int:id>')
+@login_required
+def supplier_view(id):
+    """View supplier details"""
+    from models import Supplier
+    supplier = Supplier.query.get_or_404(id)
+    return render_template('suppliers/view.html', supplier=supplier)
+
+
+@app.route('/suppliers/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+def supplier_edit(id):
+    """Edit supplier"""
+    from models import Supplier
+    
+    supplier = Supplier.query.get_or_404(id)
+    
+    if request.method == 'POST':
+        try:
+            data = request.form
+            
+            supplier.name = data.get('name')
+            supplier.contact_person = data.get('contact_person')
+            supplier.phone = data.get('phone')
+            supplier.email = data.get('email')
+            supplier.address = data.get('address')
+            supplier.city = data.get('city')
+            supplier.state = data.get('state')
+            supplier.pincode = data.get('pincode')
+            supplier.gstin = data.get('gstin')
+            supplier.pan = data.get('pan')
+            supplier.bank_name = data.get('bank_name')
+            supplier.account_number = data.get('account_number')
+            supplier.ifsc_code = data.get('ifsc_code')
+            supplier.branch = data.get('branch')
+            supplier.payment_terms = data.get('payment_terms')
+            supplier.lead_time_days = int(data.get('lead_time_days')) if data.get('lead_time_days') else None
+            supplier.min_order_value = float(data.get('min_order_value')) if data.get('min_order_value') else None
+            supplier.notes = data.get('notes')
+            supplier.updated_at = datetime.utcnow()
+            
+            db.session.commit()
+            
+            flash(f'Supplier "{supplier.name}" updated successfully!', 'success')
+            return redirect(url_for('supplier_view', id=supplier.id))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error updating supplier: {str(e)}', 'danger')
+            return redirect(url_for('supplier_edit', id=id))
+    
+    return render_template('suppliers/form.html', title='Edit Supplier', supplier=supplier)
+
+
+@app.route('/suppliers/<int:id>/delete', methods=['POST'])
+@admin_required
+def supplier_delete(id):
+    """Delete supplier (soft delete)"""
+    from models import Supplier
+    supplier = Supplier.query.get_or_404(id)
+    supplier_name = supplier.name
+    supplier.is_active = False
+    db.session.commit()
+    flash(f'Supplier "{supplier_name}" deleted successfully!', 'success')
+    return redirect(url_for('suppliers_list'))
+
+
+# ============================================================================
+# GLASS CATALOG ROUTES
+# ============================================================================
+
+@app.route('/glass-catalog')
+@login_required
+def glass_catalog_list():
+    """List all glass types with pricing from all suppliers"""
+    from models import GlassType, Supplier, SupplierPricing
+    
+    search_query = request.args.get('search', '')
+    category_filter = request.args.get('category', '')
+    supplier_filter = request.args.get('supplier', '')
+    
+    # Get all active glass types
+    query = GlassType.query.filter_by(is_active=True)
+    
+    if search_query:
+        query = query.filter(GlassType.name.ilike(f'%{search_query}%'))
+    
+    if category_filter:
+        query = query.filter_by(category=category_filter)
+    
+    glass_types = query.order_by(GlassType.category, GlassType.name).all()
+    
+    # Get all active suppliers for filter dropdown
+    suppliers = Supplier.query.filter_by(is_active=True).order_by(Supplier.name).all()
+    
+    # Get unique categories for filter dropdown
+    categories = db.session.query(GlassType.category).filter(
+        GlassType.is_active == True,
+        GlassType.category.isnot(None)
+    ).distinct().order_by(GlassType.category).all()
+    categories = [c[0] for c in categories]
+    
+    # Filter pricing by supplier if selected
+    if supplier_filter:
+        supplier_filter = int(supplier_filter)
+    
+    return render_template('glass_catalog/list.html',
+                         glass_types=glass_types,
+                         suppliers=suppliers,
+                         categories=categories,
+                         search_query=search_query,
+                         category_filter=category_filter,
+                         supplier_filter=supplier_filter)
+
+
+@app.route('/glass-catalog/new', methods=['GET', 'POST'])
+@login_required
+def glass_catalog_new():
+    """Create new glass type"""
+    from models import GlassType
+    
+    if request.method == 'POST':
+        try:
+            data = request.form
+            
+            glass_type = GlassType(
+                name=data.get('name'),
+                category=data.get('category'),
+                thickness_mm=float(data.get('thickness_mm')) if data.get('thickness_mm') else None,
+                description=data.get('description'),
+                is_frosted=bool(data.get('is_frosted')),
+                is_tinted=bool(data.get('is_tinted')),
+                color=data.get('color'),
+                is_active=True
+            )
+            
+            db.session.add(glass_type)
+            db.session.commit()
+            
+            flash(f'Glass type "{glass_type.name}" created successfully!', 'success')
+            return redirect(url_for('glass_catalog_view', id=glass_type.id))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error creating glass type: {str(e)}', 'danger')
+            return redirect(url_for('glass_catalog_new'))
+    
+    return render_template('glass_catalog/form.html', title='New Glass Type', glass_type=None)
+
+
+@app.route('/glass-catalog/<int:id>')
+@login_required
+def glass_catalog_view(id):
+    """View glass type details with all supplier pricing"""
+    from models import GlassType, Supplier
+    
+    glass_type = GlassType.query.get_or_404(id)
+    suppliers = Supplier.query.filter_by(is_active=True).order_by(Supplier.name).all()
+    
+    return render_template('glass_catalog/view.html',
+                         glass_type=glass_type,
+                         suppliers=suppliers)
+
+
+@app.route('/glass-catalog/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+def glass_catalog_edit(id):
+    """Edit glass type"""
+    from models import GlassType
+    
+    glass_type = GlassType.query.get_or_404(id)
+    
+    if request.method == 'POST':
+        try:
+            data = request.form
+            
+            glass_type.name = data.get('name')
+            glass_type.category = data.get('category')
+            glass_type.thickness_mm = float(data.get('thickness_mm')) if data.get('thickness_mm') else None
+            glass_type.description = data.get('description')
+            glass_type.is_frosted = bool(data.get('is_frosted'))
+            glass_type.is_tinted = bool(data.get('is_tinted'))
+            glass_type.color = data.get('color')
+            glass_type.updated_at = datetime.utcnow()
+            
+            db.session.commit()
+            
+            flash(f'Glass type "{glass_type.name}" updated successfully!', 'success')
+            return redirect(url_for('glass_catalog_view', id=glass_type.id))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error updating glass type: {str(e)}', 'danger')
+            return redirect(url_for('glass_catalog_edit', id=id))
+    
+    return render_template('glass_catalog/form.html', title='Edit Glass Type', glass_type=glass_type)
+
+
+@app.route('/glass-catalog/<int:id>/pricing', methods=['GET', 'POST'])
+@login_required
+def glass_catalog_pricing(id):
+    """Manage supplier pricing for a glass type"""
+    from models import GlassType, Supplier, SupplierPricing
+    from datetime import date
+    
+    glass_type = GlassType.query.get_or_404(id)
+    
+    if request.method == 'POST':
+        try:
+            data = request.form
+            supplier_id = int(data.get('supplier_id'))
+            
+            # Check if pricing already exists
+            pricing = SupplierPricing.query.filter_by(
+                supplier_id=supplier_id,
+                glass_type_id=glass_type.id,
+                is_active=True
+            ).first()
+            
+            if pricing:
+                # Update existing pricing
+                pricing.rate_per_sqm = float(data.get('rate_per_sqm'))
+                pricing.hole_price = float(data.get('hole_price', 0))
+                pricing.cutout_price = float(data.get('cutout_price', 0))
+                pricing.big_hole_price = float(data.get('big_hole_price', 0))
+                pricing.big_cutout_price = float(data.get('big_cutout_price', 0))
+                pricing.frosting_charge_per_sqm = float(data.get('frosting_charge_per_sqm', 0))
+                pricing.tinting_charge_per_sqm = float(data.get('tinting_charge_per_sqm', 0))
+                pricing.min_order_sqm = float(data.get('min_order_sqm')) if data.get('min_order_sqm') else None
+                pricing.lead_time_days = int(data.get('lead_time_days')) if data.get('lead_time_days') else None
+                pricing.notes = data.get('notes')
+                pricing.updated_at = datetime.utcnow()
+                
+                flash('Pricing updated successfully!', 'success')
+            else:
+                # Create new pricing
+                pricing = SupplierPricing(
+                    supplier_id=supplier_id,
+                    glass_type_id=glass_type.id,
+                    rate_per_sqm=float(data.get('rate_per_sqm')),
+                    hole_price=float(data.get('hole_price', 0)),
+                    cutout_price=float(data.get('cutout_price', 0)),
+                    big_hole_price=float(data.get('big_hole_price', 0)),
+                    big_cutout_price=float(data.get('big_cutout_price', 0)),
+                    frosting_charge_per_sqm=float(data.get('frosting_charge_per_sqm', 0)),
+                    tinting_charge_per_sqm=float(data.get('tinting_charge_per_sqm', 0)),
+                    min_order_sqm=float(data.get('min_order_sqm')) if data.get('min_order_sqm') else None,
+                    lead_time_days=int(data.get('lead_time_days')) if data.get('lead_time_days') else None,
+                    effective_from=date.today(),
+                    notes=data.get('notes'),
+                    is_active=True
+                )
+                db.session.add(pricing)
+                flash('Pricing added successfully!', 'success')
+            
+            db.session.commit()
+            return redirect(url_for('glass_catalog_view', id=glass_type.id))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error saving pricing: {str(e)}', 'danger')
+            return redirect(url_for('glass_catalog_pricing', id=id))
+    
+    # GET request
+    suppliers = Supplier.query.filter_by(is_active=True).order_by(Supplier.name).all()
+    
+    # Check if editing existing pricing (supplier_id in query params)
+    supplier_id = request.args.get('supplier_id', type=int)
+    existing_pricing = None
+    
+    if supplier_id:
+        existing_pricing = SupplierPricing.query.filter_by(
+            supplier_id=supplier_id,
+            glass_type_id=glass_type.id,
+            is_active=True
+        ).first()
+    
+    return render_template('glass_catalog/pricing.html',
+                         glass_type=glass_type,
+                         suppliers=suppliers,
+                         existing_pricing=existing_pricing,
+                         selected_supplier_id=supplier_id)
 
 
 # ============================================================================

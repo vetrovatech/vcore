@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+
+{% block title %}{{ glass_type.name }} - Glass Catalog{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('glass_catalog_list') }}">Glass Catalog</a></li>
+                <li class="breadcrumb-item active">{{ glass_type.name }}</li>
+            </ol>
+        </nav>
+        <h2>
+            <i class="bi bi-grid-3x3"></i> {{ glass_type.name }}
+            {% if glass_type.is_frosted %}
+            <span class="badge bg-info">Frosted</span>
+            {% endif %}
+            {% if glass_type.is_tinted %}
+            <span class="badge bg-warning">Tinted</span>
+            {% endif %}
+        </h2>
+    </div>
+    <div>
+        <a href="{{ url_for('glass_catalog_edit', id=glass_type.id) }}" class="btn btn-secondary">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+        <a href="{{ url_for('glass_catalog_pricing', id=glass_type.id) }}" class="btn btn-success">
+            <i class="bi bi-currency-rupee"></i> Manage Pricing
+        </a>
+    </div>
+</div>
+
+<!-- Glass Type Details -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> Details</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-borderless">
+                    <tr>
+                        <th width="40%">Category:</th>
+                        <td>{{ glass_type.category or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <th>Thickness:</th>
+                        <td>
+                            {% if glass_type.thickness_mm %}
+                            {{ glass_type.thickness_mm }} mm
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Color:</th>
+                        <td>{{ glass_type.color or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <th>Frosted:</th>
+                        <td>
+                            {% if glass_type.is_frosted %}
+                            <span class="badge bg-info">Yes</span>
+                            {% else %}
+                            <span class="badge bg-secondary">No</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Tinted:</th>
+                        <td>
+                            {% if glass_type.is_tinted %}
+                            <span class="badge bg-warning">Yes</span>
+                            {% else %}
+                            <span class="badge bg-secondary">No</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Status:</th>
+                        <td>
+                            {% if glass_type.is_active %}
+                            <span class="badge bg-success">Active</span>
+                            {% else %}
+                            <span class="badge bg-danger">Inactive</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
+
+                {% if glass_type.description %}
+                <div class="mt-3">
+                    <h6>Description:</h6>
+                    <p class="text-muted">{{ glass_type.description }}</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-graph-up"></i> Price Summary</h5>
+            </div>
+            <div class="card-body">
+                {% set best_price = glass_type.get_best_price() %}
+                {% set supplier_count = glass_type.get_supplier_count() %}
+
+                <div class="row text-center">
+                    <div class="col-6">
+                        <div class="p-3 bg-light rounded">
+                            <h3 class="text-success mb-0">
+                                {% if best_price %}
+                                ₹{{ "{:,.0f}".format(best_price) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </h3>
+                            <small class="text-muted">Best Price/sqm</small>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="p-3 bg-light rounded">
+                            <h3 class="text-primary mb-0">{{ supplier_count }}</h3>
+                            <small class="text-muted">Suppliers</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Supplier Pricing Table -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-building"></i> Supplier Pricing Comparison</h5>
+    </div>
+    <div class="card-body">
+        {% if glass_type.pricing %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Supplier</th>
+                        <th class="text-end">Rate/sqm</th>
+                        <th class="text-end">Hole Price</th>
+                        <th class="text-end">Cutout Price</th>
+                        <th class="text-end">Big Hole</th>
+                        <th class="text-end">Big Cutout</th>
+                        <th class="text-end">Frosting Charge</th>
+                        <th class="text-end">Tinting Charge</th>
+                        <th>Lead Time</th>
+                        <th>Valid Until</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pricing in glass_type.pricing %}
+                    {% if pricing.is_active %}
+                    <tr class="{% if pricing.rate_per_sqm == best_price %}table-success{% endif %}">
+                        <td>
+                            <a href="{{ url_for('supplier_view', id=pricing.supplier.id) }}"
+                                class="text-decoration-none">
+                                <strong>{{ pricing.supplier.name }}</strong>
+                            </a>
+                            {% if pricing.rate_per_sqm == best_price %}
+                            <span class="badge bg-success ms-2">Best Price</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <strong>₹{{ "{:,.2f}".format(pricing.rate_per_sqm) }}</strong>
+                        </td>
+                        <td class="text-end">
+                            {% if pricing.hole_price > 0 %}
+                            ₹{{ "{:,.2f}".format(pricing.hole_price) }}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if pricing.cutout_price > 0 %}
+                            ₹{{ "{:,.2f}".format(pricing.cutout_price) }}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if pricing.big_hole_price > 0 %}
+                            ₹{{ "{:,.2f}".format(pricing.big_hole_price) }}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if pricing.big_cutout_price > 0 %}
+                            ₹{{ "{:,.2f}".format(pricing.big_cutout_price) }}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if pricing.frosting_charge_per_sqm > 0 %}
+                            ₹{{ "{:,.2f}".format(pricing.frosting_charge_per_sqm) }}/sqm
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if pricing.tinting_charge_per_sqm > 0 %}
+                            ₹{{ "{:,.2f}".format(pricing.tinting_charge_per_sqm) }}/sqm
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if pricing.lead_time_days %}
+                            {{ pricing.lead_time_days }} days
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if pricing.effective_to %}
+                            {{ pricing.effective_to.strftime('%d %b %Y') }}
+                            {% else %}
+                            <span class="text-muted">No expiry</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{{ url_for('glass_catalog_pricing', id=glass_type.id, supplier_id=pricing.supplier.id) }}" 
+                               class="btn btn-sm btn-outline-primary" title="Edit pricing">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> No pricing information available for this glass type.
+            <a href="{{ url_for('glass_catalog_pricing', id=glass_type.id) }}" class="alert-link">Add pricing</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="mt-3">
+    <small class="text-muted">
+        Created: {{ glass_type.created_at.strftime('%d %b %Y, %I:%M %p') }}
+        {% if glass_type.updated_at != glass_type.created_at %}
+        | Last updated: {{ glass_type.updated_at.strftime('%d %b %Y, %I:%M %p') }}
+        {% endif %}
+    </small>
+</div>
+
+{% endblock %}
