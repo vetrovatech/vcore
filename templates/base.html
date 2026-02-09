@@ -236,6 +236,12 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and 'reminder' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('reminders_list') }}">
+                                <i class="bi bi-bell"></i> Reminders
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {% if request.endpoint and 'catalog' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('catalog_list') }}">
                                 <i class="bi bi-grid-3x3-gap"></i> Product Catalog
