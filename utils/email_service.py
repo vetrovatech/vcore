@@ -1,5 +1,5 @@
 """
-Email service module using AWS SES
+Email service module for sending emails via AWS SES
 """
 import boto3
 from botocore.exceptions import ClientError
@@ -10,12 +10,22 @@ from datetime import datetime
 class EmailService:
     def __init__(self):
         """Initialize AWS SES client"""
-        self.ses_client = boto3.client(
-            'ses',
-            region_name=os.getenv('AWS_REGION', 'ap-south-1'),
-            aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-            aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
-        )
+        # In Lambda, boto3 automatically uses the IAM role
+        # Locally, it will use environment variables
+        region = os.getenv('AWS_REGION', 'ap-south-1')
+        
+        # Check if we're in Lambda (AWS_EXECUTION_ENV is set in Lambda)
+        if os.getenv('AWS_EXECUTION_ENV'):
+            # In Lambda - use IAM role (don't pass credentials)
+            self.ses_client = boto3.client('ses', region_name=region)
+        else:
+            # Local development - use environment variables
+            self.ses_client = boto3.client(
+                'ses',
+                region_name=region,
+                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+            )
         self.sender_email = os.getenv('SES_SENDER_EMAIL', 'info@glassy.in')
         self.app_url = os.getenv('APP_URL', 'http://localhost:5000')
     
