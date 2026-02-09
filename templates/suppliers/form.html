@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - Suppliers{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('suppliers_list') }}">Suppliers</a></li>
+            {% if supplier %}
+            <li class="breadcrumb-item"><a href="{{ url_for('supplier_view', id=supplier.id) }}">{{ supplier.name }}</a>
+            </li>
+            <li class="breadcrumb-item active">Edit</li>
+            {% else %}
+            <li class="breadcrumb-item active">New Supplier</li>
+            {% endif %}
+        </ol>
+    </nav>
+    <h2><i class="bi bi-building"></i> {{ title }}</h2>
+</div>
+
+<form method="POST" action="{{ url_for('supplier_edit', id=supplier.id) if supplier else url_for('supplier_new') }}">
+    <div class="row">
+        <!-- Basic Information -->
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-info-circle"></i> Basic Information</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Supplier Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="name" name="name"
+                            value="{{ supplier.name if supplier else '' }}" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="contact_person" class="form-label">Contact Person</label>
+                        <input type="text" class="form-control" id="contact_person" name="contact_person"
+                            value="{{ supplier.contact_person if supplier else '' }}">
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="phone" class="form-label">Phone</label>
+                            <input type="tel" class="form-control" id="phone" name="phone"
+                                value="{{ supplier.phone if supplier else '' }}">
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <label for="email" class="form-label">Email</label>
+                            <input type="email" class="form-control" id="email" name="email"
+                                value="{{ supplier.email if supplier else '' }}">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="address" class="form-label">Address</label>
+                        <textarea class="form-control" id="address" name="address"
+                            rows="2">{{ supplier.address if supplier else '' }}</textarea>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-5 mb-3">
+                            <label for="city" class="form-label">City</label>
+                            <input type="text" class="form-control" id="city" name="city"
+                                value="{{ supplier.city if supplier else '' }}">
+                        </div>
+
+                        <div class="col-md-4 mb-3">
+                            <label for="state" class="form-label">State</label>
+                            <input type="text" class="form-control" id="state" name="state"
+                                value="{{ supplier.state if supplier else '' }}">
+                        </div>
+
+                        <div class="col-md-3 mb-3">
+                            <label for="pincode" class="form-label">Pincode</label>
+                            <input type="text" class="form-control" id="pincode" name="pincode"
+                                value="{{ supplier.pincode if supplier else '' }}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tax & Banking Details -->
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-bank"></i> Tax & Banking Details</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="gstin" class="form-label">GSTIN</label>
+                            <input type="text" class="form-control" id="gstin" name="gstin"
+                                value="{{ supplier.gstin if supplier else '' }}" placeholder="22AAAAA0000A1Z5">
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <label for="pan" class="form-label">PAN</label>
+                            <input type="text" class="form-control" id="pan" name="pan"
+                                value="{{ supplier.pan if supplier else '' }}" placeholder="AAAAA0000A">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="bank_name" class="form-label">Bank Name</label>
+                        <input type="text" class="form-control" id="bank_name" name="bank_name"
+                            value="{{ supplier.bank_name if supplier else '' }}">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="account_number" class="form-label">Account Number</label>
+                        <input type="text" class="form-control" id="account_number" name="account_number"
+                            value="{{ supplier.account_number if supplier else '' }}">
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="ifsc_code" class="form-label">IFSC Code</label>
+                            <input type="text" class="form-control" id="ifsc_code" name="ifsc_code"
+                                value="{{ supplier.ifsc_code if supplier else '' }}" placeholder="SBIN0001234">
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <label for="branch" class="form-label">Branch</label>
+                            <input type="text" class="form-control" id="branch" name="branch"
+                                value="{{ supplier.branch if supplier else '' }}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Business Terms -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-clipboard-check"></i> Business Terms</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label for="lead_time_days" class="form-label">Lead Time (days)</label>
+                    <input type="number" class="form-control" id="lead_time_days" name="lead_time_days"
+                        value="{{ supplier.lead_time_days if supplier else '' }}" placeholder="e.g., 7">
+                </div>
+
+                <div class="col-md-4 mb-3">
+                    <label for="min_order_value" class="form-label">Minimum Order Value (₹)</label>
+                    <input type="number" step="0.01" class="form-control" id="min_order_value" name="min_order_value"
+                        value="{{ supplier.min_order_value if supplier else '' }}" placeholder="e.g., 10000">
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="payment_terms" class="form-label">Payment Terms</label>
+                <textarea class="form-control" id="payment_terms" name="payment_terms" rows="2"
+                    placeholder="e.g., 50% advance, 50% on delivery">{{ supplier.payment_terms if supplier else '' }}</textarea>
+            </div>
+
+            <div class="mb-3">
+                <label for="notes" class="form-label">Notes</label>
+                <textarea class="form-control" id="notes" name="notes" rows="3"
+                    placeholder="Any additional notes or comments">{{ supplier.notes if supplier else '' }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <!-- Form Actions -->
+    <div class="d-flex justify-content-between mb-4">
+        <a href="{{ url_for('supplier_view', id=supplier.id) if supplier else url_for('suppliers_list') }}"
+            class="btn btn-secondary">
+            <i class="bi bi-x-circle"></i> Cancel
+        </a>
+        <button type="submit" class="btn btn-primary">
+            <i class="bi bi-check-circle"></i> {{ 'Update Supplier' if supplier else 'Create Supplier' }}
+        </button>
+    </div>
+</form>
+
+{% endblock %}

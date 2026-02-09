@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+
+{% block title %}Glass Catalog - VCore{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-grid-3x3"></i> Glass Catalog</h2>
+    <a href="{{ url_for('glass_catalog_new') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> Add Glass Type
+    </a>
+</div>
+
+<!-- Search and Filter -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('glass_catalog_list') }}" class="row g-3">
+            <div class="col-md-5">
+                <input type="text" name="search" class="form-control" placeholder="Search glass types..."
+                    value="{{ search_query }}">
+            </div>
+            <div class="col-md-3">
+                <select name="category" class="form-select">
+                    <option value="">All Categories</option>
+                    {% for cat in categories %}
+                    <option value="{{ cat }}" {% if cat==category_filter %}selected{% endif %}>{{ cat }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select name="supplier" class="form-select">
+                    <option value="">All Suppliers</option>
+                    {% for sup in suppliers %}
+                    <option value="{{ sup.id }}" {% if sup.id|string==supplier_filter|string %}selected{% endif %}>{{
+                        sup.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-1">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search"></i>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Glass Types List -->
+{% if glass_types %}
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Glass Type</th>
+                        <th>Category</th>
+                        <th>Thickness</th>
+                        {% if not supplier_filter %}
+                        {% for supplier in suppliers %}
+                        <th class="text-center">
+                            {{ supplier.name }}<br>
+                            <small class="text-muted">₹/sqm</small>
+                        </th>
+                        {% endfor %}
+                        <th class="text-center">
+                            <strong>Best Price</strong><br>
+                            <small class="text-muted">₹/sqm</small>
+                        </th>
+                        {% else %}
+                        <th class="text-center">
+                            Price<br>
+                            <small class="text-muted">₹/sqm</small>
+                        </th>
+                        <th class="text-center">Hole Price</th>
+                        <th class="text-center">Cutout Price</th>
+                        {% endif %}
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for glass_type in glass_types %}
+                    <tr>
+                        <td>
+                            <a href="{{ url_for('glass_catalog_view', id=glass_type.id) }}"
+                                class="text-decoration-none">
+                                <strong>{{ glass_type.name }}</strong>
+                            </a>
+                            {% if glass_type.is_frosted %}
+                            <span class="badge bg-info">Frosted</span>
+                            {% endif %}
+                            {% if glass_type.is_tinted %}
+                            <span class="badge bg-warning">Tinted</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ glass_type.category or '-' }}</td>
+                        <td>
+                            {% if glass_type.thickness_mm %}
+                            {{ glass_type.thickness_mm }}mm
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+
+                        {% if not supplier_filter %}
+                        <!-- Show all supplier prices -->
+                        {% for supplier in suppliers %}
+                        <td class="text-center">
+                            {% set pricing_found = namespace(value=None, best=None) %}
+                            {% for p in glass_type.pricing %}
+                            {% if p.supplier_id == supplier.id and p.is_active %}
+                            {% set pricing_found.value = p %}
+                            {% endif %}
+                            {% endfor %}
+                            {% if pricing_found.value %}
+                            <span>₹{{ "{:,.0f}".format(pricing_found.value.rate_per_sqm) }}</span>
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+
+                        <!-- Best Price Column -->
+                        <td class="text-center">
+                            {% set best_price = namespace(value=None) %}
+                            {% for p in glass_type.pricing %}
+                            {% if p.is_active %}
+                            {% if best_price.value is none or p.rate_per_sqm < best_price.value %} {% set
+                                best_price.value=p.rate_per_sqm %} {% endif %} {% endif %} {% endfor %} {% if
+                                best_price.value %} <strong class="text-success">₹{{ "{:,.0f}".format(best_price.value)
+                                }}</strong>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                        </td>
+                        {% else %}
+                        <!-- Show single supplier details -->
+                        {% set pricing = None %}
+                        {% for p in glass_type.pricing %}
+                        {% if p.supplier_id == supplier_filter and p.is_active %}
+                        {% set pricing = p %}
+                        {% endif %}
+                        {% endfor %}
+                        <td class="text-center">
+                            {% if pricing %}
+                            <strong>₹{{ "{:,.0f}".format(pricing.rate_per_sqm) }}</strong>
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if pricing and pricing.hole_price > 0 %}
+                            ₹{{ "{:,.0f}".format(pricing.hole_price) }}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if pricing and pricing.cutout_price > 0 %}
+                            ₹{{ "{:,.0f}".format(pricing.cutout_price) }}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        {% endif %}
+
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ url_for('glass_catalog_view', id=glass_type.id) }}"
+                                    class="btn btn-outline-primary" title="View">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <a href="{{ url_for('glass_catalog_edit', id=glass_type.id) }}"
+                                    class="btn btn-outline-secondary" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <a href="{{ url_for('glass_catalog_pricing', id=glass_type.id) }}"
+                                    class="btn btn-outline-success" title="Manage Pricing">
+                                    <i class="bi bi-currency-rupee"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="mt-3">
+    <div class="row">
+        <div class="col-md-6">
+            <small class="text-muted">Showing {{ glass_types|length }} glass type(s)</small>
+        </div>
+        <div class="col-md-6 text-end">
+            <small class="text-success"><i class="bi bi-check-circle"></i> Green = Best Price</small>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle"></i> No glass types found.
+    <a href="{{ url_for('glass_catalog_new') }}" class="alert-link">Add your first glass type</a>
+</div>
+{% endif %}
+
+{% endblock %}

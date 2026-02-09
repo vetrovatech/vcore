@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Reminders{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>📧 Email Reminders</h2>
+        <a href="{{ url_for('reminder_new') }}" class="btn btn-primary">
+            <i class="fas fa-plus"></i> New Reminder
+        </a>
+    </div>
+
+    {% if reminders %}
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Project/Task</th>
+                            <th>User</th>
+                            <th>Scheduled</th>
+                            <th>Recurrence</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for reminder in reminders %}
+                        <tr>
+                            <td>
+                                {% if reminder.reminder_type == 'project' %}
+                                <span class="badge bg-primary">Project</span>
+                                {% else %}
+                                <span class="badge bg-info">Task</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if reminder.reminder_type == 'project' and reminder.project %}
+                                {{ reminder.project.name }}
+                                {% elif reminder.reminder_type == 'task' and reminder.task %}
+                                {{ reminder.task.task_name or reminder.task.template.name }}
+                                {% else %}
+                                <em>N/A</em>
+                                {% endif %}
+                            </td>
+                            <td>{{ reminder.user.username }}</td>
+                            <td>{{ reminder.reminder_datetime.strftime('%d %b %Y, %I:%M %p') }}</td>
+                            <td>
+                                {% if reminder.is_recurring %}
+                                <span class="badge bg-success">{{ reminder.recurrence_pattern|title }}</span>
+                                {% else %}
+                                <span class="badge bg-secondary">One-time</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if reminder.status == 'pending' %}
+                                <span class="badge bg-warning text-dark">Pending</span>
+                                {% elif reminder.status == 'sent' %}
+                                <span class="badge bg-success">Sent</span>
+                                {% elif reminder.status == 'failed' %}
+                                <span class="badge bg-danger">Failed</span>
+                                {% else %}
+                                <span class="badge bg-secondary">{{ reminder.status|title }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <form action="{{ url_for('reminder_delete', id=reminder.id) }}" method="POST"
+                                    style="display: inline;"
+                                    onsubmit="return confirm('Are you sure you want to delete this reminder?');">
+                                    <button type="submit" class="btn btn-sm btn-danger">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i> No reminders found. <a href="{{ url_for('reminder_new') }}">Create your first
+            reminder</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

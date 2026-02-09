@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+
+{% block title %}{{ supplier.name }} - Suppliers{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('suppliers_list') }}">Suppliers</a></li>
+                <li class="breadcrumb-item active">{{ supplier.name }}</li>
+            </ol>
+        </nav>
+        <h2><i class="bi bi-building"></i> {{ supplier.name }}</h2>
+    </div>
+    <div>
+        <a href="{{ url_for('supplier_edit', id=supplier.id) }}" class="btn btn-secondary">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Contact Information -->
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-person-lines-fill"></i> Contact Information</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-borderless">
+                    <tr>
+                        <th width="40%">Contact Person:</th>
+                        <td>{{ supplier.contact_person or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <th>Phone:</th>
+                        <td>
+                            {% if supplier.phone %}
+                            <a href="tel:{{ supplier.phone }}">{{ supplier.phone }}</a>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Email:</th>
+                        <td>
+                            {% if supplier.email %}
+                            <a href="mailto:{{ supplier.email }}">{{ supplier.email }}</a>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Address:</th>
+                        <td>{{ supplier.address or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <th>City:</th>
+                        <td>{{ supplier.city or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <th>State:</th>
+                        <td>{{ supplier.state or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <th>Pincode:</th>
+                        <td>{{ supplier.pincode or '-' }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tax & Banking Details -->
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-bank"></i> Tax & Banking Details</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-borderless">
+                    <tr>
+                        <th width="40%">GSTIN:</th>
+                        <td><code>{{ supplier.gstin or '-' }}</code></td>
+                    </tr>
+                    <tr>
+                        <th>PAN:</th>
+                        <td><code>{{ supplier.pan or '-' }}</code></td>
+                    </tr>
+                    <tr>
+                        <th>Bank Name:</th>
+                        <td>{{ supplier.bank_name or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <th>Account Number:</th>
+                        <td>
+                            {% if supplier.account_number %}
+                            <code>{{ supplier.account_number }}</code>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>IFSC Code:</th>
+                        <td>
+                            {% if supplier.ifsc_code %}
+                            <code>{{ supplier.ifsc_code }}</code>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Branch:</th>
+                        <td>{{ supplier.branch or '-' }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Business Terms -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-clipboard-check"></i> Business Terms</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-4">
+                <div class="p-3 bg-light rounded text-center">
+                    <h4 class="mb-0">
+                        {% if supplier.lead_time_days %}
+                        {{ supplier.lead_time_days }} days
+                        {% else %}
+                        -
+                        {% endif %}
+                    </h4>
+                    <small class="text-muted">Lead Time</small>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="p-3 bg-light rounded text-center">
+                    <h4 class="mb-0">
+                        {% if supplier.min_order_value %}
+                        ₹{{ "{:,.0f}".format(supplier.min_order_value) }}
+                        {% else %}
+                        -
+                        {% endif %}
+                    </h4>
+                    <small class="text-muted">Min Order Value</small>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="p-3 bg-light rounded text-center">
+                    <h4 class="mb-0">
+                        {% if supplier.is_active %}
+                        <span class="badge bg-success">Active</span>
+                        {% else %}
+                        <span class="badge bg-danger">Inactive</span>
+                        {% endif %}
+                    </h4>
+                    <small class="text-muted">Status</small>
+                </div>
+            </div>
+        </div>
+
+        {% if supplier.payment_terms %}
+        <div class="mt-3">
+            <h6>Payment Terms:</h6>
+            <p class="text-muted">{{ supplier.payment_terms }}</p>
+        </div>
+        {% endif %}
+
+        {% if supplier.notes %}
+        <div class="mt-3">
+            <h6>Notes:</h6>
+            <p class="text-muted">{{ supplier.notes }}</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Products & Pricing -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-grid-3x3"></i> Products & Pricing</h5>
+    </div>
+    <div class="card-body">
+        {% set active_pricing = supplier.get_active_pricing() %}
+        {% if active_pricing %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Glass Type</th>
+                        <th>Category</th>
+                        <th class="text-end">Rate/sqm</th>
+                        <th class="text-end">Hole Price</th>
+                        <th class="text-end">Cutout Price</th>
+                        <th>Lead Time</th>
+                        <th>Valid Until</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pricing in active_pricing %}
+                    <tr>
+                        <td>
+                            <a href="{{ url_for('glass_catalog_view', id=pricing.glass_type.id) }}"
+                                class="text-decoration-none">
+                                {{ pricing.glass_type.name }}
+                            </a>
+                        </td>
+                        <td>{{ pricing.glass_type.category or '-' }}</td>
+                        <td class="text-end">
+                            <strong>₹{{ "{:,.2f}".format(pricing.rate_per_sqm) }}</strong>
+                        </td>
+                        <td class="text-end">
+                            {% if pricing.hole_price > 0 %}
+                            ₹{{ "{:,.2f}".format(pricing.hole_price) }}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if pricing.cutout_price > 0 %}
+                            ₹{{ "{:,.2f}".format(pricing.cutout_price) }}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if pricing.lead_time_days %}
+                            {{ pricing.lead_time_days }} days
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if pricing.effective_to %}
+                            {{ pricing.effective_to.strftime('%d %b %Y') }}
+                            {% else %}
+                            <span class="text-muted">No expiry</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="mt-2">
+            <small class="text-muted">Showing {{ active_pricing|length }} active product(s)</small>
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> No active products/pricing for this supplier.
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="mt-3">
+    <small class="text-muted">
+        Created: {{ supplier.created_at.strftime('%d %b %Y, %I:%M %p') }}
+        {% if supplier.updated_at != supplier.created_at %}
+        | Last updated: {{ supplier.updated_at.strftime('%d %b %Y, %I:%M %p') }}
+        {% endif %}
+    </small>
+</div>
+
+{% endblock %}

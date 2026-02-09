@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - Glass Catalog{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('glass_catalog_list') }}">Glass Catalog</a></li>
+            {% if glass_type %}
+            <li class="breadcrumb-item"><a href="{{ url_for('glass_catalog_view', id=glass_type.id) }}">{{
+                    glass_type.name }}</a></li>
+            <li class="breadcrumb-item active">Edit</li>
+            {% else %}
+            <li class="breadcrumb-item active">New Glass Type</li>
+            {% endif %}
+        </ol>
+    </nav>
+    <h2><i class="bi bi-grid-3x3"></i> {{ title }}</h2>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <form method="POST"
+                    action="{{ url_for('glass_catalog_edit', id=glass_type.id) if glass_type else url_for('glass_catalog_new') }}">
+                    <div class="row">
+                        <div class="col-md-8 mb-3">
+                            <label for="name" class="form-label">Glass Type Name <span
+                                    class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="name" name="name"
+                                value="{{ glass_type.name if glass_type else '' }}" required>
+                            <div class="form-text">e.g., "6mm Toughened Glass", "8mm + 1.52 PVB + 8mm Laminated"</div>
+                        </div>
+
+                        <div class="col-md-4 mb-3">
+                            <label for="category" class="form-label">Category</label>
+                            <select class="form-select" id="category" name="category">
+                                <option value="">Select Category</option>
+                                <option value="Toughened" {% if glass_type and glass_type.category=='Toughened'
+                                    %}selected{% endif %}>Toughened</option>
+                                <option value="Laminated" {% if glass_type and glass_type.category=='Laminated'
+                                    %}selected{% endif %}>Laminated</option>
+                                <option value="Insulated" {% if glass_type and glass_type.category=='Insulated'
+                                    %}selected{% endif %}>Insulated</option>
+                                <option value="Frosted" {% if glass_type and glass_type.category=='Frosted' %}selected{%
+                                    endif %}>Frosted</option>
+                                <option value="Tinted" {% if glass_type and glass_type.category=='Tinted' %}selected{%
+                                    endif %}>Tinted</option>
+                                <option value="Other" {% if glass_type and glass_type.category=='Other' %}selected{%
+                                    endif %}>Other</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="thickness_mm" class="form-label">Thickness (mm)</label>
+                            <input type="number" step="0.01" class="form-control" id="thickness_mm" name="thickness_mm"
+                                value="{{ glass_type.thickness_mm if glass_type else '' }}" placeholder="e.g., 6.00">
+                        </div>
+
+                        <div class="col-md-4 mb-3">
+                            <label for="color" class="form-label">Color</label>
+                            <input type="text" class="form-control" id="color" name="color"
+                                value="{{ glass_type.color if glass_type else '' }}" placeholder="e.g., Clear, Bronze">
+                        </div>
+
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label d-block">Properties</label>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="is_frosted" name="is_frosted" {% if
+                                    glass_type and glass_type.is_frosted %}checked{% endif %}>
+                                <label class="form-check-label" for="is_frosted">Frosted</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="is_tinted" name="is_tinted" {% if
+                                    glass_type and glass_type.is_tinted %}checked{% endif %}>
+                                <label class="form-check-label" for="is_tinted">Tinted</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea class="form-control" id="description" name="description" rows="3"
+                            placeholder="Optional description or specifications">{{ glass_type.description if glass_type else '' }}</textarea>
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('glass_catalog_view', id=glass_type.id) if glass_type else url_for('glass_catalog_list') }}"
+                            class="btn btn-secondary">
+                            <i class="bi bi-x-circle"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle"></i> {{ 'Update Glass Type' if glass_type else 'Create Glass
+                            Type' }}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        {% if glass_type %}
+        <div class="card mt-3">
+            <div class="card-body">
+                <h6 class="text-muted">
+                    <i class="bi bi-info-circle"></i> Note: To manage pricing for this glass type,
+                    <a href="{{ url_for('glass_catalog_pricing', id=glass_type.id) }}">click here</a>.
+                </h6>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-md-4">
+        <div class="card bg-light">
+            <div class="card-body">
+                <h6><i class="bi bi-lightbulb"></i> Tips</h6>
+                <ul class="small mb-0">
+                    <li>Use clear, descriptive names for glass types</li>
+                    <li>Include thickness in the name for clarity</li>
+                    <li>Select appropriate category for better organization</li>
+                    <li>After creating, add supplier pricing to enable price comparison</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

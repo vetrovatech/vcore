@@ -53,6 +53,9 @@ function loadExistingItems(items) {
                                value="${item.particular}"
                                placeholder="Product Group (e.g., 8mm Toughened Glass)"
                                style="font-weight: bold; flex: 1; min-width: 200px;" required>
+                        <button type="button" class="btn btn-sm btn-info" onclick="openGlassCatalogModal(this)" title="Browse Glass Catalog">
+                            <i class="bi bi-grid-3x3"></i> Browse
+                        </button>
                         <label class="form-label mb-0" style="white-space: nowrap;">Chargeable Extra (MM):</label>
                         <input type="number" class="form-control form-control-sm chargeable-extra-input" 
                                name="items[${itemCounter}][chargeable_extra]" 
@@ -229,6 +232,9 @@ function addGroup() {
                        name="items[${itemCounter}][particular]" 
                        placeholder="Product Group (e.g., 8mm Toughened Glass)"
                        style="font-weight: bold; flex: 1; min-width: 200px;" required>
+                <button type="button" class="btn btn-sm btn-info" onclick="openGlassCatalogModal(this)" title="Browse Glass Catalog">
+                    <i class="bi bi-grid-3x3"></i> Browse
+                </button>
                 <label class="form-label mb-0" style="white-space: nowrap;">Chargeable Extra (MM):</label>
                 <input type="number" class="form-control form-control-sm chargeable-extra-input" 
                        name="items[${itemCounter}][chargeable_extra]" 
@@ -363,6 +369,15 @@ function addSubItem(button) {
         lastSubItem.after(row);
     } else {
         groupRow.after(row);
+    }
+
+    // Auto-populate rate if group has stored rate from glass catalog selection
+    const storedRate = groupRow.dataset.ratePerSqm;
+    if (storedRate) {
+        const rateInput = row.querySelector('.rate-input');
+        if (rateInput) {
+            rateInput.value = storedRate;
+        }
     }
 
     itemCounter++;

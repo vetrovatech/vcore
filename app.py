@@ -7,7 +7,7 @@ import pymysql
 # Install PyMySQL as MySQLdb for MySQL compatibility
 pymysql.install_as_MySQLdb()
 
-from models import db, User, Project, TaskTemplate, PromotorTask, DailyUpdate, Product, Quote, QuoteItem, Supplier, GlassType, SupplierPricing
+from models import db, User, Project, TaskTemplate, PromotorTask, DailyUpdate, Product, Quote, QuoteItem, Supplier, GlassType, SupplierPricing, Reminder
 from config import config
 from forms import (LoginForm, UserForm, ProjectForm, TaskTemplateForm, 
                    TaskAssignmentForm, TaskUpdateForm, DailyUpdateForm, ProductForm)
@@ -2073,6 +2073,126 @@ def lambda_handler(event, context):
     # Use awsgi to handle Lambda event
     from awsgi import response
     return response(app, event, context)
+
+
+# ============================================================================
+# REMINDER ROUTES
+# ============================================================================
+
+@app.route('/reminders')
+@login_required
+def reminders_list():
+    """List all reminders for current user"""
+    if current_user.role == 'Admin':
+        reminders = Reminder.query.order_by(Reminder.reminder_datetime.desc()).all()
+    else:
+        reminders = Reminder.query.filter_by(user_id=current_user.id).order_by(Reminder.reminder_datetime.desc()).all()
+    
+    return render_template('reminders/list.html', reminders=reminders)
+
+
+@app.route('/reminders/new', methods=['GET', 'POST'])
+@login_required
+def reminder_new():
+    """Create a new reminder"""
+    if request.method == 'POST':
+        try:
+            reminder_type = request.form.get('reminder_type')
+            project_id = request.form.get('project_id') if reminder_type == 'project' else None
+            task_id = request.form.get('task_id') if reminder_type == 'task' else None
+            user_id = request.form.get('user_id', current_user.id)
+            
+            reminder_date = request.form.get('reminder_date')
+            reminder_time = request.form.get('reminder_time', '09:00')
+            reminder_datetime = datetime.strptime(f"{reminder_date} {reminder_time}", '%Y-%m-%d %H:%M')
+            
+            subject = request.form.get('subject') or None
+            message = request.form.get('message') or None
+            is_recurring = request.form.get('is_recurring') == 'on'
+            recurrence_pattern = request.form.get('recurrence_pattern') if is_recurring else None
+            recurrence_end_date = request.form.get('recurrence_end_date') if is_recurring else None
+            
+            if recurrence_end_date:
+                recurrence_end_date = datetime.strptime(recurrence_end_date, '%Y-%m-%d').date()
+            
+            reminder = Reminder(
+                reminder_type=reminder_type,
+                project_id=project_id,
+                task_id=task_id,
+                user_id=user_id,
+                reminder_datetime=reminder_datetime,
+                subject=subject,
+                message=message,
+                is_recurring=is_recurring,
+                recurrence_pattern=recurrence_pattern,
+                recurrence_end_date=recurrence_end_date,
+                status='pending'
+            )
+            
+            db.session.add(reminder)
+            db.session.commit()
+            
+            flash('Reminder created successfully!', 'success')
+            return redirect(url_for('reminders_list'))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error creating reminder: {str(e)}', 'danger')
+    
+    if current_user.role == 'Admin':
+        projects = Project.query.filter_by(status='In Progress').all()
+        tasks = PromotorTask.query.filter(PromotorTask.status.in_(['Pending', 'In Progress'])).all()
+        users = User.query.filter_by(is_active=True).all()
+    else:
+        projects = Project.query.filter_by(owner_id=current_user.id, status='In Progress').all()
+        tasks = PromotorTask.query.filter_by(promotor_id=current_user.id).filter(
+            PromotorTask.status.in_(['Pending', 'In Progress'])
+        ).all()
+        users = [current_user]
+    
+    return render_template('reminders/form.html', projects=projects, tasks=tasks, users=users, reminder=None)
+
+
+@app.route('/reminders/<int:id>/delete', methods=['POST'])
+@login_required
+def reminder_delete(id):
+    """Delete a reminder"""
+    reminder = Reminder.query.get_or_404(id)
+    
+    if current_user.role != 'Admin' and reminder.user_id != current_user.id:
+        flash('You do not have permission to delete this reminder.', 'danger')
+        return redirect(url_for('reminders_list'))
+    
+    try:
+        db.session.delete(reminder)
+        db.session.commit()
+        flash('Reminder deleted successfully!', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error deleting reminder: {str(e)}', 'danger')
+    
+    return redirect(url_for('reminders_list'))
+
+
+@app.route('/api/reminders/check', methods=['GET'])
+def reminders_check():
+    """Cron endpoint to check and send pending reminders"""
+    cron_secret = request.headers.get('X-Cron-Secret') or request.args.get('secret')
+    expected_secret = os.getenv('CRON_SECRET')
+    
+    if not expected_secret or cron_secret != expected_secret:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    try:
+        from utils.reminder_scheduler import ReminderScheduler
+        scheduler = ReminderScheduler()
+        result = scheduler.check_and_send_reminders()
+        
+        return jsonify({'success': True, 'result': result}), 200
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 
 # ============================================================================

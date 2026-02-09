@@ -295,49 +295,125 @@
         items: [
             {%for item in quote.items if not item.parent_id %}
     {
-        id: {{item.id}},
-        is_group: {{'true' if item.is_group else 'false'}},
-        item_number: {{item.item_number}},
+        id: {{ item.id }},
+        is_group: {{ 'true' if item.is_group else 'false' }},
+        item_number: {{ item.item_number }},
         particular: "{{item.particular|replace('"', '\\"')}}",
-            actual_width: {{item.actual_width if item.actual_width else 'null'}},
-        actual_height: {{item.actual_height if item.actual_height else 'null'}},
-        chargeable_width: {{item.chargeable_width if item.chargeable_width else 'null'}},
-        chargeable_height: {{item.chargeable_height if item.chargeable_height else 'null'}},
+            actual_width: {{ item.actual_width if item.actual_width else 'null' }},
+        actual_height: {{ item.actual_height if item.actual_height else 'null' }},
+        chargeable_width: {{ item.chargeable_width if item.chargeable_width else 'null' }},
+        chargeable_height: {{ item.chargeable_height if item.chargeable_height else 'null' }},
         unit: "{{item.unit or 'MM'}}",
-            quantity: {{item.quantity}},
-        unit_square: {{item.unit_square if item.unit_square else 0}},
-        rate_sqper: {{item.rate_sqper}},
-        total: {{item.total}},
-        chargeable_extra: {{item.chargeable_extra if item.chargeable_extra else 30}},
-        hole_price: {{item.hole_price if item.hole_price else 0}},
-        cutout_price: {{item.cutout_price if item.cutout_price else 0}},
+            quantity: {{ item.quantity }},
+        unit_square: {{ item.unit_square if item.unit_square else 0 }},
+        rate_sqper: {{ item.rate_sqper }},
+        total: {{ item.total }},
+        chargeable_extra: {{ item.chargeable_extra if item.chargeable_extra else 30 }},
+        hole_price: {{ item.hole_price if item.hole_price else 0 }},
+        cutout_price: {{ item.cutout_price if item.cutout_price else 0 }},
         children: [
             {%if item.is_group %}
     {%for child in item.children | sort(attribute = 'sort_order') %}
     {
-        id: {{child.id}},
+        id: {{ child.id }},
         particular: "{{child.particular|replace('"', '\\"')}}",
-            actual_width: {{child.actual_width if child.actual_width else 'null'}},
-        actual_height: {{child.actual_height if child.actual_height else 'null'}},
-        chargeable_width: {{child.chargeable_width if child.chargeable_width else 'null'}},
-        chargeable_height: {{child.chargeable_height if child.chargeable_height else 'null'}},
+            actual_width: {{ child.actual_width if child.actual_width else 'null' }},
+        actual_height: {{ child.actual_height if child.actual_height else 'null' }},
+        chargeable_width: {{ child.chargeable_width if child.chargeable_width else 'null' }},
+        chargeable_height: {{ child.chargeable_height if child.chargeable_height else 'null' }},
         unit: "{{child.unit or 'MM'}}",
-            quantity: {{child.quantity}},
-        unit_square: {{child.unit_square if child.unit_square else 0}},
-        rate_sqper: {{child.rate_sqper}},
-        total: {{child.total}},
-        hole: {{child.hole if child.hole else 0}},
-        cutout: {{child.cutout if child.cutout else 0}}
-    } {{',' if not loop.last else ''}}
+            quantity: {{ child.quantity }},
+        unit_square: {{ child.unit_square if child.unit_square else 0 }},
+        rate_sqper: {{ child.rate_sqper }},
+        total: {{ child.total }},
+        hole: {{ child.hole if child.hole else 0 }},
+        cutout: {{ child.cutout if child.cutout else 0 }}
+    } {{ ',' if not loop.last else '' }}
     {% endfor %}
     {% endif %}
             ]
-        }{{',' if not loop.last else ''}}
+        }{{ ',' if not loop.last else '' }}
     {% endfor %}
     ]
 };
 </script>
 {% endif %}
 
+<!-- Glass Catalog Selection Modal -->
+<div class="modal fade" id="glassCatalogModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-grid-3x3"></i> Select Glass Type</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Search and Filter -->
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <input type="text" class="form-control" id="catalogSearch" placeholder="Search glass types...">
+                    </div>
+                    <div class="col-md-3">
+                        <select class="form-select" id="catalogCategoryFilter">
+                            <option value="">All Categories</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{{ url_for('glass_catalog_list') }}" target="_blank"
+                            class="btn btn-outline-secondary w-100">
+                            <i class="bi bi-box-arrow-up-right"></i> Manage Catalog
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Glass Types Table -->
+                <div class="table-responsive">
+                    <table class="table table-hover" id="catalogTable">
+                        <thead>
+                            <tr>
+                                <th>Glass Type</th>
+                                <th>Category</th>
+                                <th>Thickness</th>
+                                <th>Suppliers</th>
+                                <th>Best Price</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="catalogTableBody">
+                            <tr>
+                                <td colspan="6" class="text-center">
+                                    <div class="spinner-border spinner-border-sm" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    Loading glass types...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Supplier Pricing Selection Modal -->
+<div class="modal fade" id="supplierPricingModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="supplierPricingModalTitle">Select Supplier</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted">Choose a supplier to auto-populate pricing:</p>
+                <div id="supplierPricingList">
+                    <!-- Populated via JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="{{ url_for('static', filename='js/quote_form_enhanced.js') }}"></script>
+<script src="{{ url_for('static', filename='js/glass_catalog_integration.js') }}"></script>
 {% endblock %}

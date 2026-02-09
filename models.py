@@ -579,3 +579,253 @@ class QuoteItem(db.Model):
         return f'<QuoteItem {self.item_number} - {self.particular}>'
 
 
+class Supplier(db.Model):
+    """Supplier model for managing glass suppliers"""
+    __tablename__ = 'suppliers'
+    
+    # Primary key
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Basic information
+    name = db.Column(db.String(200), nullable=False, unique=True, index=True)
+    contact_person = db.Column(db.String(200), nullable=True)
+    phone = db.Column(db.String(50), nullable=True)
+    email = db.Column(db.String(200), nullable=True)
+    address = db.Column(db.Text, nullable=True)
+    city = db.Column(db.String(100), nullable=True)
+    state = db.Column(db.String(100), nullable=True)
+    pincode = db.Column(db.String(20), nullable=True)
+    
+    # Tax and banking details
+    gstin = db.Column(db.String(50), nullable=True)
+    pan = db.Column(db.String(20), nullable=True)
+    bank_name = db.Column(db.String(200), nullable=True)
+    account_number = db.Column(db.String(50), nullable=True)
+    ifsc_code = db.Column(db.String(20), nullable=True)
+    branch = db.Column(db.String(200), nullable=True)
+    
+    # Business terms
+    payment_terms = db.Column(db.Text, nullable=True)
+    lead_time_days = db.Column(db.Integer, nullable=True)
+    min_order_value = db.Column(db.Numeric(10, 2), nullable=True)
+    
+    # Status and metadata
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    pricing = db.relationship('SupplierPricing', backref='supplier', lazy=True, cascade='all, delete-orphan')
+    
+    # Indexes
+    __table_args__ = (
+        db.Index('idx_supplier_active', 'is_active'),
+        db.Index('idx_supplier_name', 'name'),
+    )
+    
+    def get_active_pricing(self):
+        """Get all active pricing for this supplier"""
+        from datetime import date
+        today = date.today()
+        return [p for p in self.pricing if p.is_active and 
+                (p.effective_from is None or p.effective_from <= today) and
+                (p.effective_to is None or p.effective_to >= today)]
+    
+    def __repr__(self):
+        return f'<Supplier {self.name}>'
+
+
+class GlassType(db.Model):
+    """Glass type model for catalog of glass products"""
+    __tablename__ = 'glass_types'
+    
+    # Primary key
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Basic information
+    name = db.Column(db.String(200), nullable=False, index=True)
+    category = db.Column(db.String(100), nullable=True, index=True)  # Toughened, Laminated, etc.
+    thickness_mm = db.Column(db.Numeric(5, 2), nullable=True)  # Glass thickness in mm
+    
+    # Description and specifications
+    description = db.Column(db.Text, nullable=True)
+    specifications = db.Column(db.Text, nullable=True)  # JSON string for additional specs
+    
+    # Common properties
+    is_frosted = db.Column(db.Boolean, default=False)
+    is_tinted = db.Column(db.Boolean, default=False)
+    color = db.Column(db.String(50), nullable=True)
+    
+    # Status and metadata
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    pricing = db.relationship('SupplierPricing', backref='glass_type', lazy=True, cascade='all, delete-orphan')
+    
+    # Indexes
+    __table_args__ = (
+        db.Index('idx_glass_type_active', 'is_active'),
+        db.Index('idx_glass_category', 'category', 'is_active'),
+    )
+    
+    def get_specifications(self):
+        """Get specifications as a dictionary"""
+        if self.specifications:
+            try:
+                return json.loads(self.specifications)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return {}
+    
+    def set_specifications(self, specs_dict):
+        """Set specifications from a dictionary"""
+        if specs_dict:
+            self.specifications = json.dumps(specs_dict)
+        else:
+            self.specifications = None
+    
+    def get_best_price(self):
+        """Get the best (lowest) active price from all suppliers"""
+        active_prices = [p.rate_per_sqm for p in self.pricing if p.is_active]
+        return min(active_prices) if active_prices else None
+    
+    def get_supplier_count(self):
+        """Get count of suppliers offering this glass type"""
+        return len([p for p in self.pricing if p.is_active])
+    
+    def __repr__(self):
+        return f'<GlassType {self.name}>'
+
+
+class SupplierPricing(db.Model):
+    """Supplier pricing model for glass type pricing by supplier"""
+    __tablename__ = 'supplier_pricing'
+    
+    # Primary key
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Foreign keys
+    supplier_id = db.Column(db.Integer, db.ForeignKey('suppliers.id'), nullable=False, index=True)
+    glass_type_id = db.Column(db.Integer, db.ForeignKey('glass_types.id'), nullable=False, index=True)
+    
+    # Pricing details
+    rate_per_sqm = db.Column(db.Numeric(10, 2), nullable=False)  # Base rate per square meter
+    hole_price = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Price per hole
+    cutout_price = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Price per cutout
+    big_hole_price = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Price per big hole
+    big_cutout_price = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Price per big cutout
+    
+    # Additional charges
+    frosting_charge_per_sqm = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    tinting_charge_per_sqm = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    
+    # Order constraints
+    min_order_sqm = db.Column(db.Numeric(10, 2), nullable=True)  # Minimum order quantity
+    lead_time_days = db.Column(db.Integer, nullable=True)  # Lead time in days
+    
+    # Validity period
+    effective_from = db.Column(db.Date, nullable=True)
+    effective_to = db.Column(db.Date, nullable=True)
+    
+    # Status and notes
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    
+    # Metadata
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Indexes
+    __table_args__ = (
+        db.Index('idx_supplier_glass', 'supplier_id', 'glass_type_id'),
+        db.Index('idx_pricing_active', 'is_active'),
+        db.UniqueConstraint('supplier_id', 'glass_type_id', 'effective_from', name='uq_supplier_glass_date'),
+    )
+    
+    def is_currently_valid(self):
+        """Check if pricing is currently valid"""
+        from datetime import date
+        today = date.today()
+        
+        if not self.is_active:
+            return False
+        
+        if self.effective_from and self.effective_from > today:
+            return False
+        
+        if self.effective_to and self.effective_to < today:
+            return False
+        
+        return True
+    
+    def get_total_price(self, sqm, holes=0, cutouts=0, big_holes=0, big_cutouts=0, frosted=False, tinted=False):
+        """Calculate total price for given specifications"""
+        total = float(self.rate_per_sqm) * sqm
+        total += float(self.hole_price) * holes
+        total += float(self.cutout_price) * cutouts
+        total += float(self.big_hole_price) * big_holes
+        total += float(self.big_cutout_price) * big_cutouts
+        
+        if frosted:
+            total += float(self.frosting_charge_per_sqm) * sqm
+        
+        if tinted:
+            total += float(self.tinting_charge_per_sqm) * sqm
+        
+        return total
+    
+    def __repr__(self):
+        return f'<SupplierPricing {self.supplier.name if self.supplier else "N/A"} - {self.glass_type.name if self.glass_type else "N/A"}>'
+
+
+class Reminder(db.Model):
+    """Email reminder model for projects and tasks"""
+    __tablename__ = 'reminders'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Polymorphic reminder (can be for project or task)
+    reminder_type = db.Column(db.String(20), nullable=False)  # 'project' or 'task'
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True, index=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('promotor_tasks.id'), nullable=True, index=True)
+    
+    # Reminder details
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    reminder_datetime = db.Column(db.DateTime, nullable=False, index=True)
+    subject = db.Column(db.String(200), nullable=True)  # Custom subject (optional)
+    message = db.Column(db.Text, nullable=True)  # Custom message (optional)
+    
+    # Recurrence settings
+    is_recurring = db.Column(db.Boolean, default=False)
+    recurrence_pattern = db.Column(db.String(50), nullable=True)  # 'daily', 'weekly', 'monthly'
+    recurrence_end_date = db.Column(db.Date, nullable=True)
+    
+    # Status tracking
+    status = db.Column(db.String(20), default='pending', index=True)  # 'pending', 'sent', 'failed', 'cancelled'
+    sent_at = db.Column(db.DateTime, nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    
+    # Email preferences
+    send_email = db.Column(db.Boolean, default=True)  # Future: can add SMS, push, etc.
+    
+    # Metadata
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    user = db.relationship('User', backref='reminders', foreign_keys=[user_id])
+    project = db.relationship('Project', backref='reminders', foreign_keys=[project_id])
+    task = db.relationship('PromotorTask', backref='reminders', foreign_keys=[task_id])
+    
+    # Indexes
+    __table_args__ = (
+        db.Index('idx_reminder_status_datetime', 'status', 'reminder_datetime'),
+        db.Index('idx_reminder_user_type', 'user_id', 'reminder_type'),
+    )
+    
+    def __repr__(self):
+        return f'<Reminder {self.id} - {self.reminder_type} - {self.status}>'
+

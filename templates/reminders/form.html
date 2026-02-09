@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+
+{% block title %}{% if reminder %}Edit{% else %}New{% endif %} Reminder{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h2>{% if reminder %}Edit{% else %}New{% endif %} Reminder</h2>
+
+    <div class="card mt-4">
+        <div class="card-body">
+            <form method="POST">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="reminder_type" class="form-label">Reminder Type *</label>
+                        <select class="form-select" id="reminder_type" name="reminder_type" required {% if reminder
+                            %}disabled{% endif %}>
+                            <option value="project" {% if reminder and reminder.reminder_type=='project' %}selected{%
+                                endif %}>Project</option>
+                            <option value="task" {% if reminder and reminder.reminder_type=='task' %}selected{% endif
+                                %}>Task</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-6 mb-3" id="project_select_div">
+                        <label for="project_id" class="form-label">Select Project *</label>
+                        <select class="form-select" id="project_id" name="project_id" {% if not reminder %}required{%
+                            endif %} {% if reminder %}disabled{% endif %}>
+                            <option value="">-- Select Project --</option>
+                            {% for project in projects %}
+                            <option value="{{ project.id }}" {% if reminder and reminder.project_id==project.id
+                                %}selected{% endif %}>
+                                {{ project.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="col-md-6 mb-3" id="task_select_div" style="display: none;">
+                        <label for="task_id" class="form-label">Select Task *</label>
+                        <select class="form-select" id="task_id" name="task_id" {% if reminder %}disabled{% endif %}>
+                            <option value="">-- Select Task --</option>
+                            {% for task in tasks %}
+                            <option value="{{ task.id }}" {% if reminder and reminder.task_id==task.id %}selected{%
+                                endif %}>
+                                {{ task.task_name or task.template.name }} ({{ task.project.name if task.project else
+                                'General' }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label for="reminder_date" class="form-label">Reminder Date *</label>
+                        <input type="date" class="form-control" id="reminder_date" name="reminder_date"
+                            value="{% if reminder %}{{ reminder.reminder_datetime.strftime('%Y-%m-%d') }}{% endif %}"
+                            required>
+                    </div>
+
+                    <div class="col-md-4 mb-3">
+                        <label for="reminder_time" class="form-label">Reminder Time *</label>
+                        <input type="time" class="form-control" id="reminder_time" name="reminder_time"
+                            value="{% if reminder %}{{ reminder.reminder_datetime.strftime('%H:%M') }}{% else %}09:00{% endif %}"
+                            required>
+                    </div>
+
+                    {% if current_user.role == 'Admin' %}
+                    <div class="col-md-4 mb-3">
+                        <label for="user_id" class="form-label">Send To *</label>
+                        <select class="form-select" id="user_id" name="user_id" required {% if reminder %}disabled{%
+                            endif %}>
+                            {% for user in users %}
+                            <option value="{{ user.id }}" {% if reminder and reminder.user_id==user.id %}selected{% elif
+                                not reminder and user.id==current_user.id %}selected{% endif %}>
+                                {{ user.username }} ({{ user.email }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="mb-3">
+                    <label for="subject" class="form-label">Custom Subject (Optional)</label>
+                    <input type="text" class="form-control" id="subject" name="subject"
+                        value="{% if reminder %}{{ reminder.subject }}{% endif %}"
+                        placeholder="Leave empty for default subject">
+                </div>
+
+                <div class="mb-3">
+                    <label for="message" class="form-label">Custom Message (Optional)</label>
+                    <textarea class="form-control" id="message" name="message" rows="4"
+                        placeholder="Leave empty for default message">{% if reminder %}{{ reminder.message }}{% endif %}</textarea>
+                </div>
+
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="is_recurring" name="is_recurring" {% if
+                            reminder and reminder.is_recurring %}checked{% endif %}>
+                        <label class="form-check-label" for="is_recurring">
+                            Recurring Reminder
+                        </label>
+                    </div>
+                </div>
+
+                <div id="recurrence_options"
+                    style="{% if not reminder or not reminder.is_recurring %}display: none;{% endif %}">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="recurrence_pattern" class="form-label">Recurrence Pattern</label>
+                            <select class="form-select" id="recurrence_pattern" name="recurrence_pattern">
+                                <option value="daily" {% if reminder and reminder.recurrence_pattern=='daily'
+                                    %}selected{% endif %}>Daily</option>
+                                <option value="weekly" {% if reminder and reminder.recurrence_pattern=='weekly'
+                                    %}selected{% endif %}>Weekly</option>
+                                <option value="monthly" {% if reminder and reminder.recurrence_pattern=='monthly'
+                                    %}selected{% endif %}>Monthly</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <label for="recurrence_end_date" class="form-label">End Date (Optional)</label>
+                            <input type="date" class="form-control" id="recurrence_end_date" name="recurrence_end_date"
+                                value="{% if reminder and reminder.recurrence_end_date %}{{ reminder.recurrence_end_date.strftime('%Y-%m-%d') }}{% endif %}">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> {% if reminder %}Update{% else %}Create{% endif %} Reminder
+                    </button>
+                    <a href="{{ url_for('reminders_list') }}" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Toggle between project and task selection
+    document.getElementById('reminder_type').addEventListener('change', function () {
+        const projectDiv = document.getElementById('project_select_div');
+        const taskDiv = document.getElementById('task_select_div');
+        const projectSelect = document.getElementById('project_id');
+        const taskSelect = document.getElementById('task_id');
+
+        if (this.value === 'project') {
+            projectDiv.style.display = 'block';
+            taskDiv.style.display = 'none';
+            projectSelect.required = true;
+            taskSelect.required = false;
+        } else {
+            projectDiv.style.display = 'none';
+            taskDiv.style.display = 'block';
+            projectSelect.required = false;
+            taskSelect.required = true;
+        }
+    });
+
+    // Toggle recurrence options
+    document.getElementById('is_recurring').addEventListener('change', function () {
+        const recurrenceOptions = document.getElementById('recurrence_options');
+        recurrenceOptions.style.display = this.checked ? 'block' : 'none';
+    });
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function () {
+        const reminderType = document.getElementById('reminder_type').value;
+        if (reminderType === 'task') {
+            document.getElementById('project_select_div').style.display = 'none';
+            document.getElementById('task_select_div').style.display = 'block';
+            document.getElementById('project_id').required = false;
+            document.getElementById('task_id').required = true;
+        }
+    });
+</script>
+{% endblock %}
