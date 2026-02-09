@@ -16,13 +16,15 @@ class ReminderScheduler:
         # Get current time
         now = datetime.utcnow()
         
-        # Query reminders due in the next 15 minutes
+        # Query reminders that are due (past or upcoming in next 15 minutes)
+        # This catches both overdue reminders and upcoming ones
+        past_time = now - timedelta(hours=24)  # Check last 24 hours for any missed
         upcoming_time = now + timedelta(minutes=15)
         
         pending_reminders = Reminder.query.filter(
             Reminder.status == 'pending',
-            Reminder.reminder_datetime <= upcoming_time,
-            Reminder.reminder_datetime > now - timedelta(minutes=15)  # Avoid re-sending
+            Reminder.reminder_datetime >= past_time,
+            Reminder.reminder_datetime <= upcoming_time
         ).all()
         
         print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] Found {len(pending_reminders)} pending reminders to send")

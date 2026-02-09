@@ -2140,11 +2140,13 @@ def reminder_new():
             flash(f'Error creating reminder: {str(e)}', 'danger')
     
     if current_user.role == 'Admin':
-        projects = Project.query.filter_by(status='In Progress').all()
+        projects = Project.query.filter(Project.status.in_(['New', 'In Progress'])).all()
         tasks = PromotorTask.query.filter(PromotorTask.status.in_(['Pending', 'In Progress'])).all()
         users = User.query.filter_by(is_active=True).all()
     else:
-        projects = Project.query.filter_by(owner_id=current_user.id, status='In Progress').all()
+        projects = Project.query.filter_by(owner_id=current_user.id).filter(
+            Project.status.in_(['New', 'In Progress'])
+        ).all()
         tasks = PromotorTask.query.filter_by(promotor_id=current_user.id).filter(
             PromotorTask.status.in_(['Pending', 'In Progress'])
         ).all()
