@@ -85,6 +85,8 @@ class EmailService:
         if custom_message:
             body = custom_message
         else:
+            # Calculate status text
+            status_text = ""
             days_remaining = project.days_remaining()
             if days_remaining is not None:
                 if days_remaining > 0:
@@ -102,7 +104,7 @@ This is a reminder about your project:
 
 Project: {project.name}
 Status: {project.status}
-Expected End Date: {project.expected_end_date.strftime('%d %B %Y')}
+Expected End Date: {project.expected_end_date.strftime('%d %B %Y') if project.expected_end_date else 'Not set'}
 {status_text}
 
 {project.comments if project.comments else ''}
