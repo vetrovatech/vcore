@@ -2196,6 +2196,84 @@ def reminders_check():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/reminders/auto-create', methods=['GET', 'POST'])
+def reminders_auto_create():
+    """API endpoint to create automatic reminders for all incomplete projects"""
+    # Verify secret key
+    cron_secret = request.headers.get('X-Cron-Secret') or request.args.get('secret')
+    expected_secret = os.getenv('CRON_SECRET')
+    
+    if not expected_secret or cron_secret != expected_secret:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    try:
+        # Get all incomplete projects
+        incomplete_projects = Project.query.filter(
+            Project.status.in_(['New', 'In Progress', 'On Hold'])
+        ).all()
+        
+        # Get all active users
+        active_users = User.query.filter_by(is_active=True).all()
+        
+        # Set reminder time to 30 minutes from now
+        reminder_time = datetime.utcnow() + timedelta(minutes=30)
+        
+        created_count = 0
+        skipped_count = 0
+        
+        for project in incomplete_projects:
+            # Determine recipients
+            recipients = []
+            
+            if project.owner:
+                recipients = [project.owner]
+            else:
+                # Send to all admins and managers
+                recipients = [u for u in active_users if u.role in ['Admin', 'Manager']]
+            
+            for user in recipients:
+                # Check if a reminder already exists for this project/user in the next hour
+                existing = Reminder.query.filter(
+                    Reminder.project_id == project.id,
+                    Reminder.user_id == user.id,
+                    Reminder.status == 'pending',
+                    Reminder.reminder_datetime > datetime.utcnow(),
+                    Reminder.reminder_datetime < datetime.utcnow() + timedelta(hours=1)
+                ).first()
+                
+                if not existing:
+                    # Create reminder
+                    reminder = Reminder(
+                        reminder_type='project',
+                        project_id=project.id,
+                        user_id=user.id,
+                        reminder_datetime=reminder_time,
+                        subject=f"Daily Project Update: {project.name}",
+                        message=f"This is an automated daily reminder for project: {project.name}",
+                        status='pending'
+                    )
+                    db.session.add(reminder)
+                    created_count += 1
+                else:
+                    skipped_count += 1
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'result': {
+                'projects_checked': len(incomplete_projects),
+                'reminders_created': created_count,
+                'reminders_skipped': skipped_count,
+                'scheduled_for': reminder_time.strftime('%Y-%m-%d %H:%M:%S UTC')
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+
 
 # ============================================================================
 # RUN APPLICATION
