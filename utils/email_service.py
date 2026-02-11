@@ -81,30 +81,33 @@ class EmailService:
         else:
             subject = f"🔔 Reminder: {project.name}"
         
+        # Calculate status text (always initialize this before use)
+        status_text = ""
+        days_remaining = project.days_remaining()
+        if days_remaining is not None:
+            if days_remaining > 0:
+                status_text = f"{days_remaining} days remaining"
+            elif days_remaining == 0:
+                status_text = "Due today!"
+            else:
+                status_text = f"{abs(days_remaining)} days overdue"
+        else:
+            status_text = "Completed"
+        
+        # Format expected end date with null check
+        expected_date_str = project.expected_end_date.strftime('%d %B %Y') if project.expected_end_date else 'Not set'
+        
         # Format message
         if custom_message:
             body = custom_message
         else:
-            # Calculate status text
-            status_text = ""
-            days_remaining = project.days_remaining()
-            if days_remaining is not None:
-                if days_remaining > 0:
-                    status_text = f"{days_remaining} days remaining"
-                elif days_remaining == 0:
-                    status_text = "Due today!"
-                else:
-                    status_text = f"{abs(days_remaining)} days overdue"
-            else:
-                status_text = "Completed"
-            
             body = f"""Hello {user.username},
 
 This is a reminder about your project:
 
 Project: {project.name}
 Status: {project.status}
-Expected End Date: {project.expected_end_date.strftime('%d %B %Y') if project.expected_end_date else 'Not set'}
+Expected End Date: {expected_date_str}
 {status_text}
 
 {project.comments if project.comments else ''}
@@ -127,7 +130,7 @@ VCore Project Management System
                 <div style="background-color: #f8f9fa; padding: 15px; border-left: 4px solid #007bff; margin: 20px 0;">
                     <p><strong>Project:</strong> {project.name}</p>
                     <p><strong>Status:</strong> <span style="color: #007bff;">{project.status}</span></p>
-                    <p><strong>Expected End Date:</strong> {project.expected_end_date.strftime('%d %B %Y')}</p>
+                    <p><strong>Expected End Date:</strong> {expected_date_str}</p>
                     <p><strong>{status_text}</strong></p>
                 </div>
                 
