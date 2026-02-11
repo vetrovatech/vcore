@@ -2273,6 +2273,44 @@ def reminders_auto_create():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/reminders/reset-failed', methods=['GET', 'POST'])
+def reminders_reset_failed():
+    """API endpoint to reset failed reminders to pending status"""
+    # Verify secret key
+    cron_secret = request.headers.get('X-Cron-Secret') or request.args.get('secret')
+    expected_secret = os.getenv('CRON_SECRET')
+    
+    if not expected_secret or cron_secret != expected_secret:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    try:
+        # Get all failed reminders
+        failed_reminders = Reminder.query.filter_by(status='failed').all()
+        
+        reset_count = 0
+        for reminder in failed_reminders:
+            # Reset to pending
+            reminder.status = 'pending'
+            reminder.error_message = None
+            
+            # Update reminder time to 5 minutes from now
+            reminder.reminder_datetime = datetime.utcnow() + timedelta(minutes=5)
+            reset_count += 1
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'result': {
+                'reminders_reset': reset_count,
+                'scheduled_for': (datetime.utcnow() + timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S UTC')
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 
 
 # ============================================================================
