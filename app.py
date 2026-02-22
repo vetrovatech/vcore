@@ -1,4 +1,7 @@
-from flask import Flask, render_template, redirect, url_for, flash, request, jsonify
+from flask import Flask, render_template, redirect, url_for, flash, request, jsonify, Response
+import csv
+import io
+import re
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_migrate import Migrate
 import os
@@ -869,6 +872,80 @@ def catalog_delete(id):
     db.session.commit()
     flash(f'Product "{product_name}" deleted successfully!', 'success')
     return redirect(url_for('catalog_list'))
+
+
+@app.route('/catalog/export-csv')
+@manager_or_admin_required
+def catalog_export_csv():
+    """Export all active products as a UTF-8 CSV download"""
+    from datetime import date
+
+    products = Product.query.filter_by(is_active=True).order_by(
+        Product.category, Product.product_name
+    ).all()
+
+    headers = [
+        'product_name', 'category', 'description', 'price', 'price_unit',
+        'min_order_qty', 'unit', 'size', 'thickness', 'color', 'finish',
+        'design', 'product_type',
+        'photo_url_1', 'photo_url_2', 'photo_url_3', 'photo_url_4',
+        'tags'
+    ]
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=headers)
+    writer.writeheader()
+
+    for p in products:
+        specs = p.get_specifications()  # dict from JSON specifications column
+
+        # Split stored price string (e.g. "160/sqft" or "24,999/Unit") into
+        # numeric price and price_unit.
+        price_val = ''
+        price_unit_val = ''
+        if p.price:
+            m = re.match(r'^([\d,\.]+)\s*[/]?\s*(.*)', p.price.strip())
+            if m:
+                price_val = m.group(1).replace(',', '')
+                price_unit_val = m.group(2).strip()
+
+        def spec(*keys):
+            """Return first non-empty value from specs dict for given key variants."""
+            for k in keys:
+                v = specs.get(k)
+                if v:
+                    return str(v)
+            return ''
+
+        writer.writerow({
+            'product_name':  p.product_name or '',
+            'category':      p.category or '',
+            'description':   p.description or '',
+            'price':         price_val,
+            'price_unit':    spec('price_unit', 'Price Unit', 'unit_label') or price_unit_val,
+            'min_order_qty': spec('min_order_qty', 'Min Order Qty', 'minimum_order_quantity', 'MOQ'),
+            'unit':          spec('unit', 'Unit', 'unit_of_measurement'),
+            'size':          spec('size', 'Size', 'Dimensions', 'dimensions'),
+            'thickness':     p.thickness or spec('thickness', 'Thickness'),
+            'color':         spec('color', 'Color', 'Colour', 'colour', 'shade', 'Shade'),
+            'finish':        spec('finish', 'Finish', 'surface_finish', 'Surface Finish'),
+            'design':        p.pattern or spec('design', 'Design', 'pattern', 'Pattern'),
+            'product_type':  spec('product_type', 'Product Type', 'type', 'Type', 'sub_type'),
+            'photo_url_1':   p.image_1_url or '',
+            'photo_url_2':   p.image_2_url or '',
+            'photo_url_3':   p.image_3_url or '',
+            'photo_url_4':   p.image_4_url or '',
+            'tags':          spec('tags', 'Tags', 'keywords', 'Keywords'),
+        })
+
+    filename = f"catalog_export_{date.today().isoformat()}.csv"
+    output.seek(0)
+    # utf-8-sig adds the BOM so Excel opens the file without garbled characters
+    return Response(
+        output.getvalue().encode('utf-8-sig'),
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+    )
 
 
 @app.route('/catalog/<int:id>/upload-image/<int:image_num>', methods=['POST'])
