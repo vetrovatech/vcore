@@ -2292,8 +2292,8 @@ def reminders_auto_create():
         # Get all active users
         active_users = User.query.filter_by(is_active=True).all()
         
-        # Set reminder time to 30 minutes from now
-        reminder_time = datetime.utcnow() + timedelta(minutes=30)
+        # Set reminder time to now (so the check endpoint picks them up immediately)
+        reminder_time = datetime.utcnow()
         
         created_count = 0
         skipped_count = 0

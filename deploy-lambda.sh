@@ -111,13 +111,17 @@ echo "   ✅ Image pushed: $IMAGE_URI"
 echo ""
 echo "⚡ Setting up Lambda function..."
 
-# Read environment variables from .env
-DATABASE_URL=$(grep DATABASE_URL .env | cut -d '=' -f2)
-SECRET_KEY=$(grep SECRET_KEY .env | cut -d '=' -f2)
-WORDPRESS_URL=$(grep WORDPRESS_URL .env | cut -d '=' -f2)
-WORDPRESS_API_USER=$(grep WORDPRESS_API_USER .env | cut -d '=' -f2)
-WORDPRESS_API_PASSWORD=$(grep WORDPRESS_API_PASSWORD .env | cut -d '=' -f2)
-WORDPRESS_SYNC_ENABLED=$(grep WORDPRESS_SYNC_ENABLED .env | cut -d '=' -f2)
+# Read ALL environment variables from .env
+DATABASE_URL=$(grep DATABASE_URL .env | cut -d '=' -f2-)
+SECRET_KEY=$(grep SECRET_KEY .env | cut -d '=' -f2-)
+WORDPRESS_URL=$(grep WORDPRESS_URL .env | cut -d '=' -f2-)
+WORDPRESS_API_USER=$(grep WORDPRESS_API_USER .env | cut -d '=' -f2-)
+WORDPRESS_API_PASSWORD=$(grep WORDPRESS_API_PASSWORD .env | cut -d '=' -f2-)
+WORDPRESS_SYNC_ENABLED=$(grep WORDPRESS_SYNC_ENABLED .env | cut -d '=' -f2-)
+CRON_SECRET=$(grep CRON_SECRET .env | cut -d '=' -f2-)
+APP_URL=$(grep APP_URL .env | cut -d '=' -f2-)
+SES_SENDER_EMAIL=$(grep SES_SENDER_EMAIL .env | cut -d '=' -f2-)
+AWS_BUCKET_NAME=$(grep AWS_BUCKET_NAME .env | cut -d '=' -f2-)
 
 # Check if Lambda function exists
 LAMBDA_EXISTS=$(aws lambda get-function --function-name $LAMBDA_FUNCTION_NAME --region $AWS_REGION 2>/dev/null || echo "")
@@ -132,7 +136,7 @@ if [ -z "$LAMBDA_EXISTS" ]; then
         --timeout 120 \
         --memory-size 512 \
         --region $AWS_REGION \
-        --environment "Variables={DATABASE_URL=$DATABASE_URL,SECRET_KEY=$SECRET_KEY,ENVIRONMENT=production,WORDPRESS_URL=$WORDPRESS_URL,WORDPRESS_API_USER=$WORDPRESS_API_USER,WORDPRESS_API_PASSWORD=$WORDPRESS_API_PASSWORD,WORDPRESS_SYNC_ENABLED=$WORDPRESS_SYNC_ENABLED}" \
+        --environment "Variables={DATABASE_URL=$DATABASE_URL,SECRET_KEY=$SECRET_KEY,ENVIRONMENT=production,WORDPRESS_URL=$WORDPRESS_URL,WORDPRESS_API_USER=$WORDPRESS_API_USER,WORDPRESS_API_PASSWORD=$WORDPRESS_API_PASSWORD,WORDPRESS_SYNC_ENABLED=$WORDPRESS_SYNC_ENABLED,CRON_SECRET=$CRON_SECRET,APP_URL=$APP_URL,SES_SENDER_EMAIL=$SES_SENDER_EMAIL,AWS_BUCKET_NAME=$AWS_BUCKET_NAME}" \
         --description "VCore Project Tracking System"
     
     echo "   ✅ Lambda function created"
@@ -152,7 +156,7 @@ else
     # Update environment variables
     aws lambda update-function-configuration \
         --function-name $LAMBDA_FUNCTION_NAME \
-        --environment "Variables={DATABASE_URL=$DATABASE_URL,SECRET_KEY=$SECRET_KEY,ENVIRONMENT=production,WORDPRESS_URL=$WORDPRESS_URL,WORDPRESS_API_USER=$WORDPRESS_API_USER,WORDPRESS_API_PASSWORD=$WORDPRESS_API_PASSWORD,WORDPRESS_SYNC_ENABLED=$WORDPRESS_SYNC_ENABLED}" \
+        --environment "Variables={DATABASE_URL=$DATABASE_URL,SECRET_KEY=$SECRET_KEY,ENVIRONMENT=production,WORDPRESS_URL=$WORDPRESS_URL,WORDPRESS_API_USER=$WORDPRESS_API_USER,WORDPRESS_API_PASSWORD=$WORDPRESS_API_PASSWORD,WORDPRESS_SYNC_ENABLED=$WORDPRESS_SYNC_ENABLED,CRON_SECRET=$CRON_SECRET,APP_URL=$APP_URL,SES_SENDER_EMAIL=$SES_SENDER_EMAIL,AWS_BUCKET_NAME=$AWS_BUCKET_NAME}" \
         --region $AWS_REGION
     
     echo "   ✅ Lambda function updated"
