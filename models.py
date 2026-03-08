@@ -373,6 +373,11 @@ class Quote(db.Model):
     round_off = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     total = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     
+    # Jumbo size percentage rates (editable per quote)
+    jumbo_pct_tier1 = db.Column(db.Numeric(5, 2), default=10.00, nullable=False)  # 4.5–5.5 sqm
+    jumbo_pct_tier2 = db.Column(db.Numeric(5, 2), default=15.00, nullable=False)  # 5.5–7 sqm
+    jumbo_pct_tier3 = db.Column(db.Numeric(5, 2), default=20.00, nullable=False)  # >7 sqm
+
     # Terms and status
     payment_terms = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default='Draft', index=True)  # Draft, Sent, Accepted, Rejected, Expired

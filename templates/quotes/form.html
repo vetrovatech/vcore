@@ -182,9 +182,39 @@
                                 value="{{ quote.shape_cutting_charges if quote else 0 }}">
                         </div>
                         <div class="col-md-6 mb-2">
-                            <label class="form-label">Jumbo Size Charges</label>
-                            <input type="number" step="0.01" class="form-control charge-input" id="jumbo_size_charges"
-                                name="jumbo_size_charges" value="{{ quote.jumbo_size_charges if quote else 0 }}">
+                            <label class="form-label">
+                                Jumbo Size Charges <small class="text-muted">(auto-calculated)</small>
+                                <a href="#jumboRates" data-bs-toggle="collapse" class="ms-1 text-secondary" title="Edit jumbo rates">
+                                    <i class="bi bi-gear-fill" style="font-size:0.75rem;"></i>
+                                </a>
+                            </label>
+                            <input type="number" step="0.01" class="form-control charge-input bg-light" id="jumbo_size_charges"
+                                name="jumbo_size_charges" value="{{ quote.jumbo_size_charges if quote else 0 }}" readonly>
+                            <div class="collapse mt-2" id="jumboRates">
+                                <div class="card card-body p-2 bg-light border">
+                                    <small class="text-muted mb-1 d-block">Jumbo % rates (editable)</small>
+                                    <div class="d-flex gap-2 align-items-center flex-wrap">
+                                        <div class="d-flex align-items-center gap-1">
+                                            <small class="text-nowrap">4.5–5.5 sqm:</small>
+                                            <input type="number" class="form-control form-control-sm jumbo-rate-input" id="jumbo_pct_tier1"
+                                                name="jumbo_pct_tier1" value="{{ quote.jumbo_pct_tier1 if quote else 10 }}" min="0" max="100" style="width:65px;">
+                                            <small>%</small>
+                                        </div>
+                                        <div class="d-flex align-items-center gap-1">
+                                            <small class="text-nowrap">5.5–7 sqm:</small>
+                                            <input type="number" class="form-control form-control-sm jumbo-rate-input" id="jumbo_pct_tier2"
+                                                name="jumbo_pct_tier2" value="{{ quote.jumbo_pct_tier2 if quote else 15 }}" min="0" max="100" style="width:65px;">
+                                            <small>%</small>
+                                        </div>
+                                        <div class="d-flex align-items-center gap-1">
+                                            <small class="text-nowrap">&gt;7 sqm:</small>
+                                            <input type="number" class="form-control form-control-sm jumbo-rate-input" id="jumbo_pct_tier3"
+                                                name="jumbo_pct_tier3" value="{{ quote.jumbo_pct_tier3 if quote else 20 }}" min="0" max="100" style="width:65px;">
+                                            <small>%</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div class="col-md-6 mb-2">
                             <label class="form-label">Template Charges</label>

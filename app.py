@@ -1343,6 +1343,9 @@ def quote_new():
                 document_charges=float(data.get('document_charges', 0)),
                 frosted_charges=float(data.get('frosted_charges', 0)),
                 gst_percentage=float(data.get('gst_percentage', 18)),
+                jumbo_pct_tier1=float(data.get('jumbo_pct_tier1', 10)),
+                jumbo_pct_tier2=float(data.get('jumbo_pct_tier2', 15)),
+                jumbo_pct_tier3=float(data.get('jumbo_pct_tier3', 20)),
                 payment_terms=data.get('payment_terms'),
                 status=data.get('status', 'Draft'),
                 quote_type=data.get('quote_type', 'B2B'),
@@ -1505,6 +1508,9 @@ def quote_edit(id):
             quote.document_charges = float(data.get('document_charges', 0))
             quote.frosted_charges = float(data.get('frosted_charges', 0))
             quote.gst_percentage = float(data.get('gst_percentage', 18))
+            quote.jumbo_pct_tier1 = float(data.get('jumbo_pct_tier1', 10))
+            quote.jumbo_pct_tier2 = float(data.get('jumbo_pct_tier2', 15))
+            quote.jumbo_pct_tier3 = float(data.get('jumbo_pct_tier3', 20))
             quote.payment_terms = data.get('payment_terms')
             quote.status = data.get('status', 'Draft')
             quote.quote_type = data.get('quote_type', 'B2B')

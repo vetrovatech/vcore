@@ -28,6 +28,16 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     document.getElementById('gst_percentage').addEventListener('input', updateTotals);
+
+    // Recalculate all items when jumbo rate percentages are changed
+    document.querySelectorAll('.jumbo-rate-input').forEach(input => {
+        input.addEventListener('input', () => {
+            document.querySelectorAll('.sub-item-row').forEach(row => {
+                const anyInput = row.querySelector('.qty-input');
+                if (anyInput) calculateItemTotal(anyInput);
+            });
+        });
+    });
 });
 
 /**
@@ -208,6 +218,17 @@ function addSubItemWithData(groupRow, data) {
     } else {
         groupRow.after(row);
     }
+
+    // Set jumbo charge on load using saved unit_square, total, and saved tier percentages
+    const loadedUnitSquare = parseFloat(data.unit_square) || 0;
+    const loadedPct1 = parseFloat(document.getElementById('jumbo_pct_tier1')?.value) || 10;
+    const loadedPct2 = parseFloat(document.getElementById('jumbo_pct_tier2')?.value) || 15;
+    const loadedPct3 = parseFloat(document.getElementById('jumbo_pct_tier3')?.value) || 20;
+    let loadedJumboPercent = 0;
+    if (loadedUnitSquare >= 7) loadedJumboPercent = loadedPct3;
+    else if (loadedUnitSquare >= 5.5) loadedJumboPercent = loadedPct2;
+    else if (loadedUnitSquare >= 4.5) loadedJumboPercent = loadedPct1;
+    row.dataset.jumboCharge = ((parseFloat(data.total || 0) * loadedJumboPercent) / 100).toFixed(2);
 
     itemCounter++;
 }
@@ -475,6 +496,20 @@ function calculateItemTotal(input) {
         totalInput.value = total.toFixed(2);
     }
 
+    // Calculate jumbo charge for this item based on individual glass area (unitSquare per piece)
+    const pctTier1 = parseFloat(document.getElementById('jumbo_pct_tier1')?.value) ?? 10;
+    const pctTier2 = parseFloat(document.getElementById('jumbo_pct_tier2')?.value) ?? 15;
+    const pctTier3 = parseFloat(document.getElementById('jumbo_pct_tier3')?.value) ?? 20;
+    let jumboPercent = 0;
+    if (unitSquare >= 7) {
+        jumboPercent = pctTier3;
+    } else if (unitSquare >= 5.5) {
+        jumboPercent = pctTier2;
+    } else if (unitSquare >= 4.5) {
+        jumboPercent = pctTier1;
+    }
+    row.dataset.jumboCharge = ((total * jumboPercent) / 100).toFixed(2);
+
     updateTotals();
 }
 
@@ -512,14 +547,20 @@ function updateTotals() {
         subtotal += parseFloat(input.value) || 0;
     });
 
-    // Get all charges
+    // Auto-calculate jumbo size charges from per-item jumbo charges
+    let jumboSizeCharges = 0;
+    document.querySelectorAll('.sub-item-row').forEach(row => {
+        jumboSizeCharges += parseFloat(row.dataset.jumboCharge) || 0;
+    });
+    const jumboField = document.getElementById('jumbo_size_charges');
+    if (jumboField) jumboField.value = jumboSizeCharges.toFixed(2);
 
+    // Get all charges
     const installationCharges = parseFloat(document.getElementById('installation_charges')?.value) || 0;
     const transportCharges = parseFloat(document.getElementById('transport_charges')?.value) || 0;
     const cutoutCharges = parseFloat(document.getElementById('cutout_charges')?.value) || 0;
     const holesCharges = parseFloat(document.getElementById('holes_charges')?.value) || 0;
     const shapeCuttingCharges = parseFloat(document.getElementById('shape_cutting_charges')?.value) || 0;
-    const jumboSizeCharges = parseFloat(document.getElementById('jumbo_size_charges')?.value) || 0;
     const templateCharges = parseFloat(document.getElementById('template_charges')?.value) || 0;
     const handlingCharges = parseFloat(document.getElementById('handling_charges')?.value) || 0;
     const polishCharges = parseFloat(document.getElementById('polish_charges')?.value) || 0;
