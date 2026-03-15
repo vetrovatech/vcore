@@ -12,11 +12,19 @@ let groupCounter = 0;
 document.addEventListener('DOMContentLoaded', function () {
     // Check if we're editing an existing quote
     if (window.existingQuoteData && window.existingQuoteData.items.length > 0) {
-        // Load existing items
-        loadExistingItems(window.existingQuoteData.items);
+        if (window.existingQuoteData.quoteType === 'B2C') {
+            // Load flat B2C items (all items are non-group leaf nodes)
+            loadB2CItems(window.existingQuoteData.items.filter(i => !i.is_group));
+        } else {
+            loadExistingItems(window.existingQuoteData.items);
+        }
     } else {
-        // Add first group if no items exist (new quote)
-        addGroup();
+        // New quote — B2C gets its first row via applyMode(); B2B gets a group
+        const typeEl = document.querySelector('select[name="quote_type"]') ||
+                       document.querySelector('input[type="hidden"][name="quote_type"]');
+        if (!typeEl || typeEl.value !== 'B2C') {
+            addGroup();
+        }
     }
 
     // Update totals
@@ -595,6 +603,212 @@ function updateTotals() {
     document.getElementById('round_off').value = roundOff.toFixed(2);
     document.getElementById('total').value = roundedTotal.toFixed(2);
 }
+
+// ── B2C Mode Functions ────────────────────────────────────────────────────────
+
+// Tracks the current rate-column mode for the whole B2C table
+let b2cRateMode = 'sqft';  // 'sqft' = Size×Rate,  'qty' = Qty×Rate
+
+/**
+ * Called when the column-header dropdown changes (Rate/Sqft ↔ Rate/Qty).
+ * Updates column labels and recalculates all rows.
+ */
+function onB2CRateModeChange(select) {
+    b2cRateMode = select.value;
+
+    // Update the Size column header label
+    const sizeHeader = document.getElementById('b2cSizeHeader');
+    if (sizeHeader) sizeHeader.textContent = b2cRateMode === 'qty' ? 'Qty' : 'Size (Sqft)';
+
+    // Clear all row values and update placeholder
+    document.querySelectorAll('#b2cItemsBody .b2c-item-row').forEach(row => {
+        const sizeInput  = row.querySelector('.b2c-size');
+        const rateInput  = row.querySelector('.b2c-rate');
+        const totalInput = row.querySelector('.b2c-total');
+        if (sizeInput)  { sizeInput.value = ''; sizeInput.placeholder = b2cRateMode === 'qty' ? 'e.g. 5' : 'e.g. 115'; }
+        if (rateInput)  rateInput.value = '';
+        if (totalInput) { totalInput.value = ''; totalInput.readOnly = false; }
+        calculateB2CItemTotal(rateInput);
+    });
+}
+
+/**
+ * Add a simple B2C line item row (uses shared itemCounter for form field indices).
+ */
+function addB2CItem(data) {
+    const idx    = itemCounter++;
+    const tbody  = document.getElementById('b2cItemsBody');
+    const rowNum = tbody.children.length + 1;
+    const row    = document.createElement('tr');
+    row.className = 'b2c-item-row';
+
+    const particular  = data ? data.particular          : '';
+    const rate        = data ? (data.rate_sqper || '')  : '';
+    const total       = data ? (data.total      || '')  : '';
+    const displaySize = data ? (data.chargeable_width || data.unit_square || '') : '';
+    const sizePh      = b2cRateMode === 'qty' ? 'e.g. 5' : 'e.g. 115';
+
+    row.innerHTML = `
+        <td class="b2c-row-num align-middle text-center">${rowNum}</td>
+        <td>
+            <input type="text" class="form-control form-control-sm b2c-particular"
+                   name="items[${idx}][particular]"
+                   value="${particular}" placeholder="Product description" required>
+            <input type="hidden" name="items[${idx}][is_group]"  value="false">
+            <input type="hidden" name="items[${idx}][quantity]"  value="1">
+        </td>
+        <td>
+            <input type="number" step="0.01" class="form-control form-control-sm b2c-size"
+                   value="${displaySize}" placeholder="${sizePh}"
+                   oninput="calculateB2CItemTotal(this)">
+            <input type="hidden" class="b2c-cw" name="items[${idx}][chargeable_width]"  value="${displaySize}">
+            <input type="hidden" class="b2c-ch" name="items[${idx}][chargeable_height]" value="${displaySize ? '1' : ''}">
+            <input type="hidden" class="b2c-unit" name="items[${idx}][unit]" value="sqft">
+        </td>
+        <td>
+            <input type="number" step="0.01" class="form-control form-control-sm b2c-rate"
+                   name="items[${idx}][rate_sqper]"
+                   value="${rate}" placeholder="Rate"
+                   oninput="calculateB2CItemTotal(this)">
+        </td>
+        <td>
+            <input type="number" step="0.01" class="form-control form-control-sm b2c-total"
+                   name="items[${idx}][total]"
+                   value="${total}" placeholder="0.00"
+                   oninput="updateB2CTotals()">
+        </td>
+        <td class="text-center align-middle">
+            <button type="button" class="btn btn-sm btn-danger" onclick="removeB2CItem(this)">
+                <i class="bi bi-trash"></i>
+            </button>
+        </td>
+    `;
+
+    tbody.appendChild(row);
+
+    if (displaySize && rate) {
+        row.querySelector('.b2c-total').readOnly = true;
+        row.querySelector('.b2c-total').classList.add('bg-light');
+    }
+
+    updateB2CTotals();
+}
+
+/**
+ * Auto-calculate B2C row total.
+ * sqft mode: Size × Rate = Total  (submitted as chargeable_width=size, height=1, unit=sqft)
+ * qty  mode: Qty  × Rate = Total  (submitted as quantity=qty, no chargeable dims, unit=pcs)
+ */
+function calculateB2CItemTotal(input) {
+    if (!input) return;
+    const row        = input.closest('.b2c-item-row');
+    if (!row) return;
+    const sizeVal    = parseFloat(row.querySelector('.b2c-size')?.value)  || 0;
+    const rate       = parseFloat(row.querySelector('.b2c-rate')?.value)  || 0;
+    const totalInput = row.querySelector('.b2c-total');
+
+    // Keep hidden backend fields in sync with current mode
+    const isQty = b2cRateMode === 'qty';
+    const cwEl  = row.querySelector('.b2c-cw');
+    const chEl  = row.querySelector('.b2c-ch');
+    const unitEl = row.querySelector('.b2c-unit');
+    const qtyEl  = row.querySelector('input[name*="[quantity]"]');
+
+    if (isQty) {
+        if (cwEl)   cwEl.value  = '';
+        if (chEl)   chEl.value  = '';
+        if (unitEl) unitEl.value = 'pcs';
+        if (qtyEl)  qtyEl.value  = sizeVal || 1;
+    } else {
+        if (cwEl)   cwEl.value   = sizeVal || '';
+        if (chEl)   chEl.value   = sizeVal ? '1' : '';
+        if (unitEl) unitEl.value = 'sqft';
+        if (qtyEl)  qtyEl.value  = 1;
+    }
+
+    if (sizeVal > 0 && rate > 0) {
+        totalInput.value    = (sizeVal * rate).toFixed(2);
+        totalInput.readOnly = true;
+        totalInput.classList.add('bg-light');
+    } else {
+        totalInput.readOnly = false;
+        totalInput.classList.remove('bg-light');
+    }
+
+    updateB2CTotals();
+}
+
+/**
+ * Remove a B2C row and renumber.
+ */
+function removeB2CItem(button) {
+    button.closest('.b2c-item-row').remove();
+    document.querySelectorAll('#b2cItemsBody .b2c-item-row').forEach((r, i) => {
+        r.querySelector('.b2c-row-num').textContent = i + 1;
+    });
+    updateB2CTotals();
+}
+
+/**
+ * Recalculate subtotal, SGST @9%, CGST @9%, round-off, grand total for B2C.
+ * Includes Installation, Transport and Handling charges.
+ */
+function updateB2CTotals() {
+    let subtotal = 0;
+    document.querySelectorAll('#b2cItemsBody .b2c-total').forEach(inp => {
+        subtotal += parseFloat(inp.value) || 0;
+    });
+
+    // Add B2C additional charges
+    subtotal += parseFloat(document.getElementById('b2c_installation_charges')?.value) || 0;
+    subtotal += parseFloat(document.getElementById('b2c_transport_charges')?.value)    || 0;
+    subtotal += parseFloat(document.getElementById('b2c_handling_charges')?.value)     || 0;
+
+    const sgst     = subtotal * 0.09;
+    const cgst     = subtotal * 0.09;
+    const preRound = subtotal + sgst + cgst;
+    const rounded  = Math.round(preRound);
+    const roundOff = rounded - preRound;
+
+    document.getElementById('subtotal_display').textContent = subtotal.toFixed(2);
+    document.getElementById('sgst_display').textContent     = sgst.toFixed(2);
+    document.getElementById('cgst_display').textContent     = cgst.toFixed(2);
+    document.getElementById('roundoff_display').textContent = roundOff.toFixed(2);
+    document.getElementById('total_display').textContent    = rounded.toFixed(2);
+
+    document.getElementById('subtotal').value   = subtotal.toFixed(2);
+    document.getElementById('gst_amount').value = (sgst + cgst).toFixed(2);
+    document.getElementById('round_off').value  = roundOff.toFixed(2);
+    document.getElementById('total').value      = rounded.toFixed(2);
+
+    const gstPct = document.getElementById('gst_percentage');
+    if (gstPct) gstPct.value = 18;
+}
+
+/**
+ * Load existing B2C items when editing.
+ */
+function loadB2CItems(items) {
+    items.forEach(item => addB2CItem(item));
+}
+
+/**
+ * Pre-submit: for fixed-amount B2C rows (no size/qty entered, total filled manually),
+ * copy total → rate_sqper so backend calculates: total = 1 × rate_sqper = total.
+ */
+document.getElementById('quoteForm')?.addEventListener('submit', function () {
+    document.querySelectorAll('#b2cItemsBody .b2c-item-row').forEach(row => {
+        const sizeVal = parseFloat(row.querySelector('.b2c-size')?.value)  || 0;
+        const rateVal = parseFloat(row.querySelector('.b2c-rate')?.value)  || 0;
+        if (sizeVal === 0 && rateVal === 0) {
+            const total     = parseFloat(row.querySelector('.b2c-total')?.value) || 0;
+            const rateInput = row.querySelector('.b2c-rate');
+            if (rateInput) rateInput.value = total;
+        }
+    });
+});
+
+// ── End B2C ──────────────────────────────────────────────────────────────────
 
 /**
  * Recalculate all sub-items when group-level values change

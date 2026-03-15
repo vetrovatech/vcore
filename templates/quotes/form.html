@@ -117,8 +117,8 @@
         </div>
     </div>
 
-    <!-- Line Items -->
-    <div class="card mb-4">
+    <!-- B2B Line Items -->
+    <div id="b2bItemsSection" class="card mb-4">
         <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
             <h5 class="mb-0">Line Items</h5>
             <button type="button" class="btn btn-sm btn-light" onclick="addGroup()">
@@ -154,9 +154,80 @@
         </div>
     </div>
 
+    <!-- B2C Line Items (simple sqft-based) -->
+    <div id="b2cItemsSection" class="card mb-4" style="display:none;">
+        <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Line Items <span class="badge bg-light text-dark ms-2">B2C</span></h5>
+            <button type="button" class="btn btn-sm btn-light" onclick="addB2CItem()">
+                <i class="bi bi-plus-circle"></i> Add Item
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm mb-0" id="b2cItemsTable">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:5%;">S.No</th>
+                            <th style="width:38%;">Particular</th>
+                            <th style="width:14%;" id="b2cSizeHeader">Size (Sqft)</th>
+                            <th style="width:20%;">
+                                <select class="form-select form-select-sm fw-semibold border-0 bg-transparent p-0"
+                                        style="width:auto; cursor:pointer;"
+                                        onchange="onB2CRateModeChange(this)">
+                                    <option value="sqft">Rate / Sqft</option>
+                                    <option value="qty">Rate / Qty</option>
+                                </select>
+                            </th>
+                            <th style="width:15%;">Total (₹)</th>
+                            <th style="width:8%;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="b2cItemsBody">
+                        <!-- B2C items added dynamically -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card-footer text-muted small">
+            <i class="bi bi-info-circle"></i> Enter Size × Rate for area-based items. Leave Size empty and enter Total directly for fixed-amount items (e.g. transportation).
+        </div>
+    </div>
+
+    <!-- B2C Additional Charges (shown only in B2C mode) -->
+    <div id="b2cChargesSection" class="card mb-4" style="display:none;">
+        <div class="card-header bg-success text-white">
+            <h6 class="mb-0">Additional Charges</h6>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-4 mb-2">
+                    <label class="form-label">Installation Charges</label>
+                    <input type="number" step="0.01" class="form-control b2c-charge-input"
+                           id="b2c_installation_charges" name="installation_charges"
+                           value="{{ quote.installation_charges if quote and quote.quote_type=='B2C' else 0 }}"
+                           oninput="updateB2CTotals()">
+                </div>
+                <div class="col-md-4 mb-2">
+                    <label class="form-label">Transportation Charges</label>
+                    <input type="number" step="0.01" class="form-control b2c-charge-input"
+                           id="b2c_transport_charges" name="transport_charges"
+                           value="{{ quote.transport_charges if quote and quote.quote_type=='B2C' else 0 }}"
+                           oninput="updateB2CTotals()">
+                </div>
+                <div class="col-md-4 mb-2">
+                    <label class="form-label">Handling Charges</label>
+                    <input type="number" step="0.01" class="form-control b2c-charge-input"
+                           id="b2c_handling_charges" name="handling_charges"
+                           value="{{ quote.handling_charges if quote and quote.quote_type=='B2C' else 0 }}"
+                           oninput="updateB2CTotals()">
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Charges and Totals -->
     <div class="row">
-        <div class="col-md-6">
+        <div class="col-md-6" id="additionalChargesCol">
             <div class="card mb-4">
                 <div class="card-header">
                     <h6 class="mb-0">Additional Charges</h6>
@@ -249,7 +320,7 @@
             </div>
         </div>
 
-        <div class="col-md-6">
+        <div class="col-md-6" id="totalsCol">
             <div class="card mb-4">
                 <div class="card-header">
                     <h6 class="mb-0">Totals</h6>
@@ -260,7 +331,8 @@
                             <td>Subtotal:</td>
                             <td class="text-end"><strong id="subtotal_display">0.00</strong></td>
                         </tr>
-                        <tr>
+                        <!-- B2B: single GST % field -->
+                        <tr id="b2b_gst_row">
                             <td>
                                 GST
                                 <input type="number" step="0.01" class="form-control form-control-sm d-inline-block"
@@ -269,12 +341,21 @@
                             </td>
                             <td class="text-end"><strong id="gst_display">0.00</strong></td>
                         </tr>
+                        <!-- B2C: SGST + CGST split rows -->
+                        <tr id="b2c_sgst_row" style="display:none;">
+                            <td>SGST @9%</td>
+                            <td class="text-end"><strong id="sgst_display">0.00</strong></td>
+                        </tr>
+                        <tr id="b2c_cgst_row" style="display:none;">
+                            <td>CGST @9%</td>
+                            <td class="text-end"><strong id="cgst_display">0.00</strong></td>
+                        </tr>
                         <tr>
                             <td>Round Off:</td>
                             <td class="text-end"><strong id="roundoff_display">0.00</strong></td>
                         </tr>
                         <tr class="table-primary">
-                            <td><strong>Total:</strong></td>
+                            <td><strong>Grand Total:</strong></td>
                             <td class="text-end"><strong id="total_display">0.00</strong></td>
                         </tr>
                     </table>
@@ -322,6 +403,7 @@
 <script>
     // Pre-populate existing items when editing
     window.existingQuoteData = {
+        quoteType: "{{ quote.quote_type }}",
         items: [
             {%for item in quote.items if not item.parent_id %}
     {
@@ -446,4 +528,102 @@
 
 <script src="{{ url_for('static', filename='js/quote_form_enhanced.js') }}"></script>
 <script src="{{ url_for('static', filename='js/glass_catalog_integration.js') }}"></script>
+
+<script>
+// ── Quote-type toggle (B2B ↔ B2C) ──────────────────────────────────────────
+(function () {
+    const quoteTypeSelect = document.querySelector('select[name="quote_type"]');
+    const hiddenType      = document.querySelector('input[type="hidden"][name="quote_type"]');
+    const isEditMode      = !!window.existingQuoteData;   // true when editing a saved quote
+
+    const B2B_TERMS = `Payment & Commercial Terms
+
+•  Payment by crossed cheque only in favour of Vetrova Tech Services Private Limited.
+•  50% advance on order confirmation; balance 50% at delivery.
+•  Delivery: Minimum 8 working days from confirmation and advance receipt.
+•  Transport: Material dispatched at customer's risk; insurance, if any, on customer's behalf—claims subject to insurer settlement only.
+•  Quality Claims: Must be reported in writing within 3 working days of delivery.
+•  Cancellation: No cancellation or alteration of confirmed toughened glass orders.
+•  Disputes: Arbitration applicable.`;
+
+    const B2C_TERMS = `Payment & Commercial Terms
+
+•  Payment by crossed cheque only in favour of Vetrova Tech Services Private Limited.
+•  70% advance on order confirmation, 20% after material delivery, 10% after work completion.
+•  Delivery: Minimum 10 working days from confirmation and advance receipt.`;
+
+    // Determine initial mode from the select or hidden input
+    function currentType() {
+        if (quoteTypeSelect) return quoteTypeSelect.value;
+        if (hiddenType)      return hiddenType.value;
+        return 'B2B';
+    }
+
+    function applyMode(type) {
+        const isB2C = (type === 'B2C');
+
+        document.getElementById('b2bItemsSection').style.display = isB2C ? 'none' : '';
+        document.getElementById('b2cItemsSection').style.display = isB2C ? ''     : 'none';
+
+        // Totals: toggle GST rows
+        document.getElementById('b2b_gst_row').style.display  = isB2C ? 'none' : '';
+        document.getElementById('b2c_sgst_row').style.display = isB2C ? ''     : 'none';
+        document.getElementById('b2c_cgst_row').style.display = isB2C ? ''     : 'none';
+
+        // Hide/show B2B additional charges; show/hide B2C charges section
+        const additionalChargesCol = document.getElementById('additionalChargesCol');
+        if (additionalChargesCol) {
+            additionalChargesCol.style.display = isB2C ? 'none' : '';
+            // Disable B2B charge inputs when B2C so they don't submit duplicate field names
+            additionalChargesCol.querySelectorAll('input, select').forEach(el => {
+                el.disabled = isB2C;
+            });
+        }
+        const b2cChargesSection = document.getElementById('b2cChargesSection');
+        if (b2cChargesSection) b2cChargesSection.style.display = isB2C ? '' : 'none';
+
+        // Expand totals col to right side when B2C (additional charges hidden)
+        const totalsCol = document.getElementById('totalsCol');
+        if (totalsCol) {
+            totalsCol.className = isB2C ? 'col-md-6 ms-auto' : 'col-md-6';
+        }
+
+        // FIX SAVE: disable all inputs in hidden B2B items section to prevent
+        // required-field validation blocking B2C form submission
+        document.querySelectorAll('#itemsBody input, #itemsBody select, #itemsBody textarea').forEach(el => {
+            el.disabled = isB2C;
+        });
+
+        // Re-run totals in the correct mode
+        if (isB2C) {
+            updateB2CTotals();
+        } else {
+            updateTotals();
+        }
+
+        // Seed one empty B2C row if the table is still empty
+        // (skipped when editing an existing B2C quote — items loaded by JS)
+        if (isB2C && document.getElementById('b2cItemsBody').children.length === 0
+                  && !(window.existingQuoteData && window.existingQuoteData.quoteType === 'B2C')) {
+            addB2CItem();
+        }
+
+        // Swap payment terms only on NEW quotes (not when editing)
+        if (!isEditMode) {
+            const termsArea = document.querySelector('textarea[name="payment_terms"]');
+            if (termsArea) {
+                termsArea.value = isB2C ? B2C_TERMS : B2B_TERMS;
+            }
+        }
+    }
+
+    // Listen for dropdown change (only on new quote — disabled on edit)
+    if (quoteTypeSelect) {
+        quoteTypeSelect.addEventListener('change', () => applyMode(quoteTypeSelect.value));
+    }
+
+    // Apply on initial load
+    document.addEventListener('DOMContentLoaded', () => applyMode(currentType()));
+})();
+</script>
 {% endblock %}

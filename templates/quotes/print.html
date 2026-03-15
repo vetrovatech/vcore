@@ -243,8 +243,6 @@
                 <div class="info-cell info-label">Expected Delivery Date:</div>
                 <div class="info-cell" style="flex: 1;">{{ quote.expected_date.strftime('%d %b, %Y') if
                     quote.expected_date else 'N/A' }}</div>
-                <div class="info-cell info-label">Status:</div>
-                <div class="info-cell" style="flex: 1;">{{ quote.status }}</div>
             </div>
         </div>
 
@@ -269,6 +267,36 @@
         </div>
 
         <!-- Line Items Table -->
+        {% if quote.quote_type == 'B2C' %}
+        <!-- B2C simple table -->
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th style="width: 5%;">S.No</th>
+                    <th style="width: 50%;">Particular</th>
+                    <th style="width: 15%;">Size (Sqft)</th>
+                    <th style="width: 15%;">Rate / Sqft</th>
+                    <th style="width: 15%;">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% set ns = namespace(row_num=0) %}
+                {% for item in quote.items | sort(attribute='sort_order') %}
+                {% if not item.is_group %}
+                {% set ns.row_num = ns.row_num + 1 %}
+                <tr>
+                    <td>{{ ns.row_num }}</td>
+                    <td class="text-left">{{ item.particular }}</td>
+                    <td>{{ "{:,.2f}".format(item.unit_square) if item.unit_square else '-' }}</td>
+                    <td>{{ "{:,.2f}".format(item.rate_sqper) }}</td>
+                    <td class="text-right">{{ "{:,.2f}".format(item.total) }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <!-- B2B detailed table -->
         <table class="items-table">
             <thead>
                 <tr>
@@ -342,6 +370,7 @@
                 {% endfor %}
             </tbody>
         </table>
+        {% endif %}
 
         <!-- Totals -->
         <div class="totals-section">
@@ -424,10 +453,21 @@
                             quote.handling_charges + quote.polish_charges + quote.document_charges +
                             quote.frosted_charges) }}</strong></td>
                 </tr>
+                {% if quote.quote_type == 'B2C' %}
+                <tr>
+                    <td>SGST @9%:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
+                </tr>
+                <tr>
+                    <td>CGST @9%:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
+                </tr>
+                {% else %}
                 <tr>
                     <td>GST @ {{ quote.gst_percentage }}%:</td>
                     <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount) }}</td>
                 </tr>
+                {% endif %}
                 <tr>
                     <td>Round Off:</td>
                     <td class="text-right">{{ "{:,.2f}".format(quote.round_off) }}</td>

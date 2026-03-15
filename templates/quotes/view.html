@@ -127,6 +127,36 @@
     </div>
     <div class="card-body">
         <div class="table-responsive">
+            {% if quote.quote_type == 'B2C' %}
+            <!-- ── B2C simple table ── -->
+            <table class="table table-bordered">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:5%">S.No</th>
+                        <th style="width:50%">Particular</th>
+                        <th style="width:15%">Size (Sqft)</th>
+                        <th style="width:15%">Rate / Sqft</th>
+                        <th style="width:15%">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set ns = namespace(row_num=0) %}
+                    {% for item in quote.items | sort(attribute='sort_order') %}
+                    {% if not item.is_group %}
+                    {% set ns.row_num = ns.row_num + 1 %}
+                    <tr>
+                        <td>{{ ns.row_num }}</td>
+                        <td>{{ item.particular }}</td>
+                        <td>{{ "{:,.2f}".format(item.unit_square) if item.unit_square else '-' }}</td>
+                        <td>₹{{ "{:,.2f}".format(item.rate_sqper) }}</td>
+                        <td>₹{{ "{:,.2f}".format(item.total) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <!-- ── B2B detailed table ── -->
             <table class="table table-bordered">
                 <thead class="table-light">
                     <tr>
@@ -148,13 +178,10 @@
                     {% for item in quote.items if not item.parent_id %}
                     {% set ns.group_num = ns.group_num + 1 %}
                     {% if item.is_group %}
-                    <!-- Group Row -->
                     <tr class="table-secondary">
                         <td><strong>{{ ns.group_num }}</strong></td>
                         <td colspan="10"><strong>{{ item.particular }}</strong></td>
                     </tr>
-
-                    <!-- Sub-items -->
                     {% set sub_items = item.children|sort(attribute='sort_order') %}
                     {% for sub_item in sub_items %}
                     <tr>
@@ -180,7 +207,6 @@
                     </tr>
                     {% endfor %}
                     {% else %}
-                    <!-- Regular item (no group) -->
                     <tr>
                         <td>{{ ns.group_num }}</td>
                         <td>{{ item.particular }}</td>
@@ -204,6 +230,7 @@
                     {% endfor %}
                 </tbody>
             </table>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -284,16 +311,27 @@
                         <td class="text-end">₹{{ "{:,.2f}".format(quote.frosted_charges) }}</td>
                     </tr>
                     {% endif %}
+                    {% if quote.quote_type == 'B2C' %}
+                    <tr>
+                        <td>SGST @9%:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
+                    </tr>
+                    <tr>
+                        <td>CGST @9%:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
+                    </tr>
+                    {% else %}
                     <tr>
                         <td><strong>GST ({{ quote.gst_percentage }}%):</strong></td>
                         <td class="text-end">₹{{ "{:,.2f}".format(quote.gst_amount) }}</td>
                     </tr>
+                    {% endif %}
                     <tr>
                         <td>Round Off:</td>
                         <td class="text-end">₹{{ "{:,.2f}".format(quote.round_off) }}</td>
                     </tr>
                     <tr class="table-active">
-                        <td><strong>Total:</strong></td>
+                        <td><strong>Grand Total:</strong></td>
                         <td class="text-end"><strong>₹{{ "{:,.2f}".format(quote.total) }}</strong></td>
                     </tr>
                 </table>
