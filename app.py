@@ -7,10 +7,6 @@ import json
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_migrate import Migrate
 import os
-import pymysql
-
-# Install PyMySQL as MySQLdb for MySQL compatibility
-pymysql.install_as_MySQLdb()
 
 from models import db, User, Project, ProjectHistory, TaskTemplate, PromotorTask, DailyUpdate, Product, Quote, QuoteItem, Supplier, GlassType, SupplierPricing, Reminder, PurchaseInvoice
 from config import config
@@ -4219,7 +4215,7 @@ def meetings_list():
         except ValueError:
             pass
 
-    # MySQL-compatible NULL-last ordering: IS NULL sorts 0 (non-null) before 1 (null)
+    # Portable NULL-last ordering: IS NULL sorts 0 (non-null) before 1 (null)
     meetings = query.order_by(Meeting.scheduled_at.is_(None), Meeting.scheduled_at.desc(), Meeting.created_at.desc()).all()
     users = User.query.filter_by(is_active=True).order_by(User.username).all() if current_user.is_manager_or_admin() else []
 

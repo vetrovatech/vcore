@@ -28,14 +28,14 @@ A comprehensive project and promotor task tracking system for Glassy, built with
 
 - **Backend**: Flask, SQLAlchemy, Flask-Login
 - **Frontend**: Jinja2 templates, Bootstrap 5
-- **Database**: MySQL on AWS RDS
+- **Database**: PostgreSQL on AWS Lightsail
 - **Deployment**: AWS Lambda (planned)
 
 ## Local Development
 
 ### Prerequisites
 - Python 3.8+
-- MySQL database access
+- PostgreSQL database access
 
 ### Setup
 
@@ -141,7 +141,7 @@ vcore/
 
 The application is designed to be deployed as an AWS Lambda function with:
 - API Gateway for HTTP routing
-- RDS MySQL for database
+- Lightsail PostgreSQL for database
 - Custom domain: vcore.glassy.in
 
 ## License

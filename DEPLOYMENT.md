@@ -49,7 +49,7 @@ aws lambda update-function-code \
 ## 🔧 Configuration
 
 Environment variables (set in Lambda):
-- `DATABASE_URL`: MySQL connection to RDS
+- `DATABASE_URL`: PostgreSQL connection to Lightsail
 - `SECRET_KEY`: Flask secret key
 - `ENVIRONMENT`: production
 

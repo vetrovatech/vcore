@@ -3,14 +3,17 @@
 Add watermarks to all product images in a specific category
 """
 
-import pymysql
+import os
 import requests
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import boto3
 from botocore.exceptions import ClientError
-import os
 import time
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+
+load_dotenv()
 
 # Configuration
 CATEGORY = "Shower Enclosures"
@@ -93,13 +96,7 @@ def upload_to_s3(image_data, s3_key):
 
 # Connect to database
 print(f"🔍 Fetching products from category: {CATEGORY}")
-conn = pymysql.connect(
-    host='ls-71c57fcd322c32a3616fd3e00e212391e383d4ba.c7cuq02uskcx.ap-south-1.rds.amazonaws.com',
-    user='cdcuser',
-    password='Divyam123',
-    database='vcore',
-    port=3306
-)
+conn = create_engine(os.environ['DATABASE_URL']).raw_connection()
 
 cursor = conn.cursor()
 cursor.execute('''

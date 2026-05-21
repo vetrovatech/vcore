@@ -3,20 +3,15 @@
 Create a sample watermarked image for review
 """
 
-import pymysql
 import requests
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import os
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
 
-# Database connection
-conn = pymysql.connect(
-    host='ls-71c57fcd322c32a3616fd3e00e212391e383d4ba.c7cuq02uskcx.ap-south-1.rds.amazonaws.com',
-    user='cdcuser',
-    password='Divyam123',
-    database='vcore',
-    port=3306
-)
+load_dotenv()
+conn = create_engine(os.environ['DATABASE_URL']).raw_connection()
 
 cursor = conn.cursor()
 cursor.execute('''
