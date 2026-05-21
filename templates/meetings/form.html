@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — VCore{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-geo-alt me-2"></i>{{ title }}</h4>
+    <a href="{{ url_for('meetings_list') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left"></i> Back
+    </a>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form method="POST">
+            <div class="row g-3">
+
+                <!-- Title -->
+                <div class="col-12">
+                    <label class="form-label fw-semibold">Meeting Title / Purpose <span class="text-danger">*</span></label>
+                    <input type="text" name="title" class="form-control"
+                           placeholder="e.g. Visit Sharma Interiors for quote follow-up"
+                           value="{{ meeting.title if meeting else '' }}" required>
+                </div>
+
+                <!-- Type + Scheduled At -->
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Meeting Type</label>
+                    <select name="meeting_type" class="form-select">
+                        {% for t in meeting_types %}
+                        <option value="{{ t }}" {% if meeting and meeting.meeting_type == t %}selected{% elif not meeting and t == 'Lead Visit' %}selected{% endif %}>{{ t }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Scheduled Date & Time</label>
+                    <input type="datetime-local" name="scheduled_at" class="form-control"
+                           value="{{ (meeting.scheduled_at|to_ist).strftime('%Y-%m-%dT%H:%M') if meeting and meeting.scheduled_at else '' }}">
+                </div>
+
+                <!-- Assign salesman (manager/admin only) -->
+                {% if current_user.is_manager_or_admin() %}
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Assign To (Salesman)</label>
+                    <select name="user_id" class="form-select">
+                        {% for u in users %}
+                        <option value="{{ u.id }}"
+                            {% if meeting and meeting.user_id == u.id %}selected
+                            {% elif not meeting and u.id == current_user.id %}selected{% endif %}>
+                            {{ u.username }} ({{ u.role }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+
+                <!-- Status (edit only) -->
+                {% if meeting and meeting_statuses %}
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Status</label>
+                    <select name="status" class="form-select">
+                        {% for s in meeting_statuses %}
+                        <option value="{{ s }}" {% if meeting.status == s %}selected{% endif %}>{{ s }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+
+                <div class="col-12"><hr class="my-1"></div>
+
+                <!-- Client info section -->
+                <div class="col-12">
+                    <p class="fw-semibold mb-2 text-muted" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.5px;">
+                        Client / Location Details
+                    </p>
+                </div>
+
+                <div class="col-md-4">
+                    <label class="form-label">Link to Lead (optional)</label>
+                    <select name="lead_id" class="form-select" id="leadSelect">
+                        <option value="">— No lead —</option>
+                        {% for l in leads %}
+                        <option value="{{ l.id }}"
+                            {% if meeting and meeting.lead_id == l.id %}selected{% endif %}>
+                            {{ l.name or 'Unknown' }}{% if l.company %} — {{ l.company }}{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Link to Project (optional)</label>
+                    <select name="project_id" class="form-select">
+                        <option value="">— No project —</option>
+                        {% for p in projects %}
+                        <option value="{{ p.id }}"
+                            {% if meeting and meeting.project_id == p.id %}selected{% endif %}>
+                            {{ p.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-4">
+                    <label class="form-label">Client Name</label>
+                    <input type="text" name="client_name" class="form-control"
+                           placeholder="e.g. Rahul Sharma"
+                           value="{{ meeting.client_name if meeting else '' }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Client Phone</label>
+                    <input type="text" name="client_phone" class="form-control"
+                           placeholder="+91 98765 43210"
+                           value="{{ meeting.client_phone if meeting else '' }}">
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label">Client Address / Location</label>
+                    <input type="text" name="client_address" class="form-control"
+                           placeholder="Shop / area / landmark"
+                           value="{{ meeting.client_address if meeting else '' }}">
+                </div>
+
+                <div class="col-12"><hr class="my-1"></div>
+
+                <!-- Notes & Outcome -->
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Notes / Agenda</label>
+                    <textarea name="notes" class="form-control" rows="3"
+                              placeholder="What is the purpose of this visit?">{{ meeting.notes if meeting else '' }}</textarea>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Outcome</label>
+                    <textarea name="outcome" class="form-control" rows="3"
+                              placeholder="Fill after the meeting — what was discussed / decided?">{{ meeting.outcome if meeting else '' }}</textarea>
+                </div>
+
+                <!-- Actions -->
+                <div class="col-12 d-flex gap-2 justify-content-end pt-2">
+                    <a href="{{ url_for('meetings_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg me-1"></i>{{ 'Save Changes' if meeting else 'Create Meeting' }}
+                    </button>
+                </div>
+
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

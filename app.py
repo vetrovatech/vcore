@@ -1,7 +1,9 @@
 from flask import Flask, render_template, redirect, url_for, flash, request, jsonify, Response
+from urllib.parse import urlparse
 import csv
 import io
 import re
+import json
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_migrate import Migrate
 import os
@@ -10,11 +12,13 @@ import pymysql
 # Install PyMySQL as MySQLdb for MySQL compatibility
 pymysql.install_as_MySQLdb()
 
-from models import db, User, Project, TaskTemplate, PromotorTask, DailyUpdate, Product, Quote, QuoteItem, Supplier, GlassType, SupplierPricing, Reminder
+from models import db, User, Project, ProjectHistory, TaskTemplate, PromotorTask, DailyUpdate, Product, Quote, QuoteItem, Supplier, GlassType, SupplierPricing, Reminder, PurchaseInvoice
 from config import config
 from forms import (LoginForm, UserForm, ProjectForm, TaskTemplateForm, 
                    TaskAssignmentForm, TaskUpdateForm, DailyUpdateForm, ProductForm)
 from utils.auth import admin_required, manager_or_admin_required
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from utils.task_rollover import rollover_incomplete_tasks, get_current_week_info, get_week_date_range
 from utils.s3_upload import S3Uploader
 from datetime import datetime, timedelta
@@ -32,6 +36,7 @@ db.init_app(app)
 migrate = Migrate(app, db)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
+limiter = Limiter(get_remote_address, app=app, default_limits=[], storage_uri="memory://")
 login_manager.login_message = 'Please log in to access this page.'
 login_manager.login_message_category = 'info'
 
@@ -39,6 +44,44 @@ login_manager.login_message_category = 'info'
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
+
+def _run_startup_migrations():
+    """Run safe ADD COLUMN migrations on every cold start (idempotent — ignores duplicates)."""
+    stmts = [
+        "ALTER TABLE leads ADD COLUMN facebook_lead_id VARCHAR(50) NULL",
+    ]
+    try:
+        with db.engine.connect() as conn:
+            for sql in stmts:
+                try:
+                    conn.execute(text(sql))
+                    conn.commit()
+                except Exception:
+                    pass  # Column already exists
+    except Exception:
+        pass  # DB not reachable yet (local dev before first request)
+
+
+with app.app_context():
+    _run_startup_migrations()
+
+
+@app.template_filter('fromjson')
+def fromjson_filter(value):
+    """Parse a JSON string in Jinja2 templates."""
+    try:
+        return json.loads(value)
+    except Exception:
+        return []
+
+
+@app.template_filter('to_ist')
+def to_ist_filter(utc_dt):
+    """Convert a UTC datetime to IST (UTC+5:30), returns datetime object."""
+    if utc_dt is None:
+        return None
+    return utc_dt + timedelta(hours=5, minutes=30)
 
 
 # Lambda-specific: Dispose connections before each request
@@ -57,32 +100,37 @@ def before_request():
 # ============================================================================
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("10 per minute; 30 per hour")
 def login():
     """Login page"""
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
-    
+
     form = LoginForm()
     if form.validate_on_submit():
         # Try to find user by username or email
         user = User.query.filter(
             (User.username == form.username.data) | (User.email == form.username.data)
         ).first()
-        
+
         if user and user.check_password(form.password.data):
             if not user.is_active:
                 flash('Your account has been deactivated. Please contact an administrator.', 'danger')
                 return redirect(url_for('login'))
-            
+
             login_user(user, remember=form.remember_me.data)
             flash(f'Welcome back, {user.username}!', 'success')
-            
-            # Redirect to next page or dashboard
+
+            # Safe redirect — only allow relative paths, never external URLs
             next_page = request.args.get('next')
-            return redirect(next_page) if next_page else redirect(url_for('dashboard'))
+            if next_page:
+                parsed = urlparse(next_page)
+                if parsed.scheme or parsed.netloc:
+                    next_page = None  # Reject absolute/external URLs
+            return redirect(next_page or url_for('dashboard'))
         else:
             flash('Invalid username/email or password.', 'danger')
-    
+
     return render_template('login.html', form=form)
 
 
@@ -171,24 +219,28 @@ def dashboard():
 @login_required
 def projects_list():
     """List all projects"""
-    # Get filter parameters
     status_filter = request.args.get('status', '')
     owner_filter = request.args.get('owner', '')
-    
-    # Build query
+
     query = Project.query
-    
+
     if status_filter:
         query = query.filter_by(status=status_filter)
     if owner_filter:
         query = query.filter_by(owner_id=int(owner_filter))
-    
+
     projects = query.order_by(Project.created_at.desc()).all()
-    
-    # Get all users for filter dropdown
     users = User.query.filter_by(is_active=True).all()
-    
+
     return render_template('projects/list.html', projects=projects, users=users)
+
+
+@app.route('/projects/<int:id>')
+@login_required
+def project_view(id):
+    """View project details and history"""
+    project = Project.query.get_or_404(id)
+    return render_template('projects/view.html', project=project)
 
 
 @app.route('/projects/new', methods=['GET', 'POST'])
@@ -196,16 +248,18 @@ def projects_list():
 def project_new():
     """Create new project"""
     form = ProjectForm()
-    
-    # Populate owner choices with managers and admins
-    form.owner_id.choices = [(u.id, u.username) for u in User.query.filter(
-        User.role.in_(['Admin', 'Manager']), User.is_active == True
-    ).all()]
-    
+
+    all_users = User.query.filter_by(is_active=True).all()
+    managers_admins = [(u.id, u.username) for u in all_users if u.role in ('Admin', 'Manager')]
+    form.owner_id.choices = managers_admins
+    form.assigned_to_id.choices = [(0, '— Unassigned —')] + [(u.id, u.username) for u in all_users]
+
     if form.validate_on_submit():
+        assigned = form.assigned_to_id.data if form.assigned_to_id.data else None
         project = Project(
             name=form.name.data,
             owner_id=form.owner_id.data,
+            assigned_to_id=assigned,
             start_date=form.start_date.data,
             expected_end_date=form.expected_end_date.data,
             actual_end_date=form.actual_end_date.data,
@@ -213,10 +267,19 @@ def project_new():
             comments=form.comments.data
         )
         db.session.add(project)
+        db.session.flush()  # get project.id before commit
+
+        history = ProjectHistory(
+            project_id=project.id,
+            changed_by_id=current_user.id,
+            action='Created',
+            changes=None
+        )
+        db.session.add(history)
         db.session.commit()
         flash(f'Project "{project.name}" created successfully!', 'success')
         return redirect(url_for('projects_list'))
-    
+
     return render_template('projects/form.html', form=form, title='New Project')
 
 
@@ -226,27 +289,90 @@ def project_edit(id):
     """Edit project"""
     project = Project.query.get_or_404(id)
     form = ProjectForm(obj=project)
-    
-    # Populate owner choices with managers and admins
-    form.owner_id.choices = [(u.id, u.username) for u in User.query.filter(
-        User.role.in_(['Admin', 'Manager']), User.is_active == True
-    ).all()]
-    
+
+    all_users = User.query.filter_by(is_active=True).all()
+    managers_admins = [(u.id, u.username) for u in all_users if u.role in ('Admin', 'Manager')]
+    form.owner_id.choices = managers_admins
+    form.assigned_to_id.choices = [(0, '— Unassigned —')] + [(u.id, u.username) for u in all_users]
+
     if form.validate_on_submit():
+        # Build a human-readable diff of what changed
+        user_map = {u.id: u.username for u in all_users}
+        change_list = []
+
+        def _norm(val):
+            """Normalise a value for comparison — treat None and '' as equal."""
+            if val is None:
+                return ''
+            return str(val).strip()
+
+        old_assigned = user_map.get(project.assigned_to_id, '') if project.assigned_to_id else ''
+        new_assigned_id = form.assigned_to_id.data if form.assigned_to_id.data else None
+        new_assigned = user_map.get(new_assigned_id, '') if new_assigned_id else ''
+
+        checks = [
+            ('Name', _norm(project.name), _norm(form.name.data)),
+            ('Owner', user_map.get(project.owner_id, ''), user_map.get(form.owner_id.data, '')),
+            ('Assigned To', old_assigned, new_assigned),
+            ('Status', _norm(project.status), _norm(form.status.data)),
+            ('Start Date', _norm(project.start_date), _norm(form.start_date.data)),
+            ('Expected End', _norm(project.expected_end_date), _norm(form.expected_end_date.data)),
+            ('Actual End', _norm(project.actual_end_date), _norm(form.actual_end_date.data)),
+            ('Comments', _norm(project.comments), _norm(form.comments.data)),
+        ]
+        for field_label, old_val, new_val in checks:
+            if old_val != new_val:
+                change_list.append({'field': field_label, 'old': old_val or '—', 'new': new_val or '—'})
+
         project.name = form.name.data
         project.owner_id = form.owner_id.data
+        project.assigned_to_id = form.assigned_to_id.data if form.assigned_to_id.data else None
         project.start_date = form.start_date.data
         project.expected_end_date = form.expected_end_date.data
         project.actual_end_date = form.actual_end_date.data
         project.status = form.status.data
         project.comments = form.comments.data
         project.updated_at = datetime.utcnow()
-        
+
+        if change_list:
+            history = ProjectHistory(
+                project_id=project.id,
+                changed_by_id=current_user.id,
+                action='Updated',
+                changes=json.dumps(change_list)
+            )
+            db.session.add(history)
+
         db.session.commit()
         flash(f'Project "{project.name}" updated successfully!', 'success')
-        return redirect(url_for('projects_list'))
-    
+        return redirect(url_for('project_view', id=project.id))
+
+    # Pre-select current assigned_to in form
+    if project.assigned_to_id:
+        form.assigned_to_id.data = project.assigned_to_id
+    else:
+        form.assigned_to_id.data = 0
+
     return render_template('projects/form.html', form=form, title='Edit Project', project=project)
+
+
+@app.route('/projects/<int:id>/comment', methods=['POST'])
+@login_required
+def project_add_comment(id):
+    """Add a comment to a project (saved as a history entry)"""
+    project = Project.query.get_or_404(id)
+    text = request.form.get('comment', '').strip()
+    if text:
+        history = ProjectHistory(
+            project_id=project.id,
+            changed_by_id=current_user.id,
+            action='Comment',
+            changes=json.dumps([{'field': 'Comments', 'new': text}])
+        )
+        db.session.add(history)
+        db.session.commit()
+        flash('Comment added.', 'success')
+    return redirect(url_for('project_view', id=id))
 
 
 @app.route('/projects/<int:id>/delete', methods=['POST'])
@@ -1284,8 +1410,8 @@ def quotes_list():
         except ValueError:
             pass
     
-    # Get quotes ordered by date (newest first)
-    quotes = query.order_by(Quote.quote_date.desc()).all()
+    # Get quotes ordered by date then by ID (newest first)
+    quotes = query.order_by(Quote.quote_date.desc(), Quote.id.desc()).all()
     
     return render_template('quotes/list.html',
                          quotes=quotes,
@@ -1326,26 +1452,30 @@ def quote_new():
                 customer_state=data.get('customer_state'),
                 customer_phone=data.get('customer_phone'),
                 customer_email=data.get('customer_email'),
+                customer_gst=data.get('customer_gst'),
                 invoice_to=data.get('invoice_to'),
                 dispatch_to=data.get('dispatch_to'),
                 self_pickup=bool(data.get('self_pickup')),
-                delivery_charges=float(data.get('delivery_charges', 0)),
-                installation_charges=float(data.get('installation_charges', 0)),
-                freight_charges=float(data.get('freight_charges', 0)),
-                transport_charges=float(data.get('transport_charges', 0)),
-                cutout_charges=float(data.get('cutout_charges', 0)),
-                holes_charges=float(data.get('holes_charges', 0)),
-                shape_cutting_charges=float(data.get('shape_cutting_charges', 0)),
-                jumbo_size_charges=float(data.get('jumbo_size_charges', 0)),
-                template_charges=float(data.get('template_charges', 0)),
-                handling_charges=float(data.get('handling_charges', 0)),
-                polish_charges=float(data.get('polish_charges', 0)),
-                document_charges=float(data.get('document_charges', 0)),
-                frosted_charges=float(data.get('frosted_charges', 0)),
-                gst_percentage=float(data.get('gst_percentage', 18)),
-                jumbo_pct_tier1=float(data.get('jumbo_pct_tier1', 10)),
-                jumbo_pct_tier2=float(data.get('jumbo_pct_tier2', 15)),
-                jumbo_pct_tier3=float(data.get('jumbo_pct_tier3', 20)),
+                delivery_charges=float(data.get('delivery_charges') or 0),
+                installation_charges=float(data.get('installation_charges') or 0),
+                freight_charges=float(data.get('freight_charges') or 0),
+                transport_charges=float(data.get('transport_charges') or 0),
+                cutout_charges=float(data.get('cutout_charges') or 0),
+                holes_charges=float(data.get('holes_charges') or 0),
+                shape_cutting_charges=float(data.get('shape_cutting_charges') or 0),
+                jumbo_size_charges=float(data.get('jumbo_size_charges') or 0),
+                template_charges=float(data.get('template_charges') or 0),
+                handling_percentage=float(data.get('handling_percentage') or 0),
+                handling_charges=float(data.get('handling_charges') or 0),
+                polish_charges=float(data.get('polish_charges') or 0),
+                document_charges=float(data.get('document_charges') or 0),
+                frosted_charges=float(data.get('frosted_charges') or 0),
+                insurance_percentage=float(data.get('insurance_percentage') or 0),
+                insurance_charges=float(data.get('insurance_charges') or 0),
+                gst_percentage=float(data.get('gst_percentage') or 18),
+                jumbo_pct_tier1=float(data.get('jumbo_pct_tier1') or 10),
+                jumbo_pct_tier2=float(data.get('jumbo_pct_tier2') or 15),
+                jumbo_pct_tier3=float(data.get('jumbo_pct_tier3') or 20),
                 payment_terms=data.get('payment_terms'),
                 status=data.get('status', 'Draft'),
                 quote_type=data.get('quote_type', 'B2B'),
@@ -1354,7 +1484,10 @@ def quote_new():
             
             db.session.add(quote)
             db.session.flush()  # Get quote ID
-            
+
+            # Save/update client record for autocomplete
+            _upsert_client(data)
+
             # Process items - they come as items[0][field], items[1][field], etc.
             items_data = {}
             for key in data.keys():
@@ -1399,46 +1532,49 @@ def quote_new():
                     parent_id=actual_parent_id,
                     is_group=is_group,
                     sort_order=index,
-                    item_number=int(item_data.get('item_number', index + 1)),
+                    item_number=int(item_data.get('item_number') or index + 1),
                     particular=particular,
+                    image_s3_key=item_data.get('image_s3_key') or None,
                     actual_width=float(item_data.get('actual_width')) if item_data.get('actual_width') else None,
                     actual_height=float(item_data.get('actual_height')) if item_data.get('actual_height') else None,
                     chargeable_width=float(item_data.get('chargeable_width')) if item_data.get('chargeable_width') else None,
                     chargeable_height=float(item_data.get('chargeable_height')) if item_data.get('chargeable_height') else None,
                     unit=item_data.get('unit', 'MM'),
-                    chargeable_extra=int(item_data.get('chargeable_extra', 30)),
-                    quantity=int(item_data.get('quantity', 1)) if not is_group else 1,
-                    rate_sqper=float(item_data.get('rate_sqper', 0)) if not is_group else 0,
-                    total=float(item_data.get('total', 0)) if not is_group else 0,
-                    hole=int(item_data.get('hole', 0)) if not is_group else 0,
-                    cutout=int(item_data.get('cutout', 0)) if not is_group else 0
+                    chargeable_extra=int(item_data.get('chargeable_extra') or 30),
+                    quantity=int(item_data.get('quantity') or 1) if not is_group else 1,
+                    rate_sqper=float(item_data.get('rate_sqper') or 0),
+                    total=float(item_data.get('total') or 0) if not is_group else 0,
+                    hole=int(item_data.get('hole') or 0) if not is_group else 0,
+                    cutout=int(item_data.get('cutout') or 0) if not is_group else 0,
+                    hole_price=float(item_data.get('hole_price') or 0),
+                    cutout_price=float(item_data.get('cutout_price') or 0),
                 )
-                
+
                 # Calculate unit square if dimensions provided
                 if item.chargeable_width and item.chargeable_height:
                     item.calculate_unit_square()
-                
-                # Calculate total if not a group
-                if not is_group:
-                    item.calculate_total()
-                
+
+                # Do NOT call item.calculate_total() here — the JS frontend
+                # already calculates the correct total (including hole/cutout
+                # charges). Calling it server-side would overwrite the
+                # submitted value with an incorrect one because self.parent
+                # is not accessible before the item is added to the session.
+
                 db.session.add(item)
                 db.session.flush()  # Get item ID
-                
+
                 # Store mapping: form index -> database ID
                 parent_id_map[index] = item.id
-                
+
                 # If this is a group, also store its group identifier
                 if is_group:
-                    # The group identifier would be in the dataset.itemId from JavaScript
-                    # For now, we'll use the index as the identifier
                     index_to_group_id[index] = f"group-{item.item_number}"
-            
+
             # Calculate quote totals
-            quote.subtotal = float(data.get('subtotal', 0))
-            quote.gst_amount = float(data.get('gst_amount', 0))
-            quote.round_off = float(data.get('round_off', 0))
-            quote.total = float(data.get('total', 0))
+            quote.subtotal = float(data.get('subtotal') or 0)
+            quote.gst_amount = float(data.get('gst_amount') or 0)
+            quote.round_off = float(data.get('round_off') or 0)
+            quote.total = float(data.get('total') or 0)
             
             db.session.commit()
             flash(f'Quote {quote_number} created successfully!', 'success')
@@ -1465,9 +1601,10 @@ def quote_new():
 @login_required
 def quote_view(id):
     """View quote details"""
-    from models import Quote
+    from models import Quote, QuoteComment
     quote = Quote.query.get_or_404(id)
-    return render_template('quotes/view.html', quote=quote)
+    comments = QuoteComment.query.filter_by(quote_id=id).order_by(QuoteComment.created_at.desc()).all()
+    return render_template('quotes/view.html', quote=quote, comments=comments)
 
 
 @app.route('/quotes/<int:id>/edit', methods=['GET', 'POST'])
@@ -1491,26 +1628,30 @@ def quote_edit(id):
             quote.customer_state = data.get('customer_state')
             quote.customer_phone = data.get('customer_phone')
             quote.customer_email = data.get('customer_email')
+            quote.customer_gst = data.get('customer_gst')
             quote.invoice_to = data.get('invoice_to')
             quote.dispatch_to = data.get('dispatch_to')
             quote.self_pickup = bool(data.get('self_pickup'))
-            quote.delivery_charges = float(data.get('delivery_charges', 0))
-            quote.installation_charges = float(data.get('installation_charges', 0))
-            quote.freight_charges = float(data.get('freight_charges', 0))
-            quote.transport_charges = float(data.get('transport_charges', 0))
-            quote.cutout_charges = float(data.get('cutout_charges', 0))
-            quote.holes_charges = float(data.get('holes_charges', 0))
-            quote.shape_cutting_charges = float(data.get('shape_cutting_charges', 0))
-            quote.jumbo_size_charges = float(data.get('jumbo_size_charges', 0))
-            quote.template_charges = float(data.get('template_charges', 0))
-            quote.handling_charges = float(data.get('handling_charges', 0))
-            quote.polish_charges = float(data.get('polish_charges', 0))
-            quote.document_charges = float(data.get('document_charges', 0))
-            quote.frosted_charges = float(data.get('frosted_charges', 0))
-            quote.gst_percentage = float(data.get('gst_percentage', 18))
-            quote.jumbo_pct_tier1 = float(data.get('jumbo_pct_tier1', 10))
-            quote.jumbo_pct_tier2 = float(data.get('jumbo_pct_tier2', 15))
-            quote.jumbo_pct_tier3 = float(data.get('jumbo_pct_tier3', 20))
+            quote.delivery_charges = float(data.get('delivery_charges') or 0)
+            quote.installation_charges = float(data.get('installation_charges') or 0)
+            quote.freight_charges = float(data.get('freight_charges') or 0)
+            quote.transport_charges = float(data.get('transport_charges') or 0)
+            quote.cutout_charges = float(data.get('cutout_charges') or 0)
+            quote.holes_charges = float(data.get('holes_charges') or 0)
+            quote.shape_cutting_charges = float(data.get('shape_cutting_charges') or 0)
+            quote.jumbo_size_charges = float(data.get('jumbo_size_charges') or 0)
+            quote.template_charges = float(data.get('template_charges') or 0)
+            quote.handling_percentage = float(data.get('handling_percentage') or 0)
+            quote.handling_charges = float(data.get('handling_charges') or 0)
+            quote.polish_charges = float(data.get('polish_charges') or 0)
+            quote.document_charges = float(data.get('document_charges') or 0)
+            quote.frosted_charges = float(data.get('frosted_charges') or 0)
+            quote.insurance_percentage = float(data.get('insurance_percentage') or 0)
+            quote.insurance_charges = float(data.get('insurance_charges') or 0)
+            quote.gst_percentage = float(data.get('gst_percentage') or 18)
+            quote.jumbo_pct_tier1 = float(data.get('jumbo_pct_tier1') or 10)
+            quote.jumbo_pct_tier2 = float(data.get('jumbo_pct_tier2') or 15)
+            quote.jumbo_pct_tier3 = float(data.get('jumbo_pct_tier3') or 20)
             quote.payment_terms = data.get('payment_terms')
             quote.status = data.get('status', 'Draft')
             quote.quote_type = data.get('quote_type', 'B2B')
@@ -1559,46 +1700,52 @@ def quote_edit(id):
                     parent_id=actual_parent_id,
                     is_group=is_group,
                     sort_order=index,
-                    item_number=int(item_data.get('item_number', index + 1)),
+                    item_number=int(item_data.get('item_number') or index + 1),
                     particular=particular,
+                    image_s3_key=item_data.get('image_s3_key') or None,
                     actual_width=float(item_data.get('actual_width')) if item_data.get('actual_width') else None,
                     actual_height=float(item_data.get('actual_height')) if item_data.get('actual_height') else None,
                     chargeable_width=float(item_data.get('chargeable_width')) if item_data.get('chargeable_width') else None,
                     chargeable_height=float(item_data.get('chargeable_height')) if item_data.get('chargeable_height') else None,
                     unit=item_data.get('unit', 'MM'),
-                    chargeable_extra=int(item_data.get('chargeable_extra', 30)),
-                    quantity=int(item_data.get('quantity', 1)) if not is_group else 1,
-                    rate_sqper=float(item_data.get('rate_sqper', 0)) if not is_group else 0,
-                    total=float(item_data.get('total', 0)) if not is_group else 0,
-                    hole=int(item_data.get('hole', 0)) if not is_group else 0,
-                    cutout=int(item_data.get('cutout', 0)) if not is_group else 0
+                    chargeable_extra=int(item_data.get('chargeable_extra') or 30),
+                    quantity=int(item_data.get('quantity') or 1) if not is_group else 1,
+                    rate_sqper=float(item_data.get('rate_sqper') or 0),
+                    total=float(item_data.get('total') or 0) if not is_group else 0,
+                    hole=int(item_data.get('hole') or 0) if not is_group else 0,
+                    cutout=int(item_data.get('cutout') or 0) if not is_group else 0,
+                    hole_price=float(item_data.get('hole_price') or 0),
+                    cutout_price=float(item_data.get('cutout_price') or 0),
                 )
-                
+
                 # Calculate unit square if dimensions provided
                 if item.chargeable_width and item.chargeable_height:
                     item.calculate_unit_square()
-                
-                # Calculate total if not a group
-                if not is_group:
-                    item.calculate_total()
-                
+
+                # Do NOT call item.calculate_total() here — same reason as
+                # quote_new: self.parent is not accessible before add/flush,
+                # so hole/cutout charges would be lost.
+
                 db.session.add(item)
                 db.session.flush()
-                
+
                 # Store mapping: form index -> database ID
                 parent_id_map[index] = item.id
-                
+
                 # If this is a group, also store its group identifier
                 if is_group:
                     index_to_group_id[index] = f"group-{item.item_number}"
-            
+
             # Update quote totals
-            quote.subtotal = float(data.get('subtotal', 0))
-            quote.gst_amount = float(data.get('gst_amount', 0))
-            quote.round_off = float(data.get('round_off', 0))
-            quote.total = float(data.get('total', 0))
+            quote.subtotal = float(data.get('subtotal') or 0)
+            quote.gst_amount = float(data.get('gst_amount') or 0)
+            quote.round_off = float(data.get('round_off') or 0)
+            quote.total = float(data.get('total') or 0)
             quote.updated_at = datetime.utcnow()
-            
+
+            # Save/update client record for autocomplete
+            _upsert_client(data)
+
             db.session.commit()
             flash(f'Quote {quote.quote_number} updated successfully!', 'success')
             return redirect(url_for('quote_view', id=quote.id))
@@ -1627,6 +1774,135 @@ def quote_delete(id):
     return redirect(url_for('quotes_list'))
 
 
+# ─────────────────────────────────────────────────────────
+# CLIENTS
+# ─────────────────────────────────────────────────────────
+
+def _upsert_client(data):
+    """Create or update a client record from quote form data.
+    Matches on name (case-insensitive). Only updates fields that are non-empty."""
+    from models import Client
+    name = (data.get('customer_name') or '').strip()
+    if not name:
+        return
+    client = Client.query.filter(
+        db.func.lower(Client.name) == name.lower()
+    ).first()
+    if not client:
+        client = Client(name=name)
+        db.session.add(client)
+    # Update only non-empty fields so partial edits don't wipe saved data
+    for src, dst in [
+        ('customer_phone',   'phone'),
+        ('customer_email',   'email'),
+        ('customer_address', 'address'),
+        ('customer_city',    'city'),
+        ('customer_state',   'state'),
+        ('customer_gst',     'gst_number'),
+        ('dispatch_to',      'dispatch_to'),
+    ]:
+        val = (data.get(src) or '').strip()
+        if val:
+            setattr(client, dst, val)
+    qt = data.get('quote_type')
+    if qt in ('B2B', 'B2C'):
+        client.quote_type = qt
+
+
+@app.route('/api/clients/search')
+@login_required
+def clients_search():
+    """Return up to 10 clients matching the query string (for autocomplete)."""
+    from models import Client
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 1:
+        return jsonify([])
+    results = Client.query.filter(
+        Client.name.ilike(f'%{q}%')
+    ).order_by(Client.name).limit(10).all()
+    return jsonify([c.to_dict() for c in results])
+
+
+@app.route('/clients')
+@login_required
+def clients_list():
+    from models import Client
+    q = request.args.get('q', '').strip()
+    query = Client.query
+    if q:
+        query = query.filter(Client.name.ilike(f'%{q}%'))
+    clients = query.order_by(Client.name).all()
+    return render_template('clients/list.html', clients=clients, q=q)
+
+
+@app.route('/clients/new', methods=['GET', 'POST'])
+@login_required
+def client_new():
+    from models import Client
+    if request.method == 'POST':
+        name = (request.form.get('name') or '').strip()
+        if not name:
+            flash('Client name is required.', 'danger')
+            return redirect(url_for('client_new'))
+        client = Client(
+            name        = name,
+            phone       = request.form.get('phone',       '').strip() or None,
+            email       = request.form.get('email',       '').strip() or None,
+            address     = request.form.get('address',     '').strip() or None,
+            city        = request.form.get('city',        '').strip() or None,
+            state       = request.form.get('state',       '').strip() or None,
+            gst_number  = request.form.get('gst_number',  '').strip() or None,
+            dispatch_to = request.form.get('dispatch_to', '').strip() or None,
+            quote_type  = request.form.get('quote_type')  or None,
+            notes       = request.form.get('notes',       '').strip() or None,
+        )
+        db.session.add(client)
+        db.session.commit()
+        flash(f'Client "{client.name}" saved.', 'success')
+        return redirect(url_for('clients_list'))
+    return render_template('clients/form.html', client=None)
+
+
+@app.route('/clients/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+def client_edit(id):
+    from models import Client
+    client = Client.query.get_or_404(id)
+    if request.method == 'POST':
+        name = (request.form.get('name') or '').strip()
+        if not name:
+            flash('Client name is required.', 'danger')
+            return redirect(url_for('client_edit', id=id))
+        client.name        = name
+        client.phone       = request.form.get('phone',       '').strip() or None
+        client.email       = request.form.get('email',       '').strip() or None
+        client.address     = request.form.get('address',     '').strip() or None
+        client.city        = request.form.get('city',        '').strip() or None
+        client.state       = request.form.get('state',       '').strip() or None
+        client.gst_number  = request.form.get('gst_number',  '').strip() or None
+        client.dispatch_to = request.form.get('dispatch_to', '').strip() or None
+        client.quote_type  = request.form.get('quote_type')  or None
+        client.notes       = request.form.get('notes',       '').strip() or None
+        db.session.commit()
+        flash(f'Client "{client.name}" updated.', 'success')
+        return redirect(url_for('clients_list'))
+    return render_template('clients/form.html', client=client)
+
+
+@app.route('/clients/<int:id>/delete', methods=['POST'])
+@login_required
+def client_delete(id):
+    from models import Client
+    client = Client.query.get_or_404(id)
+    name = client.name
+    db.session.delete(client)
+    db.session.commit()
+    flash(f'Client "{name}" deleted.', 'success')
+    return redirect(url_for('clients_list'))
+
+
+# ─────────────────────────────────────────────────────────
+
 @app.route('/quotes/<int:id>/duplicate', methods=['POST'])
 @login_required
 def quote_duplicate(id):
@@ -1654,6 +1930,8 @@ def quote_duplicate(id):
         installation_charges=original_quote.installation_charges,
         freight_charges=original_quote.freight_charges,
         transport_charges=original_quote.transport_charges,
+        insurance_percentage=original_quote.insurance_percentage,
+        insurance_charges=original_quote.insurance_charges,
         gst_percentage=original_quote.gst_percentage,
         payment_terms=original_quote.payment_terms,
         status='Draft',
@@ -1691,10 +1969,40 @@ def quote_duplicate(id):
 @app.route('/quotes/<int:id>/print')
 @login_required
 def quote_print(id):
-    """Show print-friendly version of quote"""
+    """Show print-friendly version of quote — auto-marks status as Sent"""
     from models import Quote
     quote = Quote.query.get_or_404(id)
+    if quote.status == 'Draft':
+        quote.status = 'Sent'
+        db.session.commit()
     return render_template('quotes/print.html', quote=quote)
+
+
+@app.route('/quotes/<int:id>/comment', methods=['POST'])
+@login_required
+def quote_add_comment(id):
+    """Add a comment to a quote"""
+    from models import Quote, QuoteComment
+    quote = Quote.query.get_or_404(id)
+    text = request.form.get('comment', '').strip()
+    if text:
+        comment = QuoteComment(quote_id=quote.id, user_id=current_user.id, comment=text)
+        db.session.add(comment)
+        db.session.commit()
+        flash('Comment added.', 'success')
+    return redirect(url_for('quote_view', id=id))
+
+
+@app.route('/quotes/<int:id>/comment/<int:comment_id>/delete', methods=['POST'])
+@login_required
+def quote_delete_comment(id, comment_id):
+    """Delete a comment (own comment or admin)"""
+    from models import QuoteComment
+    c = QuoteComment.query.get_or_404(comment_id)
+    if c.user_id == current_user.id or current_user.is_admin():
+        db.session.delete(c)
+        db.session.commit()
+    return redirect(url_for('quote_view', id=id))
 
 
 # ============================================================================
@@ -1708,6 +2016,81 @@ def api_quote_next_number():
     from models import Quote
     next_number = Quote.generate_quote_number()
     return jsonify({'quote_number': next_number})
+
+
+@app.route('/api/quote-items/upload-image', methods=['POST'])
+@login_required
+def quote_item_upload_image():
+    """AJAX: upload a quote item image to S3, return the s3_key and a short-lived presigned URL."""
+    file = request.files.get('image')
+    if not file or not file.filename:
+        return jsonify({'success': False, 'error': 'No file provided'}), 400
+
+    allowed = {'jpg', 'jpeg', 'png', 'webp', 'gif'}
+    ext = file.filename.rsplit('.', 1)[-1].lower()
+    if ext not in allowed:
+        return jsonify({'success': False, 'error': 'Only image files are allowed'}), 400
+
+    try:
+        from utils.s3_upload import S3Uploader
+        from werkzeug.utils import secure_filename
+        from datetime import datetime
+
+        uploader  = S3Uploader()
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S%f')
+        filename  = f"{timestamp}_{secure_filename(file.filename)}"
+        s3_key    = f"quote-items/{filename}"
+
+        uploader.s3_client.upload_fileobj(
+            file, uploader.bucket_name, s3_key,
+            ExtraArgs={'ContentType': file.content_type or 'image/jpeg'}
+        )
+
+        presigned = uploader.s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': uploader.bucket_name, 'Key': s3_key},
+            ExpiresIn=3600
+        )
+        return jsonify({'success': True, 's3_key': s3_key, 'presigned_url': presigned})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.template_filter('item_image_url')
+def item_image_url_filter(s3_key):
+    """Jinja2 filter: convert an S3 key to a presigned URL at render time."""
+    if not s3_key:
+        return ''
+    try:
+        from utils.s3_upload import S3Uploader
+        uploader = S3Uploader()
+        return uploader.s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': uploader.bucket_name, 'Key': s3_key},
+            ExpiresIn=3600
+        )
+    except Exception:
+        return ''
+
+
+@app.route('/api/quote-items/image-url')
+@login_required
+def quote_item_image_url():
+    """Return a fresh presigned URL for a quote item image (used by view page)."""
+    s3_key = request.args.get('key', '').strip()
+    if not s3_key:
+        return jsonify({'error': 'No key'}), 400
+    try:
+        from utils.s3_upload import S3Uploader
+        uploader = S3Uploader()
+        url = uploader.s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': uploader.bucket_name, 'Key': s3_key},
+            ExpiresIn=3600
+        )
+        return redirect(url)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/products/search')
@@ -1808,7 +2191,19 @@ def supplier_new():
     if request.method == 'POST':
         try:
             data = request.form
-            
+            if not data.get('name', '').strip():
+                flash('Supplier name is required.', 'danger')
+                return redirect(url_for('supplier_new'))
+            if not data.get('phone', '').strip():
+                flash('Phone number is required.', 'danger')
+                return redirect(url_for('supplier_new'))
+            if not data.get('email', '').strip():
+                flash('Email is required.', 'danger')
+                return redirect(url_for('supplier_new'))
+            if not data.get('gstin', '').strip():
+                flash('GSTIN is required.', 'danger')
+                return redirect(url_for('supplier_new'))
+
             supplier = Supplier(
                 name=data.get('name'),
                 contact_person=data.get('contact_person'),
@@ -1865,7 +2260,19 @@ def supplier_edit(id):
     if request.method == 'POST':
         try:
             data = request.form
-            
+            if not data.get('name', '').strip():
+                flash('Supplier name is required.', 'danger')
+                return redirect(url_for('supplier_edit', id=id))
+            if not data.get('phone', '').strip():
+                flash('Phone number is required.', 'danger')
+                return redirect(url_for('supplier_edit', id=id))
+            if not data.get('email', '').strip():
+                flash('Email is required.', 'danger')
+                return redirect(url_for('supplier_edit', id=id))
+            if not data.get('gstin', '').strip():
+                flash('GSTIN is required.', 'danger')
+                return redirect(url_for('supplier_edit', id=id))
+
             supplier.name = data.get('name')
             supplier.contact_person = data.get('contact_person')
             supplier.phone = data.get('phone')
@@ -2272,10 +2679,12 @@ def reminders_check():
         from utils.reminder_scheduler import ReminderScheduler
         scheduler = ReminderScheduler()
         result = scheduler.check_and_send_reminders()
-        
+
         return jsonify({'success': True, 'result': result}), 200
-        
+
     except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[reminders/check] Exception: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -2397,10 +2806,1722 @@ def reminders_reset_failed():
 
 
 # ============================================================================
+# QUOTE EMAIL & FOLLOW-UP ROUTES
+# ============================================================================
+
+@app.route('/quotes/<int:id>/send-email', methods=['POST'])
+@login_required
+def quote_send_email(id):
+    """Send quotation email to client"""
+    from models import Quote
+    from utils.email_service import EmailService
+
+    quote = Quote.query.get_or_404(id)
+
+    to_email = request.form.get('to_email', '').strip()
+    custom_subject = request.form.get('subject', '').strip() or None
+    custom_message = request.form.get('message', '').strip() or None
+
+    if not to_email:
+        flash('Please provide a recipient email address.', 'warning')
+        return redirect(url_for('quote_view', id=id))
+
+    email_service = EmailService()
+    result = email_service.send_quote_email(
+        quote,
+        to_email,
+        custom_subject=custom_subject,
+        custom_message=custom_message
+    )
+
+    if result['success']:
+        if quote.status == 'Draft':
+            quote.status = 'Sent'
+            db.session.commit()
+        flash(f'Quotation email sent successfully to {to_email}.', 'success')
+    else:
+        flash(f'Failed to send email: {result.get("error", "Unknown error")}', 'danger')
+
+    return redirect(url_for('quote_view', id=id))
+
+
+@app.route('/quotes/<int:id>/schedule-followup', methods=['POST'])
+@login_required
+def quote_schedule_followup(id):
+    """Schedule a follow-up reminder for a quote"""
+    from models import Quote, Reminder
+    from datetime import datetime
+
+    quote = Quote.query.get_or_404(id)
+
+    followup_datetime_str = request.form.get('followup_datetime', '').strip()
+    custom_subject = request.form.get('subject', '').strip() or None
+    custom_message = request.form.get('message', '').strip() or None
+
+    if not followup_datetime_str:
+        flash('Please select a follow-up date and time.', 'warning')
+        return redirect(url_for('quote_view', id=id))
+
+    try:
+        followup_datetime = datetime.strptime(followup_datetime_str, '%Y-%m-%dT%H:%M')
+    except ValueError:
+        flash('Invalid date/time format.', 'warning')
+        return redirect(url_for('quote_view', id=id))
+
+    if followup_datetime <= datetime.utcnow():
+        flash('Follow-up time must be in the future.', 'warning')
+        return redirect(url_for('quote_view', id=id))
+
+    reminder = Reminder(
+        reminder_type='quote',
+        quote_id=quote.id,
+        user_id=current_user.id,
+        reminder_datetime=followup_datetime,
+        subject=custom_subject or f'Follow-up: Quote {quote.quote_number} — {quote.customer_name}',
+        message=custom_message,
+        status='pending'
+    )
+    db.session.add(reminder)
+    db.session.commit()
+
+    flash(
+        f'Follow-up reminder scheduled for {followup_datetime.strftime("%d %b %Y at %I:%M %p")}.',
+        'success'
+    )
+    return redirect(url_for('quote_view', id=id))
+
+
+# ============================================================================
+# LEADFY - LEAD MANAGEMENT ROUTES
+# ============================================================================
+
+@app.route('/api/leads/webhook', methods=['POST'])
+@limiter.limit("10 per minute; 50 per hour")
+def leads_webhook():
+    """Receive leads from glassy.in WordPress contact form"""
+    import hmac
+
+    # Block oversized bodies before parsing (prevent DoS via huge payloads)
+    MAX_BODY = 32 * 1024  # 32 KB
+    content_length = request.content_length
+    if content_length and content_length > MAX_BODY:
+        return jsonify({'success': False, 'error': 'Payload too large'}), 413
+
+    # Constant-time secret comparison (prevents timing attacks)
+    expected_secret = os.getenv('GLASSY_WEBHOOK_SECRET', '')
+    auth_header = request.headers.get('Authorization', '')
+    expected_header = f'Bearer {expected_secret}'
+    if not expected_secret or not hmac.compare_digest(auth_header, expected_header):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'success': False, 'error': 'Invalid JSON'}), 400
+
+    from models import Lead
+    try:
+        name       = (data.get('name') or '').strip()[:200] or None
+        email      = (data.get('email') or '').strip()[:200] or None
+        phone      = (data.get('phone') or '').strip()[:30] or None
+        message    = (data.get('message') or '').strip()[:2000]
+        source_url = (data.get('source_url') or '').strip()[:500]
+
+        # Deduplicate: if same email submitted within the last 60 seconds, skip
+        if email:
+            cutoff = datetime.utcnow() - timedelta(seconds=60)
+            duplicate = Lead.query.filter_by(email=email, origin='glassy.in') \
+                                  .filter(Lead.created_at >= cutoff).first()
+            if duplicate:
+                app.logger.info(f'[Webhook] Duplicate lead skipped: {email}')
+                return jsonify({'success': True}), 200
+
+        # Compose notes from message + source URL
+        notes_parts = []
+        if message:
+            notes_parts.append(message)
+        if source_url:
+            notes_parts.append(f'Source: {source_url}')
+        notes = '\n'.join(notes_parts) or None
+
+        # Find a system admin to use as created_by (required FK)
+        from models import User
+        admin = User.query.filter_by(role='Admin', is_active=True).first()
+        if not admin:
+            return jsonify({'success': False, 'error': 'Configuration error'}), 500
+
+        lead = Lead(
+            name=name,
+            email=email,
+            contact=phone,
+            notes=notes,
+            origin='glassy.in',
+            stage='New Lead',
+            owner_id=None,
+            assigned_to_id=None,
+            created_by=admin.id,
+        )
+        db.session.add(lead)
+        db.session.commit()
+        app.logger.info(f'[Webhook] New lead from glassy.in: {name} ({email})')
+        return jsonify({'success': True}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'[Webhook] Error saving lead: {e}')
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
+
+
+@app.route('/leads')
+@login_required
+def leads_list():
+    """List all leads with search and filter"""
+    from models import Lead, User
+    from datetime import datetime
+
+    search_query = request.args.get('search', '')
+    stage_filter = request.args.get('stage', '')
+    state_filter = request.args.get('state', '')
+    origin_filter = request.args.get('origin', '')
+    owner_filter = request.args.get('owner', '')
+    updated_from = request.args.get('updated_from', '')
+    updated_to = request.args.get('updated_to', '')
+    created_from = request.args.get('created_from', '')
+    created_to = request.args.get('created_to', '')
+
+    query = Lead.query
+
+    # Non-admin/manager users only see leads assigned to them
+    if not current_user.is_manager_or_admin():
+        query = query.filter(Lead.assigned_to_id == current_user.id)
+
+    lead_type_filter = request.args.get('lead_type', '')
+    untouched_filter = request.args.get('untouched', '')
+
+    if search_query:
+        query = query.filter(
+            (Lead.name.ilike(f'%{search_query}%')) |
+            (Lead.contact.ilike(f'%{search_query}%')) |
+            (Lead.company.ilike(f'%{search_query}%'))
+        )
+    if stage_filter:
+        query = query.filter(Lead.stage == stage_filter)
+    if state_filter:
+        query = query.filter(Lead.state.ilike(f'%{state_filter}%'))
+    if origin_filter:
+        query = query.filter(Lead.origin == origin_filter)
+    if lead_type_filter:
+        query = query.filter(Lead.lead_type == lead_type_filter)
+    if untouched_filter == '1':
+        query = query.filter(Lead.is_untouched == True)
+    elif untouched_filter == '0':
+        query = query.filter(Lead.is_untouched == False)
+    if owner_filter:
+        try:
+            query = query.filter(Lead.owner_id == int(owner_filter))
+        except ValueError:
+            pass
+
+    if updated_from:
+        try:
+            query = query.filter(Lead.updated_at >= datetime.strptime(updated_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if updated_to:
+        try:
+            query = query.filter(Lead.updated_at <= datetime.strptime(updated_to + ' 23:59:59', '%Y-%m-%d %H:%M:%S'))
+        except ValueError:
+            pass
+    if created_from:
+        try:
+            query = query.filter(Lead.created_at >= datetime.strptime(created_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if created_to:
+        try:
+            query = query.filter(Lead.created_at <= datetime.strptime(created_to + ' 23:59:59', '%Y-%m-%d %H:%M:%S'))
+        except ValueError:
+            pass
+
+    PER_PAGE = 15
+    page = request.args.get('page', 1, type=int)
+
+    pagination = query.order_by(Lead.created_at.desc()).paginate(page=page, per_page=PER_PAGE, error_out=False)
+    leads = pagination.items
+    total_leads = Lead.query.count()
+    users = User.query.filter_by(is_active=True).order_by(User.username).all()
+
+    origins = db.session.query(Lead.origin).filter(Lead.origin.isnot(None)).distinct().order_by(Lead.origin).all()
+    origins = [o[0] for o in origins]
+
+    states = db.session.query(Lead.state).filter(Lead.state.isnot(None)).distinct().order_by(Lead.state).all()
+    states = [s[0] for s in states]
+
+    from models import IndiamartToken
+    indiamart_token = IndiamartToken.query.first()
+    fb_token_set = bool(os.getenv('FB_PAGE_ACCESS_TOKEN', ''))
+
+    return render_template('leads/list.html',
+                           leads=leads,
+                           pagination=pagination,
+                           total_leads=total_leads,
+                           users=users,
+                           origins=origins,
+                           states=states,
+                           search_query=search_query,
+                           stage_filter=stage_filter,
+                           state_filter=state_filter,
+                           origin_filter=origin_filter,
+                           owner_filter=owner_filter,
+                           lead_type_filter=lead_type_filter,
+                           updated_from=updated_from,
+                           updated_to=updated_to,
+                           created_from=created_from,
+                           created_to=created_to,
+                           indiamart_token=indiamart_token,
+                           fb_token_set=fb_token_set)
+
+
+@app.route('/leads/new', methods=['GET', 'POST'])
+@login_required
+def lead_new():
+    """Create a new lead"""
+    from models import Lead, User
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip() or None
+        owner_id = request.form.get('owner_id') or None
+        contact = request.form.get('contact', '').strip() or None
+        city = request.form.get('city', '').strip() or None
+        state = request.form.get('state', '').strip() or None
+        stage = request.form.get('stage', 'New Lead')
+        origin = request.form.get('origin', '').strip() or None
+
+        lead = Lead(
+            name=name,
+            owner_id=int(owner_id) if owner_id else None,
+            contact=contact,
+            city=city,
+            state=state,
+            stage=stage,
+            origin=origin,
+            created_by=current_user.id
+        )
+        db.session.add(lead)
+        db.session.commit()
+        flash('Lead created successfully.', 'success')
+        return redirect(url_for('leads_list'))
+
+    users = User.query.filter_by(is_active=True).order_by(User.username).all()
+    return render_template('leads/form.html', lead=None, users=users, action='new')
+
+
+@app.route('/leads/<int:id>')
+@login_required
+def lead_view(id):
+    """Lead detail page"""
+    from models import Lead
+    lead = Lead.query.get_or_404(id)
+    history = lead.history.order_by(__import__('models').LeadHistory.created_at.desc()).all()
+    users = User.query.filter_by(is_active=True).order_by(User.username).all()
+    return render_template('leads/view.html', lead=lead, history=history, users=users)
+
+
+@app.route('/leads/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+def lead_edit(id):
+    """Edit an existing lead"""
+    from models import Lead, User, LeadHistory
+
+    lead = Lead.query.get_or_404(id)
+
+    if request.method == 'POST':
+        changes = []
+
+        # Track stage change
+        new_stage = request.form.get('stage', lead.stage)
+        if new_stage != lead.stage:
+            changes.append(LeadHistory(lead_id=lead.id, user_id=current_user.id,
+                action='stage_change',
+                description=f'Stage changed from <strong>{lead.stage}</strong> to <strong>{new_stage}</strong>'))
+            lead.stage = new_stage
+            lead.is_untouched = False
+
+        # Track owner change
+        owner_id = request.form.get('owner_id') or None
+        new_owner_id = int(owner_id) if owner_id else None
+        if new_owner_id != lead.owner_id:
+            old_owner = User.query.get(lead.owner_id).username if lead.owner_id else 'Unassigned'
+            new_owner = User.query.get(new_owner_id).username if new_owner_id else 'Unassigned'
+            changes.append(LeadHistory(lead_id=lead.id, user_id=current_user.id,
+                action='field_change',
+                description=f'Owner changed from <strong>{old_owner}</strong> to <strong>{new_owner}</strong>'))
+            lead.owner_id = new_owner_id
+
+        # Track assigned_to change
+        assigned_to_raw = request.form.get('assigned_to_id') or None
+        new_assigned_to_id = int(assigned_to_raw) if assigned_to_raw else None
+        if new_assigned_to_id != lead.assigned_to_id:
+            old_assignee = User.query.get(lead.assigned_to_id).username if lead.assigned_to_id else 'Unassigned'
+            new_assignee = User.query.get(new_assigned_to_id).username if new_assigned_to_id else 'Unassigned'
+            changes.append(LeadHistory(lead_id=lead.id, user_id=current_user.id,
+                action='field_change',
+                description=f'Assigned To changed from <strong>{old_assignee}</strong> to <strong>{new_assignee}</strong>'))
+            lead.assigned_to_id = new_assigned_to_id
+
+        # Track other field changes
+        field_map = [
+            ('name', 'name', 'Name'),
+            ('contact', 'contact', 'Phone'),
+            ('email', 'email', 'Email'),
+            ('city', 'city', 'City'),
+            ('state', 'state', 'State'),
+            ('origin', 'origin', 'Origin'),
+        ]
+        for form_key, model_attr, label in field_map:
+            new_val = request.form.get(form_key, '').strip() or None
+            old_val = getattr(lead, model_attr)
+            if new_val != old_val:
+                changes.append(LeadHistory(lead_id=lead.id, user_id=current_user.id,
+                    action='field_change',
+                    description=f'{label} changed from <strong>{old_val or "—"}</strong> to <strong>{new_val or "—"}</strong>'))
+                setattr(lead, model_attr, new_val)
+
+        for ch in changes:
+            db.session.add(ch)
+        db.session.commit()
+        return redirect(url_for('lead_view', id=lead.id))
+
+    users = User.query.filter_by(is_active=True).order_by(User.username).all()
+    return render_template('leads/form.html', lead=lead, users=users, action='edit')
+
+
+@app.route('/leads/<int:id>/delete', methods=['POST'])
+@login_required
+def lead_delete(id):
+    """Delete a lead (admin only)"""
+    if not current_user.is_admin():
+        flash('Access denied.', 'danger')
+        return redirect(url_for('leads_list'))
+
+    from models import Lead
+    lead = Lead.query.get_or_404(id)
+    db.session.delete(lead)
+    db.session.commit()
+    flash('Lead deleted.', 'success')
+    return redirect(url_for('leads_list'))
+
+
+# ============================================================================
+# INDIAMART INTEGRATION
+# ============================================================================
+
+@app.route('/leads/indiamart/save-token', methods=['POST'])
+@login_required
+@admin_required
+def indiamart_save_token():
+    """Save IndiaMart token captured from the mobile app"""
+    from models import IndiamartToken
+    import base64, json
+    from datetime import datetime
+
+    ak_token = request.form.get('ak_token', '').strip()
+    glid = request.form.get('glid', '').strip()
+    mobile = request.form.get('mobile', '').strip()
+    user_ip = request.form.get('user_ip', '').strip()
+
+    if not ak_token:
+        flash('Token is required.', 'danger')
+        return redirect(url_for('leads_list'))
+
+    payload = _decode_jwt_payload(ak_token)
+    expires_at = None
+    refresh_token_val = None
+    try:
+        if payload.get('exp'):
+            expires_at = datetime.utcfromtimestamp(payload['exp'])
+        # Extract refresh token if IndiaMart embedded one in the JWT payload
+        for key in ('refresh_token', 'rt', 'rtoken', 'refreshToken'):
+            if payload.get(key):
+                refresh_token_val = payload[key]
+                break
+    except Exception:
+        pass
+
+    token = IndiamartToken.query.first()
+    if not token:
+        token = IndiamartToken()
+        db.session.add(token)
+    token.ak_token = ak_token
+    token.glid = glid
+    token.mobile = mobile
+    token.user_ip = user_ip
+    token.expires_at = expires_at
+    if refresh_token_val:
+        token.refresh_token = refresh_token_val
+    db.session.commit()
+
+    flash('IndiaMart token saved successfully.', 'success')
+    return redirect(url_for('leads_list'))
+
+
+def _decode_jwt_payload(jwt_str):
+    """Decode a JWT payload section and return the dict (no signature verification)."""
+    import base64, json
+    try:
+        parts = jwt_str.split('.')
+        if len(parts) < 2:
+            return {}
+        pad = parts[1] + '=' * (4 - len(parts[1]) % 4)
+        return json.loads(base64.b64decode(pad))
+    except Exception:
+        return {}
+
+
+def _save_new_ak(token, new_ak):
+    """Persist a fresh AK token (and any embedded refresh_token) to the DB."""
+    from datetime import datetime
+    payload = _decode_jwt_payload(new_ak)
+    token.ak_token = new_ak
+    if payload.get('exp'):
+        token.expires_at = datetime.utcfromtimestamp(payload['exp'])
+    # IndiaMart sometimes embeds a long-lived refresh token in the payload
+    for key in ('refresh_token', 'rt', 'rtoken', 'refreshToken'):
+        if payload.get(key):
+            token.refresh_token = payload[key]
+            break
+    db.session.commit()
+
+
+def _indiamart_refresh_token(token, headers):
+    """
+    Try to get a fresh AK token from IndiaMart.
+    Strategy 1 – checkAuth (works when current token is still valid or just expired).
+    Strategy 2 – use stored refresh_token if IndiaMart returned one previously.
+    Returns the current (possibly refreshed) AK string.
+    """
+    import requests as req_lib
+    from datetime import datetime
+
+    import logging
+    log = logging.getLogger(__name__)
+
+    datacookie = (
+        f"fn=Rohit Kumar|em=vetrovaglass@gmail.com|phcc=91|iso=IN"
+        f"|mb1={token.mobile}|ctid=70532|glid={token.glid}"
+        f"|cmid=1|uTyp=P|utyp=P|ev=V|uv=V"
+    )
+    cookie_header = (
+        f"ImeshVisitor=fn=Rohit Kumar|em=vetrovaglass@gmail.com|phcc=91|iso=IN"
+        f"|mb1={token.mobile}|ctid=70532|glid={token.glid}"
+        f"|cmid=1|uTyp=P|utyp=P|ev=V|uv=V; "
+        f"im_iss=t={token.ak_token}"
+    )
+    base_data = {
+        'APP_ACCURACY': '',
+        'APP_LATITUDE': '',
+        'APP_LONGITUDE': '',
+        'APP_MODID': 'IOS',
+        'APP_SCREEN_NAME': 'Api Request',
+        'APP_USER_ID': token.glid,
+        'GEOIP_COUNTRY_ISO': 'IN',
+        'USER_IP': token.user_ip or '',
+        'USER_IP_COUNTRY': 'India',
+        'VALIDATION_GLID': token.glid,
+        'VALIDATION_USERCONTACT': token.mobile,
+        'VALIDATION_USER_IP': token.user_ip or '',
+        'app_version_no': '13.6.4_b_4',
+        'datacookie': datacookie,
+        'glusrid': token.glid,
+        'modid': 'IOS',
+        'user_name': token.mobile,
+    }
+    req_headers = {**headers, 'cookie': cookie_header}
+
+    # --- Strategy 1: checkAuth with current AK ---
+    try:
+        resp = req_lib.post(
+            'https://mapi.indiamart.com/wservce/users/login/',
+            data={**base_data,
+                  'AK': token.ak_token,
+                  'checkAuth': '1',
+                  'im_iss': f't={token.ak_token}'},
+            headers=req_headers,
+            timeout=10
+        )
+        data = resp.json()
+        log.warning(f"[IndiaMart checkAuth] HTTP {resp.status_code} | keys={list(data.keys())} | access={data.get('access')} | MSG={data.get('message','')}")
+        new_ak = (data.get('jwt_token') or data.get('AK') or data.get('ak')
+                  or data.get('TOKEN') or data.get('token'))
+        if new_ak and data.get('access') in ('1', '2', 1, 2):
+            old_exp = token.expires_at
+            _save_new_ak(token, new_ak)
+            # IndiaMart returns the same JWT but the server-side session is alive.
+            # Extend our stored expiry by 24h from now so keepalive keeps working.
+            token.expires_at = datetime.utcnow() + timedelta(hours=24)
+            db.session.commit()
+            log.warning(f"[IndiaMart checkAuth] Session alive, extended expiry | old_exp={old_exp} | new_exp={token.expires_at}")
+            return new_ak
+        else:
+            log.warning(f"[IndiaMart checkAuth] No token in response. Full response: {data}")
+    except Exception as e:
+        log.warning(f"[IndiaMart checkAuth] Exception: {e}")
+
+    # --- Strategy 2: use stored refresh_token (if IndiaMart ever returned one) ---
+    if token.refresh_token:
+        try:
+            resp = req_lib.post(
+                'https://mapi.indiamart.com/wservce/users/login/',
+                data={**base_data,
+                      'refresh_token': token.refresh_token,
+                      'grant_type': 'refresh_token'},
+                headers=headers,
+                timeout=10
+            )
+            data = resp.json()
+            log.warning(f"[IndiaMart refresh_token] HTTP {resp.status_code} | keys={list(data.keys())} | CODE={data.get('CODE')} | MSG={data.get('MESSAGE') or data.get('message','')}")
+            new_ak = data.get('AK') or data.get('ak') or data.get('TOKEN') or data.get('token')
+            if new_ak:
+                _save_new_ak(token, new_ak)
+                return new_ak
+            else:
+                log.warning(f"[IndiaMart refresh_token] No AK in response. Full response: {data}")
+        except Exception as e:
+            log.warning(f"[IndiaMart refresh_token] Exception: {e}")
+
+    log.warning(f"[IndiaMart refresh] Both strategies failed. Token expires_at={token.expires_at} is_valid={token.is_valid()}")
+    return token.ak_token
+
+
+def _determine_lead_type(c):
+    remarks = (c.get('contact_type_remarks') or '').lower()
+    labels = [l.lower() for l in (c.get('label_name') or [])]
+    if 'missed' in labels or 'missed' in remarks:
+        return 'Missed Call'
+    if c.get('is_call'):
+        return 'Call'
+    if 'buylead' in remarks or 'buy lead' in remarks:
+        return 'Buy Lead'
+    return 'Enquiry'
+
+
+def _do_indiamart_sync(owner_id, created_by_id):
+    """Core sync logic. Returns (new_count, skipped_count, error_msg)"""
+    from models import IndiamartToken, Lead
+    import requests as req_lib
+
+    token = IndiamartToken.query.first()
+    if not token:
+        return 0, 0, 'No IndiaMart token saved.'
+
+    headers = {
+        'user-agent': 'IndiaMart/13.6.4 (com.indiamart.m; build:4; iOS 16.6.0) Alamofire/5.0.0-rc.2',
+        'accept': '*/*',
+        'accept-language': 'en-US;q=1.0',
+    }
+
+    # Attempt refresh proactively (even if expired — checkAuth may still work shortly after expiry)
+    AK = _indiamart_refresh_token(token, headers)
+
+    # Re-fetch token after potential update, then check validity
+    token = IndiamartToken.query.first()
+    if not token.is_valid():
+        return 0, 0, 'IndiaMart token has expired and could not be auto-refreshed. Please recapture from your phone.'
+    GLID = token.glid or '255155317'
+    MOBILE = token.mobile or '9341980003'
+    USER_IP = token.user_ip or ''
+
+    base_params = {
+        'AK': AK,
+        'APP_ACCURACY': '', 'APP_LATITUDE': '', 'APP_LONGITUDE': '',
+        'APP_MODID': 'IOS', 'APP_SCREEN_NAME': 'Api Request',
+        'APP_USER_ID': GLID, 'VALIDATION_GLID': GLID,
+        'VALIDATION_USERCONTACT': MOBILE, 'VALIDATION_USER_IP': USER_IP,
+        'app_version_no': '13.6.4_b_4', 'glusrid': GLID,
+        'modid': 'IOS', 'q': '*', 'rows': '50',
+        'token': 'imobile@15061981', 'version': '2',
+    }
+
+    new_count = 0
+    skipped_count = 0
+    page = 1
+
+    while True:
+        base_params['page'] = str(page)
+        try:
+            resp = req_lib.get(
+                'https://mapi.indiamart.com/wservce/lms/v1/search',
+                params=base_params, headers=headers, timeout=15
+            )
+            data = resp.json()
+        except Exception as e:
+            return new_count, skipped_count, f'API error: {str(e)}'
+
+        if data.get('CODE') == 429:
+            return new_count, skipped_count, 'Rate limited. Try again in a minute.'
+
+        contacts = data.get('response', {}).get('contacts', [])
+        app.logger.info(f"[IndiaMart sync] page={page} contacts_returned={len(contacts)} API_CODE={data.get('CODE')} API_MSG={data.get('MESSAGE','')}")
+        if not contacts:
+            break
+
+        for c in contacts:
+            im_id = str(c.get('im_contact_id', ''))
+            if not im_id:
+                continue
+
+            if Lead.query.filter_by(indiamart_id=im_id).first():
+                skipped_count += 1
+                continue
+
+            # Parse IndiaMart dates
+            def _parse_im_date(s):
+                try:
+                    return datetime.strptime(s, '%Y-%m-%d %H:%M:%S') if s else None
+                except Exception:
+                    return None
+
+            lead = Lead(
+                name=c.get('contacts_name') or None,
+                contact=c.get('contacts_mobile1') or None,
+                city=c.get('contact_city') or None,
+                state=c.get('contact_state') or None,
+                company=c.get('contacts_company') or None,
+                product_interest=c.get('contact_last_product') or None,
+                product_qty=c.get('last_product_qty') or None,
+                product_category=', '.join(c.get('mcat_name') or []) or None,
+                lead_type=_determine_lead_type(c),
+                has_whatsapp=bool(c.get('is_whatsapp')),
+                is_gst_registered=bool(c.get('is_gst')),
+                is_starred=bool(c.get('is_starred_lead')),
+                last_message=c.get('last_message') or None,
+                unread_count=int(c.get('unread_message_cnt') or 0),
+                indiamart_added_date=_parse_im_date(c.get('contacts_add_date')),
+                indiamart_last_contact=_parse_im_date(c.get('last_contact_date')),
+                indiamart_notes=c.get('notes_v2') or None,
+                indiamart_labels=', '.join(c.get('label_name') or []) or None,
+                buyer_glid=c.get('contacts_glid') or None,
+                is_untouched=bool(c.get('is_contact_untouched', True)),
+                origin='IndiaMart',
+                stage='New Lead',
+                indiamart_id=im_id,
+                owner_id=owner_id,
+                created_by=created_by_id,
+            )
+            db.session.add(lead)
+            new_count += 1
+
+        db.session.commit()
+
+        if len(contacts) < 50:
+            break
+        page += 1
+
+    return new_count, skipped_count, None
+
+
+@app.route('/leads/indiamart/refresh-token', methods=['POST'])
+@login_required
+@admin_required
+def indiamart_refresh_token_route():
+    """Manually trigger a token refresh attempt — useful when token is expired."""
+    from models import IndiamartToken
+    token = IndiamartToken.query.first()
+    if not token:
+        return jsonify({'success': False, 'error': 'No token saved yet.'})
+
+    headers = {
+        'user-agent': 'IndiaMart/13.6.4 (com.indiamart.m; build:4; iOS 16.6.0) Alamofire/5.0.0-rc.2',
+        'accept': '*/*',
+        'accept-language': 'en-US;q=1.0',
+    }
+    old_ak = token.ak_token
+    _indiamart_refresh_token(token, headers)
+    token = IndiamartToken.query.first()
+
+    if token.ak_token != old_ak:
+        return jsonify({
+            'success': True,
+            'message': 'Token refreshed successfully!',
+            'expires_at': token.expires_at.isoformat() if token.expires_at else None,
+        })
+    elif token.is_valid():
+        return jsonify({
+            'success': True,
+            'message': 'Token is still valid — no refresh needed.',
+            'expires_at': token.expires_at.isoformat() if token.expires_at else None,
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'error': 'Could not refresh token. IndiaMart rejected the request — please recapture via mitmproxy.',
+        })
+
+
+@app.route('/leads/indiamart/sync', methods=['POST'])
+@login_required
+def indiamart_sync():
+    new_count, skipped_count, err = _do_indiamart_sync(None, current_user.id)
+    if err:
+        flash(err, 'warning' if 'expired' in err.lower() or 'rate' in err.lower() else 'danger')
+    else:
+        flash(f'IndiaMart sync complete: {new_count} new leads imported, {skipped_count} already existed.', 'success')
+    return redirect(url_for('leads_list'))
+
+
+@app.route('/leads/<int:id>/note', methods=['POST'])
+@login_required
+def lead_save_note(id):
+    """Quick note save for a lead"""
+    from models import Lead, LeadHistory
+    lead = Lead.query.get_or_404(id)
+    note_text = request.form.get('notes', '')
+    if note_text != (lead.notes or ''):
+        lead.notes = note_text
+        lead.is_untouched = False
+        if note_text:
+            db.session.add(LeadHistory(lead_id=lead.id, user_id=current_user.id,
+                action='note', description=note_text))
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/leads/<int:id>/set-customer-type', methods=['POST'])
+@login_required
+def lead_set_customer_type(id):
+    from models import Lead
+    lead = Lead.query.get_or_404(id)
+    customer_type = request.form.get('customer_type', '').strip()
+    lead.customer_type = customer_type if customer_type in ('B2B', 'B2C') else None
+    db.session.commit()
+    return jsonify({'success': True, 'customer_type': lead.customer_type})
+
+
+def _do_facebook_sync(created_by_id):
+    """Fetch leads from all Lead Ad forms on the Facebook Page and save new ones.
+    Returns (new_count, skipped_count, error_msg).
+    """
+    import requests as req_lib
+    from models import Lead
+
+    access_token = os.getenv('FB_PAGE_ACCESS_TOKEN', '')
+    if not access_token:
+        return 0, 0, 'FB_PAGE_ACCESS_TOKEN not configured in .env'
+
+    new_count = 0
+    skipped_count = 0
+
+    # Use FB_PAGE_ACCESS_TOKEN directly as a Page Access Token with the Page ID.
+    # To generate a proper Page Access Token:
+    # 1. Go to: https://developers.facebook.com/tools/explorer/
+    # 2. Select your App → Generate Token → add permissions: leads_retrieval, pages_read_engagement
+    # 3. Switch token type to "Page Access Token" and select your page
+    # 4. Copy the token into FB_PAGE_ACCESS_TOKEN in .env
+    page_id = os.getenv('FB_PAGE_ID', '')
+    page_token = access_token
+
+    if not page_id:
+        return 0, 0, 'FB_PAGE_ID not set in .env. Add your Facebook Page ID.'
+
+    # Step 2 — get all Lead Ad forms for the resolved Page
+    try:
+        resp = req_lib.get(
+            f'https://graph.facebook.com/v19.0/{page_id}/leadgen_forms',
+            params={'access_token': page_token, 'fields': 'id,name', 'limit': 100},
+            timeout=15
+        )
+        forms_data = resp.json()
+    except Exception as e:
+        return 0, 0, f'Facebook API error (forms): {str(e)}'
+
+    if 'error' in forms_data:
+        msg = forms_data['error'].get('message', 'Unknown error')
+        return 0, 0, f'Facebook API: {msg}'
+
+    forms = forms_data.get('data', [])
+    if not forms:
+        return 0, 0, 'No Lead Ad forms found on this Page.'
+
+    # Step 2 — for each form, paginate through all leads
+    for form in forms:
+        form_id = form.get('id')
+        form_name = form.get('name', '')
+        url = f'https://graph.facebook.com/v19.0/{form_id}/leads'
+        params = {
+            'access_token': page_token,
+            'fields': 'id,created_time,field_data',
+            'limit': 100,
+        }
+
+        while url:
+            try:
+                resp = req_lib.get(url, params=params, timeout=15)
+                data = resp.json()
+            except Exception as e:
+                app.logger.error(f'[Facebook sync] Error fetching leads for form {form_id}: {e}')
+                break
+
+            if 'error' in data:
+                app.logger.error(f'[Facebook sync] API error for form {form_id}: {data["error"]}')
+                break
+
+            for lead_entry in data.get('data', []):
+                fb_lead_id = str(lead_entry.get('id', ''))
+                if not fb_lead_id:
+                    continue
+
+                # Dedup check
+                if Lead.query.filter_by(facebook_lead_id=fb_lead_id).first():
+                    skipped_count += 1
+                    continue
+
+                # Parse field_data: [{"name": "full_name", "values": ["John"]}, ...]
+                fields = {f['name']: (f['values'][0] if f.get('values') else '')
+                          for f in lead_entry.get('field_data', [])}
+
+                name = (fields.get('full_name') or fields.get('name') or
+                        fields.get('first_name', '') + ' ' + fields.get('last_name', '')).strip() or None
+                phone = (fields.get('phone_number') or fields.get('phone') or
+                         fields.get('mobile') or fields.get('contact')) or None
+                email = fields.get('email') or None
+                city  = fields.get('city') or None
+                state = fields.get('state') or None
+
+                # Build notes from form name + any extra fields
+                notes = f'Ad Form: {form_name}' if form_name else None
+
+                lead = Lead(
+                    name=name,
+                    contact=phone,
+                    email=email,
+                    city=city,
+                    state=state,
+                    notes=notes,
+                    origin='Facebook',
+                    stage='New Lead',
+                    lead_type='Enquiry',
+                    facebook_lead_id=fb_lead_id,
+                    owner_id=None,
+                    assigned_to_id=None,
+                    created_by=created_by_id,
+                )
+                db.session.add(lead)
+                new_count += 1
+
+            db.session.commit()
+
+            # Follow pagination cursor
+            next_page = data.get('paging', {}).get('next')
+            if next_page:
+                url = next_page
+                params = {}  # next URL already contains all params
+            else:
+                break
+
+    return new_count, skipped_count, None
+
+
+@app.route('/leads/facebook/sync', methods=['POST'])
+@login_required
+def facebook_sync():
+    """Manual sync — triggered by clicking the Sync Facebook button."""
+    new_count, skipped_count, err = _do_facebook_sync(current_user.id)
+    if err:
+        flash(f'Facebook sync failed: {err}', 'danger')
+    else:
+        flash(f'Facebook sync complete: {new_count} new leads imported, {skipped_count} already existed.', 'success')
+    return redirect(url_for('leads_list'))
+
+
+@app.route('/api/leads/facebook-sync', methods=['GET'])
+def facebook_cron_sync():
+    """Cron endpoint — auto-sync Facebook leads every hour."""
+    cron_secret = request.headers.get('X-Cron-Secret') or request.args.get('secret')
+    expected_secret = os.getenv('CRON_SECRET')
+    if not expected_secret or cron_secret != expected_secret:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    admin = User.query.filter_by(role='admin').first() or User.query.first()
+    if not admin:
+        return jsonify({'error': 'No users found'}), 500
+
+    new_count, skipped_count, err = _do_facebook_sync(admin.id)
+    if err:
+        return jsonify({'success': False, 'error': err}), 500
+    return jsonify({'success': True, 'new': new_count, 'skipped': skipped_count}), 200
+
+
+@app.route('/api/leads/indiamart-sync', methods=['GET'])
+def indiamart_cron_sync():
+    """Cron endpoint — auto-sync IndiaMart leads every hour"""
+    cron_secret = request.headers.get('X-Cron-Secret') or request.args.get('secret')
+    expected_secret = os.getenv('CRON_SECRET')
+    if not expected_secret or cron_secret != expected_secret:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    # Use first admin user as owner
+    admin = User.query.filter_by(role='admin').first() or User.query.first()
+    if not admin:
+        return jsonify({'error': 'No users found'}), 500
+
+    new_count, skipped_count, err = _do_indiamart_sync(None, admin.id)
+    if err:
+        return jsonify({'success': False, 'error': err}), 500
+    return jsonify({'success': True, 'new': new_count, 'skipped': skipped_count}), 200
+
+
+@app.route('/api/leads/indiamart-keepalive', methods=['GET'])
+def indiamart_keepalive():
+    """
+    Cron endpoint — call every 12 hours to keep the IndiaMart token alive.
+    Only refreshes the token; does NOT import leads.
+    Must be called while the token is still valid (before the 24hr expiry).
+    """
+    cron_secret = request.headers.get('X-Cron-Secret') or request.args.get('secret')
+    expected_secret = os.getenv('CRON_SECRET')
+    if not expected_secret or cron_secret != expected_secret:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    from models import IndiamartToken
+    token = IndiamartToken.query.first()
+    if not token:
+        return jsonify({'success': False, 'error': 'No token saved.'}), 400
+
+    headers = {
+        'user-agent': 'IndiaMart/13.6.4 (com.indiamart.m; build:4; iOS 16.6.0) Alamofire/5.0.0-rc.2',
+        'accept': '*/*',
+        'accept-language': 'en-US;q=1.0',
+    }
+
+    old_ak = token.ak_token
+    _indiamart_refresh_token(token, headers)
+    token = IndiamartToken.query.first()
+
+    refreshed = token.ak_token != old_ak
+    return jsonify({
+        'success': True,
+        'refreshed': refreshed,
+        'token_valid': token.is_valid(),
+        'expires_at': token.expires_at.isoformat() if token.expires_at else None,
+    }), 200
+
+
+# ============================================================================
+# PURCHASE INVOICES
+# ============================================================================
+
+def _next_pi_serial():
+    """Generate next serial number PI-001, PI-002 …"""
+    last = PurchaseInvoice.query.order_by(PurchaseInvoice.id.desc()).first()
+    if not last:
+        return 'PI-001'
+    try:
+        num = int(last.serial_number.split('-')[1]) + 1
+    except Exception:
+        num = PurchaseInvoice.query.count() + 1
+    return f'PI-{num:03d}'
+
+
+@app.route('/tally')
+@login_required
+def tally_index():
+    from models import Quote, PurchaseInvoice, Supplier, User as UserModel
+
+    date_from       = request.args.get('date_from', '')
+    date_to         = request.args.get('date_to', '')
+    salesman_id     = request.args.get('salesman_id', '')
+    client_name     = request.args.get('client_name', '').strip()
+    supplier_id     = request.args.get('supplier_id', '')
+    delivery_status = request.args.get('delivery_status', '')
+
+    q = Quote.query.filter(Quote.status == 'Accepted')
+    if date_from:
+        q = q.filter(Quote.quote_date >= date_from)
+    if date_to:
+        q = q.filter(Quote.quote_date <= date_to)
+    if salesman_id:
+        q = q.filter(Quote.created_by == int(salesman_id))
+    if client_name:
+        q = q.filter(Quote.customer_name.ilike(f'%{client_name}%'))
+    if delivery_status:
+        q = q.filter(Quote.delivery_status == delivery_status)
+
+    quotes = q.order_by(Quote.quote_date.desc()).all()
+
+    rows = []
+    for quote in quotes:
+        pis = PurchaseInvoice.query.filter_by(quote_id=quote.id).all()
+
+        if supplier_id and not any(str(pi.supplier_id) == supplier_id for pi in pis):
+            continue
+
+        sale_value    = float(quote.total or 0)
+        pi_amount     = sum(float(pi.invoice_amount or 0) for pi in pis)
+        pi_paid       = sum(float(pi.amount_paid    or 0) for pi in pis)
+        misc          = float(quote.misc_purchases or 0)
+        total_cost    = pi_amount + misc
+        profit        = sale_value - total_cost
+        cash_recv     = float(quote.cash_received   or 0)
+        online_recv   = float(quote.amount_received or 0)
+        total_recv    = cash_recv + online_recv
+
+        rows.append({
+            'quote':             quote,
+            'purchase_invoices': pis,
+            'sale_amount':       sale_value,
+            'pi_amount':         pi_amount,
+            'pi_paid':           pi_paid,
+            'pi_balance':        pi_amount - pi_paid,
+            'misc_purchases':    misc,
+            'total_cost':        total_cost,
+            'profit':            profit,
+            'margin':            (profit / sale_value * 100) if sale_value > 0 else 0,
+            'cash_received':     cash_recv,
+            'online_received':   online_recv,
+            'amount_received':   total_recv,
+            'client_balance':    sale_value - total_recv,
+        })
+
+    totals = {
+        'sales':             sum(r['sale_amount']     for r in rows),
+        'pi_amount':         sum(r['pi_amount']       for r in rows),
+        'misc':              sum(r['misc_purchases']  for r in rows),
+        'total_cost':        sum(r['total_cost']      for r in rows),
+        'profit':            sum(r['profit']          for r in rows),
+        'pi_paid':           sum(r['pi_paid']         for r in rows),
+        'pi_balance':        sum(r['pi_balance']      for r in rows),
+        'cash_received':     sum(r['cash_received']   for r in rows),
+        'online_received':   sum(r['online_received'] for r in rows),
+        'amount_received':   sum(r['amount_received'] for r in rows),
+        'client_balance':    sum(r['client_balance']  for r in rows),
+        'unprocessed_count': sum(1 for r in rows if not r['purchase_invoices']),
+    }
+
+    salesmen  = UserModel.query.order_by(UserModel.username).all()
+    suppliers = Supplier.query.order_by(Supplier.name).all()
+
+    filters = {
+        'date_from':       date_from,
+        'date_to':         date_to,
+        'salesman_id':     salesman_id,
+        'client_name':     client_name,
+        'supplier_id':     supplier_id,
+        'delivery_status': delivery_status,
+    }
+
+    return render_template('tally/index.html', rows=rows, totals=totals,
+                           salesmen=salesmen, suppliers=suppliers, filters=filters)
+
+
+@app.route('/quotes/<int:id>/tally-update', methods=['POST'])
+@login_required
+def quote_tally_update(id):
+    from models import Quote
+    quote = Quote.query.get_or_404(id)
+    quote.delivery_status = request.form.get('delivery_status', quote.delivery_status)
+    online_recv = request.form.get('amount_received', '').strip()
+    cash_recv   = request.form.get('cash_received',   '').strip()
+    misc        = request.form.get('misc_purchases',  '').strip()
+    quote.amount_received = float(online_recv) if online_recv else quote.amount_received
+    quote.cash_received   = float(cash_recv)   if cash_recv   else quote.cash_received
+    quote.misc_purchases  = float(misc)        if misc        else quote.misc_purchases
+    db.session.commit()
+    flash('Tally info updated.', 'success')
+    return redirect(url_for('quote_view', id=id))
+
+
+@app.route('/purchase-invoices')
+@login_required
+def purchase_invoices_list():
+    supplier_filter  = request.args.get('supplier', '')
+    project_filter   = request.args.get('project', '')
+    type_filter      = request.args.get('invoice_type', '')
+    status_filter    = request.args.get('status', '')
+
+    query = PurchaseInvoice.query
+
+    if supplier_filter:
+        query = query.filter(PurchaseInvoice.supplier_id == supplier_filter)
+    if project_filter:
+        query = query.filter(PurchaseInvoice.project_id == project_filter)
+    if type_filter:
+        query = query.filter(PurchaseInvoice.invoice_type == type_filter)
+    if status_filter:
+        query = query.filter(PurchaseInvoice.status == status_filter)
+
+    invoices  = query.order_by(PurchaseInvoice.id.desc()).all()
+    suppliers = Supplier.query.filter_by(is_active=True).order_by(Supplier.name).all()
+    projects  = Project.query.order_by(Project.name).all()
+
+    return render_template('purchase_invoices/list.html',
+                           invoices=invoices,
+                           suppliers=suppliers,
+                           projects=projects,
+                           supplier_filter=supplier_filter,
+                           project_filter=project_filter,
+                           type_filter=type_filter,
+                           status_filter=status_filter)
+
+
+@app.route('/purchase-invoices/new', methods=['GET', 'POST'])
+@login_required
+@manager_or_admin_required
+def purchase_invoice_new():
+    from models import Quote
+    suppliers      = Supplier.query.filter_by(is_active=True).order_by(Supplier.name).all()
+    accepted_quotes = Quote.query.filter_by(status='Accepted').order_by(Quote.quote_date.desc()).all()
+
+    if request.method == 'POST':
+        supplier_id    = request.form.get('supplier_id', '').strip()
+        quote_id       = request.form.get('quote_id', '').strip()
+        bill_number    = request.form.get('bill_number', '').strip()
+        invoice_type   = request.form.get('invoice_type', 'GST')
+        invoice_amount = request.form.get('invoice_amount', '').strip()
+        amount_paid    = request.form.get('amount_paid', '0').strip()
+        notes          = request.form.get('notes', '').strip()
+        bill_image     = request.files.get('bill_image')
+
+        errors = []
+        if not supplier_id:
+            errors.append('Vendor is required.')
+        if not quote_id:
+            errors.append('Linked Quotation is required.')
+        if not bill_number:
+            errors.append('Bill Number is required.')
+        if not bill_image or bill_image.filename == '':
+            errors.append('Bill Image is required.')
+
+        if errors:
+            for e in errors:
+                flash(e, 'danger')
+            return render_template('purchase_invoices/form.html',
+                                   suppliers=suppliers, accepted_quotes=accepted_quotes, invoice=None)
+
+        bill_image_url = None
+        try:
+            from utils.s3_upload import S3Uploader
+            from werkzeug.utils import secure_filename
+            uploader  = S3Uploader()
+            filename  = secure_filename(bill_image.filename)
+            ext       = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'jpg'
+            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            s3_key    = f"purchase-invoices/{timestamp}_{filename}"
+            content_types = {'pdf': 'application/pdf', 'jpg': 'image/jpeg',
+                             'jpeg': 'image/jpeg', 'png': 'image/png'}
+            content_type = content_types.get(ext, 'application/octet-stream')
+            uploader.s3_client.upload_fileobj(
+                bill_image, uploader.bucket_name, s3_key,
+                ExtraArgs={'ContentType': content_type}
+            )
+            bill_image_url = f"https://{uploader.bucket_name}.s3.{uploader.region}.amazonaws.com/{s3_key}"
+        except Exception as e:
+            flash(f'Image upload failed: {e}', 'warning')
+
+        invoice = PurchaseInvoice(
+            serial_number  = _next_pi_serial(),
+            supplier_id    = int(supplier_id),
+            quote_id       = int(quote_id),
+            bill_number    = bill_number,
+            bill_image_url = bill_image_url,
+            invoice_type   = invoice_type,
+            invoice_amount = float(invoice_amount) if invoice_amount else None,
+            amount_paid    = float(amount_paid) if amount_paid else 0.0,
+            notes          = notes or None,
+            created_by     = current_user.id,
+        )
+        db.session.add(invoice)
+        db.session.commit()
+        flash(f'Purchase Invoice {invoice.serial_number} created successfully.', 'success')
+        return redirect(url_for('purchase_invoices_list'))
+
+    return render_template('purchase_invoices/form.html',
+                           suppliers=suppliers, accepted_quotes=accepted_quotes, invoice=None)
+
+
+@app.route('/purchase-invoices/<int:id>')
+@login_required
+def purchase_invoice_view(id):
+    invoice = PurchaseInvoice.query.get_or_404(id)
+    bill_image_presigned = None
+    if invoice.bill_image_url:
+        try:
+            from utils.s3_upload import S3Uploader
+            uploader = S3Uploader()
+            s3_key = invoice.bill_image_url.split(f"{uploader.bucket_name}.s3.{uploader.region}.amazonaws.com/")[1]
+            bill_image_presigned = uploader.s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': uploader.bucket_name, 'Key': s3_key},
+                ExpiresIn=3600
+            )
+        except Exception:
+            bill_image_presigned = invoice.bill_image_url
+    return render_template('purchase_invoices/view.html', invoice=invoice, bill_image_presigned=bill_image_presigned)
+
+
+@app.route('/purchase-invoices/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+@manager_or_admin_required
+def purchase_invoice_edit(id):
+    from models import Quote
+    invoice         = PurchaseInvoice.query.get_or_404(id)
+    suppliers       = Supplier.query.filter_by(is_active=True).order_by(Supplier.name).all()
+    accepted_quotes = Quote.query.filter_by(status='Accepted').order_by(Quote.quote_date.desc()).all()
+
+    if request.method == 'POST':
+        invoice.supplier_id  = int(request.form.get('supplier_id'))
+        qid = request.form.get('quote_id', '').strip()
+        invoice.quote_id     = int(qid) if qid else None
+        invoice.bill_number  = request.form.get('bill_number', '').strip()
+        invoice.invoice_type = request.form.get('invoice_type', 'GST')
+        amt  = request.form.get('invoice_amount', '').strip()
+        paid = request.form.get('amount_paid', '0').strip()
+        invoice.invoice_amount = float(amt)  if amt  else None
+        invoice.amount_paid    = float(paid) if paid else 0.0
+        invoice.notes          = request.form.get('notes', '').strip() or None
+
+        new_image = request.files.get('bill_image')
+        if new_image and new_image.filename != '':
+            try:
+                from utils.s3_upload import S3Uploader
+                from werkzeug.utils import secure_filename
+                uploader  = S3Uploader()
+                filename  = secure_filename(new_image.filename)
+                ext       = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'jpg'
+                timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                s3_key    = f"purchase-invoices/{timestamp}_{filename}"
+                content_types = {'pdf': 'application/pdf', 'jpg': 'image/jpeg',
+                                 'jpeg': 'image/jpeg', 'png': 'image/png'}
+                content_type = content_types.get(ext, 'application/octet-stream')
+                uploader.s3_client.upload_fileobj(
+                    new_image, uploader.bucket_name, s3_key,
+                    ExtraArgs={'ContentType': content_type}
+                )
+                invoice.bill_image_url = f"https://{uploader.bucket_name}.s3.{uploader.region}.amazonaws.com/{s3_key}"
+            except Exception as e:
+                flash(f'Image upload failed: {e}', 'warning')
+
+        db.session.commit()
+        flash('Purchase Invoice updated successfully.', 'success')
+        return redirect(url_for('purchase_invoice_view', id=invoice.id))
+
+    bill_image_presigned = None
+    if invoice.bill_image_url:
+        try:
+            from utils.s3_upload import S3Uploader
+            uploader = S3Uploader()
+            s3_key = invoice.bill_image_url.split(f"{uploader.bucket_name}.s3.{uploader.region}.amazonaws.com/")[1]
+            bill_image_presigned = uploader.s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': uploader.bucket_name, 'Key': s3_key},
+                ExpiresIn=3600
+            )
+        except Exception:
+            bill_image_presigned = invoice.bill_image_url
+    return render_template('purchase_invoices/form.html',
+                           suppliers=suppliers, accepted_quotes=accepted_quotes, invoice=invoice,
+                           bill_image_presigned=bill_image_presigned)
+
+
+@app.route('/purchase-invoices/<int:id>/delete', methods=['POST'])
+@login_required
+@admin_required
+def purchase_invoice_delete(id):
+    invoice = PurchaseInvoice.query.get_or_404(id)
+    db.session.delete(invoice)
+    db.session.commit()
+    flash('Purchase Invoice deleted.', 'success')
+    return redirect(url_for('purchase_invoices_list'))
+
+
+# Quick-add vendor (inline modal)
+@app.route('/api/suppliers/quick-add', methods=['POST'])
+@login_required
+@manager_or_admin_required
+def supplier_quick_add():
+    name  = request.form.get('name',  '').strip()
+    phone = request.form.get('phone', '').strip()
+    if not name:
+        return jsonify({'success': False, 'error': 'Vendor name is required.'}), 400
+    if not phone:
+        return jsonify({'success': False, 'error': 'Phone number is required.'}), 400
+    if Supplier.query.filter_by(name=name).first():
+        return jsonify({'success': False, 'error': 'Vendor already exists.'}), 400
+    supplier = Supplier(
+        name=name,
+        phone=phone,
+        gstin=request.form.get('gstin', '').strip() or None,
+        address=request.form.get('address', '').strip() or None,
+        is_active=True,
+    )
+    db.session.add(supplier)
+    db.session.commit()
+    return jsonify({'success': True, 'id': supplier.id, 'name': supplier.name})
+
+
+# Quick-add project (inline modal)
+@app.route('/api/projects/quick-add', methods=['POST'])
+@login_required
+@manager_or_admin_required
+def project_quick_add():
+    name = request.form.get('name', '').strip()
+    if not name:
+        return jsonify({'success': False, 'error': 'Project name is required.'}), 400
+    project = Project(
+        name=name,
+        status='Not Started',
+        owner_id=current_user.id,
+    )
+    db.session.add(project)
+    db.session.commit()
+    return jsonify({'success': True, 'id': project.id, 'name': project.name})
+
+
+# ============================================================================
+# MEETINGS MODULE
+# ============================================================================
+
+MEETING_TYPES = ['Lead Visit', 'Site Survey', 'Installation', 'Follow-up', 'General']
+MEETING_STATUSES = ['Scheduled', 'Checked In', 'Completed', 'Cancelled']
+
+
+@app.route('/meetings')
+@login_required
+def meetings_list():
+    """List all meetings — manager/admin see all, promotor sees own"""
+    from models import Meeting, User
+
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    status_filter = request.args.get('status', '')
+    type_filter = request.args.get('meeting_type', '')
+    user_filter = request.args.get('user_id', '')
+
+    query = Meeting.query
+    if not current_user.is_manager_or_admin():
+        query = query.filter(Meeting.user_id == current_user.id)
+    elif user_filter:
+        try:
+            query = query.filter(Meeting.user_id == int(user_filter))
+        except ValueError:
+            pass
+
+    if status_filter:
+        query = query.filter(Meeting.status == status_filter)
+    if type_filter:
+        query = query.filter(Meeting.meeting_type == type_filter)
+    if date_from:
+        try:
+            query = query.filter(Meeting.scheduled_at >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            query = query.filter(Meeting.scheduled_at <= datetime.strptime(date_to + ' 23:59:59', '%Y-%m-%d %H:%M:%S'))
+        except ValueError:
+            pass
+
+    # MySQL-compatible NULL-last ordering: IS NULL sorts 0 (non-null) before 1 (null)
+    meetings = query.order_by(Meeting.scheduled_at.is_(None), Meeting.scheduled_at.desc(), Meeting.created_at.desc()).all()
+    users = User.query.filter_by(is_active=True).order_by(User.username).all() if current_user.is_manager_or_admin() else []
+
+    return render_template('meetings/list.html',
+                           meetings=meetings,
+                           users=users,
+                           meeting_types=MEETING_TYPES,
+                           meeting_statuses=MEETING_STATUSES)
+
+
+@app.route('/meetings/new', methods=['GET', 'POST'])
+@login_required
+def meeting_new():
+    """Create a new meeting"""
+    from models import Meeting, Lead, User
+
+    if request.method == 'POST':
+        try:
+            data = request.form
+            scheduled_str = data.get('scheduled_at', '').strip()
+            scheduled_at = datetime.strptime(scheduled_str, '%Y-%m-%dT%H:%M') if scheduled_str else None
+
+            lead_id = int(data.get('lead_id')) if data.get('lead_id') else None
+            project_id = int(data.get('project_id')) if data.get('project_id') else None
+            user_id = int(data.get('user_id')) if data.get('user_id') else current_user.id
+
+            meeting = Meeting(
+                title=data.get('title', '').strip(),
+                user_id=user_id,
+                created_by=current_user.id,
+                lead_id=lead_id,
+                project_id=project_id,
+                client_name=data.get('client_name', '').strip() or None,
+                client_phone=data.get('client_phone', '').strip() or None,
+                client_address=data.get('client_address', '').strip() or None,
+                meeting_type=data.get('meeting_type', 'Lead Visit'),
+                scheduled_at=scheduled_at,
+                notes=data.get('notes', '').strip() or None,
+                status='Scheduled',
+            )
+            db.session.add(meeting)
+            db.session.commit()
+            flash(f'Meeting "{meeting.title}" created successfully!', 'success')
+            return redirect(url_for('meeting_view', id=meeting.id))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error creating meeting: {str(e)}', 'danger')
+
+    leads = Lead.query.order_by(Lead.name).all()
+    projects = Project.query.order_by(Project.name).all()
+    users = User.query.filter_by(is_active=True).order_by(User.username).all() if current_user.is_manager_or_admin() else [current_user]
+    return render_template('meetings/form.html', title='New Meeting',
+                           meeting=None, leads=leads, projects=projects,
+                           users=users, meeting_types=MEETING_TYPES)
+
+
+@app.route('/meetings/<int:id>')
+@login_required
+def meeting_view(id):
+    """View meeting details"""
+    from models import Meeting
+    meeting = Meeting.query.get_or_404(id)
+    if not current_user.is_manager_or_admin() and meeting.user_id != current_user.id:
+        flash('Access denied.', 'danger')
+        return redirect(url_for('meetings_list'))
+    return render_template('meetings/view.html', meeting=meeting)
+
+
+@app.route('/meetings/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+def meeting_edit(id):
+    """Edit a meeting"""
+    from models import Meeting, Lead, User
+    meeting = Meeting.query.get_or_404(id)
+
+    if not current_user.is_manager_or_admin() and meeting.user_id != current_user.id:
+        flash('Access denied.', 'danger')
+        return redirect(url_for('meetings_list'))
+
+    if request.method == 'POST':
+        try:
+            data = request.form
+            scheduled_str = data.get('scheduled_at', '').strip()
+            meeting.scheduled_at = datetime.strptime(scheduled_str, '%Y-%m-%dT%H:%M') if scheduled_str else None
+            meeting.title = data.get('title', '').strip()
+            meeting.meeting_type = data.get('meeting_type', 'Lead Visit')
+            meeting.lead_id = int(data.get('lead_id')) if data.get('lead_id') else None
+            meeting.project_id = int(data.get('project_id')) if data.get('project_id') else None
+            if current_user.is_manager_or_admin():
+                meeting.user_id = int(data.get('user_id')) if data.get('user_id') else meeting.user_id
+            meeting.client_name = data.get('client_name', '').strip() or None
+            meeting.client_phone = data.get('client_phone', '').strip() or None
+            meeting.client_address = data.get('client_address', '').strip() or None
+            meeting.notes = data.get('notes', '').strip() or None
+            meeting.outcome = data.get('outcome', '').strip() or None
+            meeting.status = data.get('status', meeting.status)
+            meeting.updated_at = datetime.utcnow()
+            db.session.commit()
+            flash('Meeting updated successfully!', 'success')
+            return redirect(url_for('meeting_view', id=meeting.id))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error updating meeting: {str(e)}', 'danger')
+
+    leads = Lead.query.order_by(Lead.name).all()
+    projects = Project.query.order_by(Project.name).all()
+    users = User.query.filter_by(is_active=True).order_by(User.username).all() if current_user.is_manager_or_admin() else [current_user]
+    return render_template('meetings/form.html', title='Edit Meeting',
+                           meeting=meeting, leads=leads, projects=projects,
+                           users=users, meeting_types=MEETING_TYPES,
+                           meeting_statuses=MEETING_STATUSES)
+
+
+@app.route('/meetings/<int:id>/delete', methods=['POST'])
+@login_required
+def meeting_delete(id):
+    """Delete a meeting"""
+    from models import Meeting
+    meeting = Meeting.query.get_or_404(id)
+    if not current_user.is_manager_or_admin() and meeting.user_id != current_user.id:
+        flash('Access denied.', 'danger')
+        return redirect(url_for('meetings_list'))
+    try:
+        db.session.delete(meeting)
+        db.session.commit()
+        flash('Meeting deleted.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error: {str(e)}', 'danger')
+    return redirect(url_for('meetings_list'))
+
+
+@app.route('/meetings/<int:id>/checkin', methods=['POST'])
+@login_required
+def meeting_checkin(id):
+    """AJAX: GPS check-in for a meeting"""
+    from models import Meeting
+    meeting = Meeting.query.get_or_404(id)
+    if meeting.user_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Only the assigned person can check in'}), 403
+    try:
+        meeting.check_in_lat = float(request.form.get('lat'))
+        meeting.check_in_lng = float(request.form.get('lng'))
+        meeting.check_in_accuracy = float(request.form.get('accuracy', 0))
+        meeting.check_in_address = request.form.get('address', '')[:500]
+        meeting.check_in_time = datetime.utcnow()
+        meeting.status = 'Checked In'
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/meetings/<int:id>/checkout', methods=['POST'])
+@login_required
+def meeting_checkout(id):
+    """AJAX: GPS check-out for a meeting"""
+    from models import Meeting
+    meeting = Meeting.query.get_or_404(id)
+    if meeting.user_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Only the assigned person can check out'}), 403
+    try:
+        meeting.check_out_lat = float(request.form.get('lat', 0)) or None
+        meeting.check_out_lng = float(request.form.get('lng', 0)) or None
+        meeting.check_out_time = datetime.utcnow()
+        meeting.outcome = request.form.get('outcome', '').strip() or meeting.outcome
+        meeting.status = 'Completed'
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/meetings/<int:id>/upload-photo', methods=['POST'])
+@login_required
+def meeting_upload_photo(id):
+    """Upload a photo for a meeting"""
+    from models import Meeting, MeetingPhoto
+    meeting = Meeting.query.get_or_404(id)
+    if not current_user.is_manager_or_admin() and meeting.user_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+
+    file = request.files.get('photo')
+    if not file or not file.filename:
+        return jsonify({'success': False, 'error': 'No file provided'}), 400
+
+    try:
+        import boto3
+        from werkzeug.utils import secure_filename
+        bucket = os.getenv('AWS_BUCKET_NAME', 'glassyimages')
+        region = os.getenv('AWS_REGION', 'ap-south-1')
+        s3 = boto3.client('s3', region_name=region)
+        filename = f"meeting_photos/{meeting.id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{secure_filename(file.filename)}"
+        s3.upload_fileobj(file, bucket, filename, ExtraArgs={'ContentType': file.content_type or 'image/jpeg'})
+        url = f"https://{bucket}.s3.{region}.amazonaws.com/{filename}"
+
+        photo = MeetingPhoto(
+            meeting_id=meeting.id,
+            photo_url=url,
+            caption=request.form.get('caption', '').strip() or None,
+            uploaded_by=current_user.id,
+        )
+        db.session.add(photo)
+        db.session.commit()
+        return jsonify({'success': True, 'url': url, 'photo_id': photo.id})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/meetings/<int:id>/delete-photo/<int:photo_id>', methods=['POST'])
+@login_required
+def meeting_delete_photo(id, photo_id):
+    """Delete a meeting photo"""
+    from models import MeetingPhoto
+    photo = MeetingPhoto.query.get_or_404(photo_id)
+    if photo.meeting_id != id:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    try:
+        db.session.delete(photo)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/meetings/map')
+@login_required
+@manager_or_admin_required
+def meetings_map():
+    """Map view of all field visits (manager/admin only)"""
+    from models import Meeting, User
+
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    user_filter = request.args.get('user_id', '')
+
+    query = Meeting.query.filter(Meeting.check_in_lat.isnot(None))
+    if user_filter:
+        try:
+            query = query.filter(Meeting.user_id == int(user_filter))
+        except ValueError:
+            pass
+    if date_from:
+        try:
+            query = query.filter(Meeting.check_in_time >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            query = query.filter(Meeting.check_in_time <= datetime.strptime(date_to + ' 23:59:59', '%Y-%m-%d %H:%M:%S'))
+        except ValueError:
+            pass
+
+    meetings = query.order_by(Meeting.check_in_time.desc()).all()
+    users = User.query.filter_by(is_active=True).order_by(User.username).all()
+
+    meetings_json = []
+    for m in meetings:
+        ist_time = (m.check_in_time + timedelta(hours=5, minutes=30)).strftime('%d %b %Y, %I:%M %p') if m.check_in_time else ''
+        meetings_json.append({
+            'id': m.id,
+            'title': m.title,
+            'user': m.user.username if m.user else '',
+            'type': m.meeting_type,
+            'client': m.client_name or (m.lead.name if m.lead else ''),
+            'lat': m.check_in_lat,
+            'lng': m.check_in_lng,
+            'address': m.check_in_address or '',
+            'time': ist_time,
+            'status': m.status,
+        })
+
+    return render_template('meetings/map.html',
+                           meetings_json=meetings_json,
+                           users=users,
+                           total=len(meetings))
+
+
+# ============================================================================
 # RUN APPLICATION
 # ============================================================================
+
+def _run_migrations():
+    """Safe ALTER TABLE migrations for columns added after initial schema creation."""
+    migrations = [
+        "ALTER TABLE leads ADD COLUMN facebook_lead_id VARCHAR(50) NULL UNIQUE",
+    ]
+    with db.engine.connect() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(db.text(sql))
+                conn.commit()
+            except Exception:
+                pass  # Column already exists — ignore
+
 
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        _run_migrations()
     app.run(debug=True, host='0.0.0.0', port=8080)

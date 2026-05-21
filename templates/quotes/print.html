@@ -226,7 +226,7 @@
             <div class="company-name">GLASSY INDIA</div>
             <div class="company-details">
                 VETROVA TECH SERVICES PRIVATE LIMITED<br>
-                Address: Bangalore Seley Glass - A/2, Bommasandra Industrial Area, Bengaluru, Karnataka 560099<br>
+                Address: 6-L5, Attibele Industrial Area, Itchangur, Karnataka 562107<br>
                 ☎ +91 85500 11196 | 📧 rohit@glassy.in | 🌐 www.glassy.in
             </div>
         </div>
@@ -257,6 +257,7 @@
                     <div>{{ quote.customer_city }}{% if quote.customer_city and quote.customer_state %}, {% endif %}{{
                         quote.customer_state }}</div>
                     {% endif %}
+                    {% if quote.customer_gst %}<div>GST: {{ quote.customer_gst }}</div>{% endif %}
                 </div>
                 <div class="info-cell" style="width: 50%;">
                     <div class="info-label">Dispatch to:</div>
@@ -269,13 +270,16 @@
         <!-- Line Items Table -->
         {% if quote.quote_type == 'B2C' %}
         <!-- B2C simple table -->
+        {% set has_images = quote.items | selectattr('image_s3_key') | list | length > 0 %}
+        {% set is_qty_mode = quote.items | selectattr('unit', 'equalto', 'pcs') | list | length > 0 %}
         <table class="items-table">
             <thead>
                 <tr>
                     <th style="width: 5%;">S.No</th>
-                    <th style="width: 50%;">Particular</th>
-                    <th style="width: 15%;">Size (Sqft)</th>
-                    <th style="width: 15%;">Rate / Sqft</th>
+                    <th style="width: {{ '35%' if has_images else '50%' }};">Particular</th>
+                    {% if has_images %}<th style="width: 15%;">Product Image</th>{% endif %}
+                    <th style="width: 15%;">{{ 'Qty' if is_qty_mode else 'Size (Sqft)' }}</th>
+                    <th style="width: 15%;">{{ 'Rate / Qty' if is_qty_mode else 'Rate / Sqft' }}</th>
                     <th style="width: 15%;">Total</th>
                 </tr>
             </thead>
@@ -286,8 +290,23 @@
                 {% set ns.row_num = ns.row_num + 1 %}
                 <tr>
                     <td>{{ ns.row_num }}</td>
-                    <td class="text-left">{{ item.particular }}</td>
-                    <td>{{ "{:,.2f}".format(item.unit_square) if item.unit_square else '-' }}</td>
+                    <td class="text-left" style="white-space: pre-wrap;">{{ item.particular }}</td>
+                    {% if has_images %}
+                    <td style="text-align:center; vertical-align:middle;">
+                        {% if item.image_s3_key %}
+                        {% set img_url = item.image_s3_key | item_image_url %}
+                        <a href="{{ img_url }}" target="_blank" style="display:inline-block; text-decoration:none; color:#2563eb;">
+                            <img src="{{ img_url }}"
+                                 style="width:60px;height:60px;object-fit:cover;border-radius:4px;border:1px solid #ccc;display:block;margin:0 auto 2px;"
+                                 alt="product image">
+                            <span style="font-size:7pt;">Click here</span>
+                        </a>
+                        {% else %}
+                        <span style="color:#ccc;font-size:7pt;">—</span>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                    <td>{{ item.quantity if item.unit == 'pcs' else ("{:,.2f}".format(item.unit_square) if item.unit_square else '-') }}</td>
                     <td>{{ "{:,.2f}".format(item.rate_sqper) }}</td>
                     <td class="text-right">{{ "{:,.2f}".format(item.total) }}</td>
                 </tr>
@@ -397,10 +416,37 @@
                     <td class="text-right">{{ "{:,.2f}".format(quote.cutout_charges) }}</td>
                 </tr>
                 {% endif %}
-                {% if quote.holes_charges > 0 %}
+                {% set ns = namespace(total_holes=0, total_hole_charges=0, total_cutouts=0, total_cutout_charges=0) %}
+                {% for item in quote.items %}
+                    {% if not item.is_group %}
+                        {% if item.hole %}
+                            {% set ns.total_holes = ns.total_holes + item.hole %}
+                            {% for parent in quote.items %}
+                                {% if parent.id == item.parent_id %}
+                                    {% set ns.total_hole_charges = ns.total_hole_charges + item.hole * parent.hole_price %}
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
+                        {% if item.cutout %}
+                            {% set ns.total_cutouts = ns.total_cutouts + item.cutout %}
+                            {% for parent in quote.items %}
+                                {% if parent.id == item.parent_id %}
+                                    {% set ns.total_cutout_charges = ns.total_cutout_charges + item.cutout * parent.cutout_price %}
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
+                    {% endif %}
+                {% endfor %}
+                {% if ns.total_holes > 0 %}
                 <tr>
-                    <td>Holes Charges:</td>
-                    <td class="text-right">{{ "{:,.2f}".format(quote.holes_charges) }}</td>
+                    <td>Holes Charges ({{ ns.total_holes }} holes) <small>(incl. in subtotal)</small>:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(ns.total_hole_charges) }}</td>
+                </tr>
+                {% endif %}
+                {% if ns.total_cutouts > 0 %}
+                <tr>
+                    <td>Cutout Charges ({{ ns.total_cutouts }} cutouts) <small>(incl. in subtotal)</small>:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(ns.total_cutout_charges) }}</td>
                 </tr>
                 {% endif %}
                 {% if quote.shape_cutting_charges > 0 %}
@@ -445,23 +491,32 @@
                     <td class="text-right">{{ "{:,.2f}".format(quote.frosted_charges) }}</td>
                 </tr>
                 {% endif %}
+                {% if quote.insurance_charges > 0 %}
+                <tr>
+                    <td>Insurance @{{ "%.4g" % quote.insurance_percentage }}%:</td>
+                    <td class="text-right">{{ "{:,.2f}".format(quote.insurance_charges) }}</td>
+                </tr>
+                {% endif %}
                 <tr style="border-top: 1px solid #000;">
-                    <td><strong>Total Before GST:</strong></td>
+                    <td><strong>{{ 'Total Before Tax' if quote.gst_amount > 0 else 'Subtotal' }}:</strong></td>
                     <td class="text-right"><strong>{{ "{:,.2f}".format(quote.subtotal + quote.installation_charges +
                             quote.transport_charges + quote.cutout_charges + quote.holes_charges +
                             quote.shape_cutting_charges + quote.jumbo_size_charges + quote.template_charges +
                             quote.handling_charges + quote.polish_charges + quote.document_charges +
-                            quote.frosted_charges) }}</strong></td>
+                            quote.frosted_charges + quote.insurance_charges) }}</strong></td>
                 </tr>
                 {% if quote.quote_type == 'B2C' %}
-                <tr>
-                    <td>SGST @9%:</td>
-                    <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
-                </tr>
-                <tr>
-                    <td>CGST @9%:</td>
-                    <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
-                </tr>
+                    {% if quote.gst_amount > 0 %}
+                    {% set half_gst = "%.4g" % (quote.gst_percentage / 2) %}
+                    <tr>
+                        <td>SGST @{{ half_gst }}%:</td>
+                        <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
+                    </tr>
+                    <tr>
+                        <td>CGST @{{ half_gst }}%:</td>
+                        <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
+                    </tr>
+                    {% endif %}
                 {% else %}
                 <tr>
                     <td>GST @ {{ quote.gst_percentage }}%:</td>
@@ -500,6 +555,9 @@
         <div class="footer">
             <p><strong>For VETROVA TECH SERVICES PRIVATE LIMITED</strong><br>
                 (Authorized Signatory)</p>
+            <p style="margin-top: 12px; font-size: 8pt; color: #888;">
+                Also at: Bangalore Safety Glass - A/2, Bommasandra Industrial Area, Bengaluru, Karnataka 560099
+            </p>
         </div>
     </div>
 </body>

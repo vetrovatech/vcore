@@ -206,17 +206,22 @@ function applyGlassTypeToGroup(glassType, supplier) {
     currentGroupRow.dataset.supplierName = supplier.supplier_name;
     currentGroupRow.dataset.ratePerSqm = supplier.rate_per_sqm.toFixed(2);
 
+    // Update the visible group rate input so salesman can see and edit it
+    const groupRateInput = currentGroupRow.querySelector('.group-rate-input');
+    if (groupRateInput) {
+        groupRateInput.value = supplier.rate_per_sqm.toFixed(2);
+    }
+
     // Add supplier badge next to particular input
     addSupplierBadge(currentGroupRow, supplier.supplier_name);
 
-    // Auto-populate rate in existing sub-items
+    // Propagate rate to all existing sub-items (always overwrite — catalog is source of truth)
     const groupId = currentGroupRow.dataset.itemId;
     const existingSubItems = document.querySelectorAll(`[data-parent-id="${groupId}"]`);
     existingSubItems.forEach(subItem => {
         const rateInput = subItem.querySelector('.rate-input');
-        if (rateInput && !rateInput.value) {
+        if (rateInput) {
             rateInput.value = supplier.rate_per_sqm.toFixed(2);
-            // Trigger calculation
             calculateItemTotal(rateInput);
         }
     });

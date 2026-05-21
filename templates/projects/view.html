@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - VCore{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-folder"></i> {{ project.name }}</h2>
+    <div>
+        {% if current_user.is_manager_or_admin() %}
+        <a href="{{ url_for('project_edit', id=project.id) }}" class="btn btn-primary">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+        {% endif %}
+        {% if current_user.is_admin() %}
+        <form method="POST" action="{{ url_for('project_delete', id=project.id) }}" class="d-inline">
+            <button type="submit" class="btn btn-outline-danger"
+                onclick="return confirm('Are you sure you want to delete this project?')">
+                <i class="bi bi-trash"></i> Delete
+            </button>
+        </form>
+        {% endif %}
+        <a href="{{ url_for('projects_list') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Project Details -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header bg-white fw-semibold">
+                <i class="bi bi-info-circle"></i> Project Details
+            </div>
+            <div class="card-body">
+                <table class="table table-borderless mb-0">
+                    <tbody>
+                        <tr>
+                            <td class="text-muted" style="width:40%">Status</td>
+                            <td>
+                                {% if project.status == 'Completed' %}
+                                <span class="badge bg-success">{{ project.status }}</span>
+                                {% elif project.status == 'In Progress' %}
+                                <span class="badge bg-primary">{{ project.status }}</span>
+                                {% elif project.status == 'On Hold' %}
+                                <span class="badge bg-warning text-dark">{{ project.status }}</span>
+                                {% else %}
+                                <span class="badge bg-secondary">{{ project.status }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Owner</td>
+                            <td><strong>{{ project.owner.username }}</strong></td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Assigned To</td>
+                            <td>
+                                {% if project.assigned_to %}
+                                <span class="badge bg-info text-dark fs-6">{{ project.assigned_to.username }}</span>
+                                {% else %}
+                                <span class="text-muted">— Unassigned</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Start Date</td>
+                            <td>{{ project.start_date.strftime('%d %b %Y') }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Expected End</td>
+                            <td>
+                                {{ project.expected_end_date.strftime('%d %b %Y') }}
+                                {% if project.is_overdue() %}
+                                <span class="badge bg-danger ms-1">Overdue</span>
+                                {% elif project.days_remaining() is not none and project.days_remaining() <= 7 %}
+                                <span class="badge bg-warning text-dark ms-1">{{ project.days_remaining() }} days left</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Actual End</td>
+                            <td>
+                                {% if project.actual_end_date %}
+                                {{ project.actual_end_date.strftime('%d %b %Y') }}
+                                {% else %}
+                                <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Created</td>
+                            <td>{{ project.created_at | to_ist }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Last Updated</td>
+                            <td>{{ project.updated_at | to_ist }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Comment -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header bg-white fw-semibold">
+                <i class="bi bi-chat-left-text"></i> Add Comment
+            </div>
+            <div class="card-body d-flex flex-column">
+                <form method="POST" action="{{ url_for('project_add_comment', id=project.id) }}" id="commentForm">
+                    <textarea class="form-control mb-2" name="comment" id="commentText" rows="5"
+                        placeholder="Add a comment — e.g. current status, reason for delay, next steps..."
+                        required></textarea>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-send"></i> Save Comment
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Action History -->
+<div class="card mt-4">
+    <div class="card-header bg-white fw-semibold">
+        <i class="bi bi-clock-history"></i> Activity History
+    </div>
+    <div class="card-body">
+        {% if project.history %}
+        <div class="timeline">
+            {% for entry in project.history %}
+            <div class="d-flex gap-3 mb-4">
+                <!-- Icon -->
+                <div class="flex-shrink-0">
+                    {% if entry.action == 'Created' %}
+                    <span class="badge rounded-pill bg-success p-2"><i class="bi bi-plus-lg"></i></span>
+                    {% elif entry.action == 'Comment' %}
+                    <span class="badge rounded-pill bg-info p-2"><i class="bi bi-chat-left-text"></i></span>
+                    {% else %}
+                    <span class="badge rounded-pill bg-primary p-2"><i class="bi bi-pencil"></i></span>
+                    {% endif %}
+                </div>
+                <!-- Content -->
+                <div class="flex-grow-1 border-bottom pb-3">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <strong>{{ entry.changed_by.username }}</strong>
+                            {% if entry.action == 'Comment' %}
+                            <span class="text-muted ms-1">commented</span>
+                            {% else %}
+                            <span class="text-muted ms-1">{{ entry.action }} this project</span>
+                            {% endif %}
+                        </div>
+                        <small class="text-muted text-nowrap ms-3">{{ entry.created_at | to_ist }}</small>
+                    </div>
+                    {% if entry.changes %}
+                    {% set change_list = entry.changes | fromjson %}
+                    {% if entry.action == 'Comment' %}
+                    <p class="mb-0 mt-2 small" style="white-space: pre-wrap;">{{ change_list[0].new }}</p>
+                    {% else %}
+                    <ul class="mb-0 mt-2 ps-3">
+                        {% for change in change_list %}
+                        <li class="small">
+                            {% if change.field == 'Comments' %}
+                            <span class="fw-semibold">Comments:</span>
+                            <span class="text-success" style="white-space: pre-wrap;">{{ change.new }}</span>
+                            {% else %}
+                            <span class="fw-semibold">{{ change.field }}</span>
+                            changed from
+                            <span class="text-danger">{{ change.old }}</span>
+                            to
+                            <span class="text-success">{{ change.new }}</span>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted mb-0"><i class="bi bi-info-circle"></i> No history recorded yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -5,13 +5,20 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2><i class="bi bi-file-earmark-text"></i> Quote {{ quote.quote_number }}</h2>
-    <div>
+    <div class="d-flex flex-wrap gap-2">
         <a href="{{ url_for('quote_edit', id=quote.id) }}" class="btn btn-warning">
             <i class="bi bi-pencil"></i> Edit
         </a>
         <a href="{{ url_for('quote_print', id=quote.id) }}" class="btn btn-success" target="_blank">
-            <i class="bi bi-printer"></i> Print/Save PDF
+            <i class="bi bi-printer"></i> Print/PDF
         </a>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#sendEmailModal">
+            <i class="bi bi-envelope-fill"></i> Send Email
+        </button>
+        <button class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#scheduleFollowupModal"
+            style="background:#f59e0b;border-color:#f59e0b;">
+            <i class="bi bi-alarm-fill"></i> Schedule Follow-up
+        </button>
         <form method="POST" action="{{ url_for('quote_duplicate', id=quote.id) }}" style="display: inline;">
             <button type="submit" class="btn btn-info">
                 <i class="bi bi-files"></i> Duplicate
@@ -28,6 +35,74 @@
         <a href="{{ url_for('quotes_list') }}" class="btn btn-secondary">
             <i class="bi bi-arrow-left"></i> Back
         </a>
+    </div>
+</div>
+
+<!-- Fulfillment & Payment Bar -->
+<div class="card mb-4" style="border-left:4px solid #2563eb;">
+    <div class="card-body py-3">
+        <form method="POST" action="{{ url_for('quote_tally_update', id=quote.id) }}" class="row g-3 align-items-end">
+            <div class="col-12 col-md-3">
+                <label class="form-label fw-semibold mb-1" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;">
+                    <i class="bi bi-truck me-1"></i>Delivery Status
+                </label>
+                <select name="delivery_status" class="form-select form-select-sm">
+                    <option value="Pending"    {% if quote.delivery_status == 'Pending' %}selected{% endif %}>Pending</option>
+                    <option value="Dispatched" {% if quote.delivery_status == 'Dispatched' %}selected{% endif %}>Dispatched / In Transit</option>
+                    <option value="Delivered"  {% if quote.delivery_status == 'Delivered' %}selected{% endif %}>Delivered</option>
+                </select>
+            </div>
+            <!-- Online Payment -->
+            <div class="col-6 col-md-2">
+                <label class="form-label fw-semibold mb-1" style="font-size:0.78rem;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;">
+                    <i class="bi bi-phone me-1"></i>Online / Bank (₹)
+                </label>
+                <input type="number" name="amount_received" id="onlineRecv" class="form-control form-control-sm"
+                       step="0.01" min="0" placeholder="0.00"
+                       value="{{ quote.amount_received if quote.amount_received else '' }}"
+                       oninput="updatePayTotal()">
+            </div>
+            <!-- Cash Payment -->
+            <div class="col-6 col-md-2">
+                <label class="form-label fw-semibold mb-1" style="font-size:0.78rem;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;">
+                    <i class="bi bi-cash me-1"></i>Cash (₹)
+                </label>
+                <input type="number" name="cash_received" id="cashRecv" class="form-control form-control-sm"
+                       step="0.01" min="0" placeholder="0.00"
+                       value="{{ quote.cash_received if quote.cash_received else '' }}"
+                       oninput="updatePayTotal()">
+            </div>
+            <!-- Auto Total -->
+            <div class="col-6 col-md-2">
+                <label class="form-label fw-semibold mb-1" style="font-size:0.78rem;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;">
+                    <i class="bi bi-calculator me-1"></i>Total Received
+                </label>
+                <input type="text" id="totalRecv" class="form-control form-control-sm bg-light" readonly placeholder="—">
+                <div class="form-text" style="font-size:0.7rem;" id="payStatus">
+                    {% set cps = quote.client_payment_status %}
+                    <strong class="{% if cps == 'Received' %}text-success{% elif cps == 'Partial' %}text-warning{% else %}text-muted{% endif %}">{{ cps }}</strong>
+                    {% set total_recv = (quote.amount_received|float) + (quote.cash_received|float) %}
+                    {% if total_recv > 0 and quote.total and total_recv < quote.total|float %}
+                    · ₹{{ "{:,.0f}".format(quote.total|float - total_recv) }} due
+                    {% endif %}
+                </div>
+            </div>
+            <!-- Misc Purchases -->
+            <div class="col-6 col-md-2">
+                <label class="form-label fw-semibold mb-1" style="font-size:0.78rem;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;">
+                    <i class="bi bi-bag me-1"></i>Misc Purchases (₹)
+                </label>
+                <input type="number" name="misc_purchases" class="form-control form-control-sm"
+                       step="0.01" min="0" placeholder="0.00"
+                       value="{{ quote.misc_purchases if quote.misc_purchases else '' }}">
+                <div class="form-text" style="font-size:0.7rem;">Labour, transport, etc.</div>
+            </div>
+            <div class="col-12 col-md-2">
+                <button type="submit" class="btn btn-primary btn-sm w-100">
+                    <i class="bi bi-save me-1"></i> Save
+                </button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -70,7 +145,7 @@
                     </tr>
                     <tr>
                         <th>Created At:</th>
-                        <td>{{ quote.created_at.strftime('%d %B %Y %I:%M %p') }}</td>
+                        <td>{{ (quote.created_at | to_ist).strftime('%d %B %Y %I:%M %p') }}</td>
                     </tr>
                 </table>
             </div>
@@ -114,6 +189,12 @@
                         <td>{{ quote.customer_email }}</td>
                     </tr>
                     {% endif %}
+                    {% if quote.customer_gst %}
+                    <tr>
+                        <th>GST Number:</th>
+                        <td><code>{{ quote.customer_gst }}</code></td>
+                    </tr>
+                    {% endif %}
                 </table>
             </div>
         </div>
@@ -129,13 +210,16 @@
         <div class="table-responsive">
             {% if quote.quote_type == 'B2C' %}
             <!-- ── B2C simple table ── -->
+            {% set has_images = quote.items | selectattr('image_s3_key') | list | length > 0 %}
+            {% set is_qty_mode = quote.items | selectattr('unit', 'equalto', 'pcs') | list | length > 0 %}
             <table class="table table-bordered">
                 <thead class="table-light">
                     <tr>
                         <th style="width:5%">S.No</th>
-                        <th style="width:50%">Particular</th>
-                        <th style="width:15%">Size (Sqft)</th>
-                        <th style="width:15%">Rate / Sqft</th>
+                        <th style="width:{{ '35%' if has_images else '50%' }}">Particular</th>
+                        {% if has_images %}<th style="width:15%">Product Image</th>{% endif %}
+                        <th style="width:15%">{{ 'Qty' if is_qty_mode else 'Size (Sqft)' }}</th>
+                        <th style="width:15%">{{ 'Rate / Qty' if is_qty_mode else 'Rate / Sqft' }}</th>
                         <th style="width:15%">Total</th>
                     </tr>
                 </thead>
@@ -146,8 +230,23 @@
                     {% set ns.row_num = ns.row_num + 1 %}
                     <tr>
                         <td>{{ ns.row_num }}</td>
-                        <td>{{ item.particular }}</td>
-                        <td>{{ "{:,.2f}".format(item.unit_square) if item.unit_square else '-' }}</td>
+                        <td style="white-space: pre-wrap;">{{ item.particular }}</td>
+                        {% if has_images %}
+                        <td class="text-center align-middle">
+                            {% if item.image_s3_key %}
+                            {% set img_url = item.image_s3_key | item_image_url %}
+                            <a href="{{ img_url }}" target="_blank" style="display:inline-block;text-decoration:none;">
+                                <img src="{{ img_url }}"
+                                     style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;display:block;margin:0 auto 3px;"
+                                     alt="product image">
+                                <small class="text-primary">Click here</small>
+                            </a>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        {% endif %}
+                        <td>{{ item.quantity if item.unit == 'pcs' else ("{:,.2f}".format(item.unit_square) if item.unit_square else '-') }}</td>
                         <td>₹{{ "{:,.2f}".format(item.rate_sqper) }}</td>
                         <td>₹{{ "{:,.2f}".format(item.total) }}</td>
                     </tr>
@@ -263,10 +362,37 @@
                         <td class="text-end">₹{{ "{:,.2f}".format(quote.cutout_charges) }}</td>
                     </tr>
                     {% endif %}
-                    {% if quote.holes_charges > 0 %}
+                    {% set ns = namespace(total_holes=0, total_hole_charges=0, total_cutouts=0, total_cutout_charges=0) %}
+                    {% for item in quote.items %}
+                        {% if not item.is_group %}
+                            {% if item.hole %}
+                                {% set ns.total_holes = ns.total_holes + item.hole %}
+                                {% for parent in quote.items %}
+                                    {% if parent.id == item.parent_id %}
+                                        {% set ns.total_hole_charges = ns.total_hole_charges + item.hole * parent.hole_price %}
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                            {% if item.cutout %}
+                                {% set ns.total_cutouts = ns.total_cutouts + item.cutout %}
+                                {% for parent in quote.items %}
+                                    {% if parent.id == item.parent_id %}
+                                        {% set ns.total_cutout_charges = ns.total_cutout_charges + item.cutout * parent.cutout_price %}
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                        {% endif %}
+                    {% endfor %}
+                    {% if ns.total_holes > 0 %}
                     <tr>
-                        <td>Holes Charges:</td>
-                        <td class="text-end">₹{{ "{:,.2f}".format(quote.holes_charges) }}</td>
+                        <td>Holes Charges ({{ ns.total_holes }} holes) <small class="text-muted">(incl. in subtotal)</small>:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(ns.total_hole_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if ns.total_cutouts > 0 %}
+                    <tr>
+                        <td>Cutout Charges ({{ ns.total_cutouts }} cutouts) <small class="text-muted">(incl. in subtotal)</small>:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(ns.total_cutout_charges) }}</td>
                     </tr>
                     {% endif %}
                     {% if quote.shape_cutting_charges > 0 %}
@@ -311,15 +437,31 @@
                         <td class="text-end">₹{{ "{:,.2f}".format(quote.frosted_charges) }}</td>
                     </tr>
                     {% endif %}
+                    {% if quote.insurance_charges > 0 %}
+                    <tr>
+                        <td>Insurance @{{ "%.4g" % quote.insurance_percentage }}%:</td>
+                        <td class="text-end">₹{{ "{:,.2f}".format(quote.insurance_charges) }}</td>
+                    </tr>
+                    {% endif %}
+                    {% set total_charges = quote.installation_charges + quote.transport_charges + quote.cutout_charges + quote.holes_charges + quote.shape_cutting_charges + quote.jumbo_size_charges + quote.template_charges + quote.handling_charges + quote.polish_charges + quote.document_charges + quote.frosted_charges + quote.insurance_charges %}
+                    {% if total_charges > 0 %}
+                    <tr class="table-light">
+                        <td><strong>Taxable Amount:</strong></td>
+                        <td class="text-end"><strong>₹{{ "{:,.2f}".format(quote.subtotal + total_charges) }}</strong></td>
+                    </tr>
+                    {% endif %}
                     {% if quote.quote_type == 'B2C' %}
-                    <tr>
-                        <td>SGST @9%:</td>
-                        <td class="text-end">₹{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td>CGST @9%:</td>
-                        <td class="text-end">₹{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
-                    </tr>
+                        {% if quote.gst_amount > 0 %}
+                        {% set half_gst = "%.4g" % (quote.gst_percentage / 2) %}
+                        <tr>
+                            <td>SGST @{{ half_gst }}%:</td>
+                            <td class="text-end">₹{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
+                        </tr>
+                        <tr>
+                            <td>CGST @{{ half_gst }}%:</td>
+                            <td class="text-end">₹{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
+                        </tr>
+                        {% endif %}
                     {% else %}
                     <tr>
                         <td><strong>GST ({{ quote.gst_percentage }}%):</strong></td>
@@ -351,4 +493,244 @@
     </div>
 </div>
 {% endif %}
+
+<!-- Scheduled Follow-ups -->
+{% set quote_reminders = quote.reminders | selectattr('reminder_type', 'equalto', 'quote') | list %}
+{% if quote_reminders %}
+<div class="card mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-alarm text-warning"></i> Scheduled Follow-ups</h5>
+        <span class="badge bg-warning text-dark">{{ quote_reminders | length }}</span>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+            <thead>
+                <tr>
+                    <th>Scheduled For</th>
+                    <th>Subject</th>
+                    <th>Assigned To</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in quote_reminders | sort(attribute='reminder_datetime') %}
+                <tr>
+                    <td>{{ (r.reminder_datetime | to_ist).strftime('%d %b %Y, %I:%M %p') }}</td>
+                    <td>{{ r.subject or '—' }}</td>
+                    <td>{{ r.user.username }}</td>
+                    <td>
+                        <span class="badge bg-{{ 'success' if r.status == 'sent' else 'warning text-dark' if r.status == 'pending' else 'danger' }}">
+                            {{ r.status }}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- ============================================================ -->
+<!-- QUOTE COMMENTS / ACTIVITY LOG                                 -->
+<!-- ============================================================ -->
+<div class="card mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-chat-left-text text-primary"></i> Comments &amp; Activity</h5>
+        <span class="badge bg-secondary">{{ comments | length }}</span>
+    </div>
+    <div class="card-body">
+        <!-- Add comment form -->
+        <form method="POST" action="{{ url_for('quote_add_comment', id=quote.id) }}" class="mb-4">
+            <div class="mb-2">
+                <textarea class="form-control" name="comment" rows="3"
+                    placeholder="Add a comment — e.g. why this quote was raised, current status, reason for delay or rejection..."
+                    required></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">
+                <i class="bi bi-plus-circle"></i> Add Comment
+            </button>
+        </form>
+
+        <!-- Comments list -->
+        {% if comments %}
+        <div class="timeline">
+            {% for c in comments %}
+            <div class="d-flex gap-3 pb-3 mb-3 border-bottom">
+                <div class="flex-shrink-0">
+                    <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center"
+                        style="width:36px;height:36px;font-size:0.8rem;font-weight:600;">
+                        {{ c.user.username[:2].upper() }}
+                    </div>
+                </div>
+                <div class="flex-grow-1">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <strong>{{ c.user.username }}</strong>
+                            <span class="text-muted ms-2" style="font-size:0.8rem;">
+                                {{ (c.created_at | to_ist).strftime('%d %b %Y, %I:%M %p') }}
+                            </span>
+                        </div>
+                        {% if c.user_id == current_user.id or current_user.is_admin() %}
+                        <form method="POST"
+                            action="{{ url_for('quote_delete_comment', id=quote.id, comment_id=c.id) }}"
+                            onsubmit="return confirm('Delete this comment?')">
+                            <button type="submit" class="btn btn-link btn-sm text-danger p-0" title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                        {% endif %}
+                    </div>
+                    <p class="mb-0 mt-1" style="white-space:pre-wrap;">{{ c.comment }}</p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted mb-0"><i class="bi bi-info-circle"></i> No comments yet. Add the first one above.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- MODAL: Send Email to Client                                   -->
+<!-- ============================================================ -->
+<div class="modal fade" id="sendEmailModal" tabindex="-1" aria-labelledby="sendEmailModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('quote_send_email', id=quote.id) }}">
+                <div class="modal-header" style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;">
+                    <h5 class="modal-title" id="sendEmailModalLabel">
+                        <i class="bi bi-envelope-fill"></i> Send Quotation Email
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    {% if not quote.customer_email %}
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        No email on this quote. You can enter one manually below.
+                    </div>
+                    {% endif %}
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">To <span class="text-danger">*</span></label>
+                        <input type="email" class="form-control" name="to_email" required
+                            value="{{ quote.customer_email or '' }}"
+                            placeholder="client@example.com">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Subject</label>
+                        <input type="text" class="form-control" name="subject"
+                            value="Quotation {{ quote.quote_number }} from Glassy"
+                            placeholder="Email subject">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Additional Message <small class="text-muted">(optional)</small></label>
+                        <textarea class="form-control" name="message" rows="4"
+                            placeholder="Add a personal note to the client... (quote details are included automatically)"></textarea>
+                    </div>
+                    <div class="alert alert-info mb-0" style="font-size:0.85rem;">
+                        <i class="bi bi-info-circle"></i>
+                        The email will include: Quote #, Date, Itemised totals, GST, Grand Total, and Payment Terms.
+                        {% if quote.status == 'Draft' %}
+                        The quote status will automatically change from <strong>Draft → Sent</strong>.
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-send-fill"></i> Send Email
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- MODAL: Schedule Follow-up Reminder                           -->
+<!-- ============================================================ -->
+<div class="modal fade" id="scheduleFollowupModal" tabindex="-1" aria-labelledby="scheduleFollowupModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('quote_schedule_followup', id=quote.id) }}">
+                <div class="modal-header" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:white;">
+                    <h5 class="modal-title" id="scheduleFollowupModalLabel">
+                        <i class="bi bi-alarm-fill"></i> Schedule Follow-up Reminder
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Follow-up Date & Time <span class="text-danger">*</span></label>
+                        <input type="datetime-local" class="form-control" name="followup_datetime" required
+                            id="followupDatetime">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Subject</label>
+                        <input type="text" class="form-control" name="subject"
+                            value="Follow-up: Quote {{ quote.quote_number }} — {{ quote.customer_name }}"
+                            placeholder="Reminder subject">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Note <small class="text-muted">(optional)</small></label>
+                        <textarea class="form-control" name="message" rows="3"
+                            placeholder="e.g. Call customer to check on quote acceptance..."></textarea>
+                    </div>
+                    <div class="alert alert-info mb-0" style="font-size:0.85rem;">
+                        <i class="bi bi-info-circle"></i>
+                        A reminder email will be sent to <strong>{{ current_user.email or current_user.username }}</strong>
+                        at the scheduled time with full quote and customer details.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn" style="background:#f59e0b;color:white;">
+                        <i class="bi bi-alarm-fill"></i> Schedule Reminder
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Set minimum datetime to now for follow-up picker
+    document.addEventListener('DOMContentLoaded', function () {
+        const dt = document.getElementById('followupDatetime');
+        if (dt) {
+            const now = new Date();
+            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+            dt.min = now.toISOString().slice(0, 16);
+        }
+        updatePayTotal();
+    });
+
+    function updatePayTotal() {
+        const online = parseFloat(document.getElementById('onlineRecv').value) || 0;
+        const cash   = parseFloat(document.getElementById('cashRecv').value)   || 0;
+        const total  = online + cash;
+        const saleTotal = {{ quote.total|float }};
+        const totalEl   = document.getElementById('totalRecv');
+        const statusEl  = document.getElementById('payStatus');
+
+        if (total > 0) {
+            totalEl.value = '₹' + total.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const balance = saleTotal - total;
+            if (total >= saleTotal && saleTotal > 0) {
+                statusEl.innerHTML = '<strong class="text-success">Received</strong>';
+            } else if (balance > 0) {
+                statusEl.innerHTML = '<strong class="text-warning">Partial</strong> · ₹' + balance.toLocaleString('en-IN') + ' due';
+            } else {
+                statusEl.innerHTML = '<strong class="text-warning">Partial</strong>';
+            }
+        } else {
+            totalEl.value = '';
+            statusEl.innerHTML = '<strong class="text-muted">Pending</strong>';
+        }
+    }
+</script>
 {% endblock %}

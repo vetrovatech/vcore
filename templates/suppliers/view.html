@@ -265,9 +265,9 @@
 
 <div class="mt-3">
     <small class="text-muted">
-        Created: {{ supplier.created_at.strftime('%d %b %Y, %I:%M %p') }}
+        Created: {{ (supplier.created_at | to_ist).strftime('%d %b %Y, %I:%M %p') }}
         {% if supplier.updated_at != supplier.created_at %}
-        | Last updated: {{ supplier.updated_at.strftime('%d %b %Y, %I:%M %p') }}
+        | Last updated: {{ (supplier.updated_at | to_ist).strftime('%d %b %Y, %I:%M %p') }}
         {% endif %}
     </small>
 </div>

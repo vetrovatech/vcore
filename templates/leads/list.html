@@ -1,0 +1,833 @@
+{% extends "base.html" %}
+
+{% block title %}Leadfy - VA Leads{% endblock %}
+
+{% block extra_css %}
+<style>
+    .leadfy-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 0.75rem;
+        padding: 1.25rem 1.5rem;
+        color: white;
+        margin-bottom: 1.5rem;
+    }
+
+    .filter-card {
+        background: #fff;
+        border-radius: 0.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.25rem;
+    }
+
+    .filter-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #94a3b8;
+        letter-spacing: 0.6px;
+        margin-bottom: 0.35rem;
+    }
+
+    .filter-card .form-control,
+    .filter-card .form-select {
+        font-size: 0.875rem;
+        border-color: #e2e8f0;
+        border-radius: 0.5rem;
+    }
+
+    .date-range-group {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+    }
+
+    .date-range-group .form-control { flex: 1; }
+    .date-range-arrow { color: #94a3b8; font-size: 0.8rem; white-space: nowrap; }
+
+    .leads-table th {
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #64748b;
+        background: #f8fafc;
+        border-bottom: 2px solid #e2e8f0;
+        padding: 0.75rem 1rem;
+    }
+
+    .leads-table td {
+        vertical-align: middle;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #f1f5f9;
+    }
+
+    .leads-table tbody tr:hover { background: #f8fafc; }
+
+    /* Untouched leads — highlight row */
+    .leads-table tbody tr.untouched-row {
+        background: #fffbeb;
+        border-left: 3px solid #f59e0b;
+    }
+    .leads-table tbody tr.untouched-row:hover { background: #fef3c7; }
+
+    .lead-avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 0.78rem;
+        color: white;
+        flex-shrink: 0;
+    }
+
+    .stage-badge {
+        font-size: 0.68rem;
+        font-weight: 600;
+        padding: 0.2rem 0.5rem;
+        border-radius: 20px;
+    }
+
+    .lead-type-badge {
+        font-size: 0.65rem;
+        font-weight: 600;
+        padding: 0.15rem 0.45rem;
+        border-radius: 20px;
+    }
+
+    .lead-name-cell {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+    }
+
+    .lead-name-text {
+        font-weight: 600;
+        color: #1e40af;
+        font-size: 0.88rem;
+        line-height: 1.2;
+        cursor: pointer;
+    }
+
+    .lead-name-text:hover { text-decoration: underline; }
+
+    .meta-text {
+        font-size: 0.75rem;
+        color: #94a3b8;
+        margin-top: 0.1rem;
+    }
+
+    .contact-text {
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: #334155;
+    }
+
+    .product-text {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #1e293b;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 150px;
+    }
+
+    .qty-badge {
+        font-size: 0.7rem;
+        background: #e0f2fe;
+        color: #0369a1;
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+        font-weight: 600;
+    }
+
+    .btn-action {
+        border: 1.5px solid #e2e8f0;
+        background: white;
+        color: #64748b;
+        border-radius: 0.4rem;
+        padding: 0.28rem 0.5rem;
+        font-size: 0.78rem;
+        transition: all 0.2s;
+    }
+
+    .btn-action:hover {
+        background: #f1f5f9;
+        color: #2563eb;
+        border-color: #2563eb;
+    }
+
+    .btn-wa {
+        border: 1.5px solid #dcfce7;
+        background: #f0fdf4;
+        color: #16a34a;
+        border-radius: 0.4rem;
+        padding: 0.28rem 0.5rem;
+        font-size: 0.78rem;
+        transition: all 0.2s;
+        text-decoration: none;
+    }
+
+    .btn-wa:hover {
+        background: #16a34a;
+        color: white;
+        border-color: #16a34a;
+    }
+
+    .btn-call {
+        border: 1.5px solid #dbeafe;
+        background: #eff6ff;
+        color: #2563eb;
+        border-radius: 0.4rem;
+        padding: 0.28rem 0.5rem;
+        font-size: 0.78rem;
+        text-decoration: none;
+        transition: all 0.2s;
+    }
+
+    .btn-call:hover {
+        background: #2563eb;
+        color: white;
+        border-color: #2563eb;
+    }
+
+    .note-btn { cursor: pointer; }
+    .note-preview { font-size: 0.72rem; color: #64748b; font-style: italic; max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .empty-state {
+        text-align: center;
+        padding: 3rem 1rem;
+        color: #94a3b8;
+    }
+    .empty-state i { font-size: 3rem; margin-bottom: 1rem; display: block; }
+
+    .untouched-counter {
+        background: #fef3c7;
+        border: 1px solid #fcd34d;
+        border-radius: 0.5rem;
+        padding: 0.4rem 0.8rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: #92400e;
+    }
+
+    .sync-spinner { display: none; }
+    .syncing .sync-spinner { display: inline-block; }
+    .syncing .sync-text { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-person-lines-fill text-primary"></i> Leadfy</h2>
+        <small class="text-muted">Manage Your VA Leads &mdash; <strong>{{ total_leads }}</strong> total leads</small>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+        {% set untouched = leads | selectattr('is_untouched') | list %}
+        {% if untouched %}
+        <span class="untouched-counter">
+            <i class="bi bi-exclamation-circle-fill"></i> {{ untouched|length }} untouched
+        </span>
+        {% endif %}
+        {% if current_user.is_admin() %}
+            {% if indiamart_token %}
+                {% if indiamart_token.is_valid() %}
+                    {% if indiamart_token.expires_soon(120) %}
+                        <span class="badge bg-warning text-dark" title="Token expires soon">
+                            <i class="bi bi-clock-history"></i> Expiring Soon
+                        </span>
+                    {% else %}
+                        <span class="badge bg-success" title="Token is valid">
+                            <i class="bi bi-check-circle"></i> Token OK
+                        </span>
+                    {% endif %}
+                {% else %}
+                    <span class="badge bg-danger" title="Token expired">
+                        <i class="bi bi-x-circle"></i> Token Expired
+                    </span>
+                {% endif %}
+            {% endif %}
+            <button class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#indiamartTokenModal">
+                <i class="bi bi-key"></i> Token
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" id="refreshTokenBtn" title="Try to auto-refresh the token">
+                <i class="bi bi-arrow-clockwise"></i> Refresh Token
+            </button>
+        {% endif %}
+        <form method="POST" action="{{ url_for('indiamart_sync') }}" id="syncForm">
+            <button type="submit" class="btn btn-success btn-sm" id="syncBtn">
+                <span class="sync-text"><i class="bi bi-arrow-repeat"></i> Sync IndiaMart</span>
+                <span class="sync-spinner"><span class="spinner-border spinner-border-sm"></span> Syncing...</span>
+            </button>
+        </form>
+        {% if fb_token_set %}
+        <form method="POST" action="{{ url_for('facebook_sync') }}" id="fbSyncForm">
+            <button type="submit" class="btn btn-primary btn-sm" id="fbSyncBtn">
+                <span class="fb-sync-text"><i class="bi bi-facebook"></i> Sync Facebook</span>
+                <span class="fb-sync-spinner" style="display:none;"><span class="spinner-border spinner-border-sm"></span> Syncing...</span>
+            </button>
+        </form>
+        {% endif %}
+        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addLeadModal">
+            <i class="bi bi-plus-circle"></i> + Create Lead
+        </button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-card">
+    <form method="GET" action="{{ url_for('leads_list') }}">
+        <div class="row g-3 mb-3">
+            <div class="col-md-3">
+                <div class="filter-label">Search</div>
+                <div class="input-group">
+                    <input type="text" class="form-control" name="search"
+                        placeholder="Name, phone, company..." value="{{ search_query }}">
+                    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="filter-label">Updated Date Range</div>
+                <div class="date-range-group">
+                    <input type="date" class="form-control" name="updated_from" value="{{ updated_from }}">
+                    <span class="date-range-arrow"><i class="bi bi-arrow-right"></i></span>
+                    <input type="date" class="form-control" name="updated_to" value="{{ updated_to }}">
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="filter-label">Created Date Range</div>
+                <div class="date-range-group">
+                    <input type="date" class="form-control" name="created_from" value="{{ created_from }}">
+                    <span class="date-range-arrow"><i class="bi bi-arrow-right"></i></span>
+                    <input type="date" class="form-control" name="created_to" value="{{ created_to }}">
+                </div>
+            </div>
+        </div>
+        <div class="row g-3 align-items-end">
+            <div class="col-md-2">
+                <div class="filter-label">Stage</div>
+                <select class="form-select" name="stage">
+                    <option value="">All Stages</option>
+                    {% for s in ['New Lead','Contacted','Not Connected','Qualified','PI Shared','Closed Won','Closed Lost','Junk'] %}
+                    <option value="{{ s }}" {% if stage_filter == s %}selected{% endif %}>{{ s }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <div class="filter-label">Lead Type</div>
+                <select class="form-select" name="lead_type">
+                    <option value="">All Types</option>
+                    {% for t in ['Buy Lead','Call','Missed Call','Enquiry'] %}
+                    <option value="{{ t }}" {% if request.args.get('lead_type') == t %}selected{% endif %}>{{ t }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <div class="filter-label">State</div>
+                <select class="form-select" name="state">
+                    <option value="">All States</option>
+                    {% for st in states %}
+                    <option value="{{ st }}" {% if state_filter == st %}selected{% endif %}>{{ st }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <div class="filter-label">Origin</div>
+                <select class="form-select" name="origin">
+                    <option value="">All Origins</option>
+                    {% for o in origins %}
+                    <option value="{{ o }}" {% if origin_filter == o %}selected{% endif %}>{{ o }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <div class="filter-label">Owner</div>
+                <select class="form-select" name="owner">
+                    <option value="">All Owners</option>
+                    {% for u in users %}
+                    <option value="{{ u.id }}" {% if owner_filter == u.id|string %}selected{% endif %}>{{ u.username }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-1">
+                <div class="filter-label">Untouched</div>
+                <select class="form-select" name="untouched">
+                    <option value="">All</option>
+                    <option value="1" {% if request.args.get('untouched') == '1' %}selected{% endif %}>Yes</option>
+                    <option value="0" {% if request.args.get('untouched') == '0' %}selected{% endif %}>No</option>
+                </select>
+            </div>
+            <div class="col-auto d-flex gap-2">
+                <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+                {% if search_query or stage_filter or state_filter or origin_filter or owner_filter or updated_from or updated_to or created_from or created_to or request.args.get('lead_type') or request.args.get('untouched') %}
+                <a href="{{ url_for('leads_list') }}" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-x-circle"></i> Clear
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- Leads Table -->
+<div class="card">
+    <div class="card-body p-0">
+        {% if leads %}
+        <div class="table-responsive">
+            <table class="table leads-table mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:36px;"><input type="checkbox" class="form-check-input" id="selectAll"></th>
+                        <th>Lead</th>
+                        <th>Product Interest</th>
+                        <th>Contact</th>
+                        <th>City / State</th>
+                        <th>Owner</th>
+                        <th>Created</th>
+                        <th>Notes</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set avatar_bg = ['#6366f1','#8b5cf6','#ec4899','#f59e0b','#10b981','#3b82f6','#ef4444'] %}
+                    {% for lead in leads %}
+                    <tr {% if lead.is_untouched %}class="untouched-row"{% endif %}>
+                        <td><input type="checkbox" class="form-check-input lead-check"></td>
+
+                        <!-- Name + Stage + Type -->
+                        <td>
+                            <div class="lead-name-cell">
+                                <div class="lead-avatar"
+                                    style="background: {{ avatar_bg[loop.index0 % avatar_bg|length] }};">
+                                    {{ lead.get_initials() }}
+                                </div>
+                                <div>
+                                    <a href="{{ url_for('lead_view', id=lead.id) }}" class="lead-name-text text-decoration-none">{{ lead.name or 'Unknown' }}</a>
+                                    {% if lead.company %}
+                                    <div class="meta-text"><i class="bi bi-building" style="font-size:0.65rem;"></i> {{ lead.company }}</div>
+                                    {% endif %}
+                                    <div class="mt-1 d-flex gap-1 flex-wrap">
+                                        <span class="badge stage-badge bg-{{ lead.get_stage_badge_class() }}">{{ lead.stage }}</span>
+                                        {% if lead.lead_type %}
+                                            {% if lead.lead_type == 'Missed Call' %}
+                                            <span class="badge lead-type-badge" style="background:#fef2f2;color:#dc2626;">
+                                                <i class="bi bi-telephone-x-fill"></i> Missed
+                                            </span>
+                                            {% elif lead.lead_type == 'Call' %}
+                                            <span class="badge lead-type-badge" style="background:#eff6ff;color:#2563eb;">
+                                                <i class="bi bi-telephone-fill"></i> Call
+                                            </span>
+                                            {% elif lead.lead_type == 'Buy Lead' %}
+                                            <span class="badge lead-type-badge" style="background:#f0fdf4;color:#16a34a;">
+                                                <i class="bi bi-cart-check-fill"></i> Buy Lead
+                                            </span>
+                                            {% else %}
+                                            <span class="badge lead-type-badge" style="background:#f1f5f9;color:#475569;">
+                                                <i class="bi bi-envelope-fill"></i> Enquiry
+                                            </span>
+                                            {% endif %}
+                                        {% endif %}
+                                        {% if lead.is_untouched %}
+                                        <span class="badge lead-type-badge" style="background:#fef3c7;color:#92400e;">
+                                            <i class="bi bi-exclamation-circle-fill"></i> Untouched
+                                        </span>
+                                        {% endif %}
+                                        {% if lead.origin == 'IndiaMart' %}
+                                        <span class="badge lead-type-badge bg-success">IndiaMart</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+
+                        <!-- Product Interest + Qty -->
+                        <td>
+                            {% if lead.product_interest %}
+                            <div class="product-text" title="{{ lead.product_interest }}">{{ lead.product_interest }}</div>
+                            {% if lead.product_qty %}
+                            <span class="qty-badge mt-1 d-inline-block">{{ lead.product_qty }}</span>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+
+                        <!-- Contact + WhatsApp + Call buttons -->
+                        <td>
+                            <div class="contact-text">{{ lead.contact or '—' }}</div>
+                            {% if lead.contact %}
+                            <div class="d-flex gap-1 mt-1">
+                                <a href="tel:{{ lead.contact }}" class="btn-call" title="Call">
+                                    <i class="bi bi-telephone-fill"></i>
+                                </a>
+                                <a href="https://wa.me/91{{ lead.contact | replace(' ','') | replace('-','') }}"
+                                   target="_blank" class="btn-wa" title="WhatsApp">
+                                    <i class="bi bi-whatsapp"></i>
+                                </a>
+                            </div>
+                            {% endif %}
+                        </td>
+
+                        <!-- City / State -->
+                        <td>
+                            {% if lead.city or lead.state %}
+                            <span class="contact-text">
+                                {% if lead.city and lead.state %}{{ lead.city }} / {{ lead.state }}
+                                {% elif lead.city %}{{ lead.city }}
+                                {% else %}{{ lead.state }}{% endif %}
+                            </span>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+
+                        <!-- Owner -->
+                        <td>
+                            <span class="contact-text">{{ lead.owner.username if lead.owner else '—' }}</span>
+                            {% if lead.assigned_to %}
+                            <div class="meta-text">Assigned: {{ lead.assigned_to.username }}</div>
+                            {% endif %}
+                            <div class="meta-text">{{ (lead.created_at | to_ist).strftime('%d %b %Y') }}</div>
+                        </td>
+
+                        <!-- Created -->
+                        <td>
+                            <div class="meta-text">{{ (lead.created_at | to_ist).strftime('%d %b, %I:%M %p') }}</div>
+                            {% if lead.origin %}
+                            <div class="meta-text">{{ lead.origin }}</div>
+                            {% endif %}
+                        </td>
+
+                        <!-- Quick Note -->
+                        <td>
+                            <div class="note-btn" data-lead-id="{{ lead.id }}"
+                                 data-note="{{ lead.notes or '' }}"
+                                 data-lead-name="{{ lead.name or 'Unknown' }}"
+                                 onclick="openNoteModal(this)"
+                                 title="Add/view note">
+                                {% if lead.notes %}
+                                <div class="note-preview">{{ lead.notes }}</div>
+                                {% else %}
+                                <span class="text-muted" style="font-size:0.78rem;"><i class="bi bi-sticky"></i> Add note</span>
+                                {% endif %}
+                            </div>
+                        </td>
+
+                        <!-- Actions -->
+                        <td>
+                            <a href="{{ url_for('lead_edit', id=lead.id) }}" class="btn-action" title="Edit">
+                                <i class="bi bi-pencil-square"></i>
+                            </a>
+                            {% if current_user.is_admin() %}
+                            <form method="POST" action="{{ url_for('lead_delete', id=lead.id) }}"
+                                style="display:inline;"
+                                onsubmit="return confirm('Delete this lead?');">
+                                <button type="submit" class="btn-action" title="Delete"
+                                    style="border-color:#fee2e2;color:#ef4444;">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-person-plus"></i>
+            <p class="mb-3">No leads found. Sync from IndiaMart or create one manually.</p>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addLeadModal">
+                <i class="bi bi-plus-circle"></i> + Create Lead
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Add Lead Modal -->
+<div class="modal fade" id="addLeadModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('lead_new') }}">
+                <div class="modal-header" style="background: linear-gradient(135deg,#667eea,#764ba2); color:white;">
+                    <h5 class="modal-title"><i class="bi bi-person-plus-fill"></i> Add New Lead</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Name</label>
+                        <input type="text" class="form-control" name="name" placeholder="Lead name">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Owner <span class="text-danger">*</span></label>
+                        <select class="form-select" name="owner_id">
+                            <option value="">— Select Owner —</option>
+                            {% for u in users %}
+                            <option value="{{ u.id }}">{{ u.username }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Contact (Phone)</label>
+                        <input type="text" class="form-control" name="contact" placeholder="e.g. 9876543210">
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">City</label>
+                            <input type="text" class="form-control" name="city">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">State</label>
+                            <input type="text" class="form-control" name="state">
+                        </div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Stage</label>
+                            <select class="form-select" name="stage">
+                                {% for s in ['New Lead','Contacted','Not Connected','Qualified','PI Shared','Closed Won','Closed Lost','Junk'] %}
+                                <option value="{{ s }}" {% if s == 'New Lead' %}selected{% endif %}>{{ s }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Origin</label>
+                            <input type="text" class="form-control" name="origin" placeholder="e.g. Facebook">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check2-circle"></i> Save Lead
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Note Modal -->
+<div class="modal fade" id="noteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-sticky-fill text-warning"></i> Note — <span id="noteLeadName"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <textarea class="form-control" id="noteTextarea" rows="4"
+                    placeholder="Type your note here..."></textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" onclick="saveNote()">
+                    <i class="bi bi-save"></i> Save Note
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- IndiaMart Token Modal -->
+<div class="modal fade" id="indiamartTokenModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('indiamart_save_token') }}">
+                <div class="modal-header" style="background: linear-gradient(135deg,#16a34a,#15803d); color:white;">
+                    <h5 class="modal-title"><i class="bi bi-key-fill"></i> IndiaMart API Token</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info py-2" style="font-size:0.82rem;">
+                        Paste the <strong>AK token</strong> captured from the IndiaMart app via mitmproxy.
+                        Token auto-refreshes on sync as long as you sync at least once daily.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">AK Token <span class="text-danger">*</span></label>
+                        <textarea class="form-control" name="ak_token" rows="4"
+                            placeholder="eyJhbGci..." required></textarea>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">GLID / User ID</label>
+                            <input type="text" class="form-control" name="glid" value="255155317">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Mobile</label>
+                            <input type="text" class="form-control" name="mobile" value="9341980003">
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <label class="form-label fw-semibold">User IP</label>
+                        <input type="text" class="form-control" name="user_ip" value="122.183.54.166">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-save"></i> Save Token
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Pagination -->
+{% if pagination.pages > 1 %}
+<div class="d-flex align-items-center justify-content-between mt-3 px-1">
+    <small class="text-muted">
+        Showing <strong>{{ (pagination.page - 1) * 15 + 1 }}–{{ [(pagination.page * 15), pagination.total] | min }}</strong>
+        of <strong>{{ pagination.total }}</strong> leads
+    </small>
+    <nav>
+        <ul class="pagination pagination-sm mb-0 gap-1">
+
+            <!-- Prev -->
+            <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                <a class="page-link rounded"
+                   href="{{ url_for('leads_list', page=pagination.prev_num,
+                       search=search_query, stage=stage_filter, state=state_filter,
+                       origin=origin_filter, owner=owner_filter, lead_type=lead_type_filter,
+                       updated_from=updated_from, updated_to=updated_to,
+                       created_from=created_from, created_to=created_to) }}">
+                    <i class="bi bi-chevron-left"></i>
+                </a>
+            </li>
+
+            <!-- Page numbers -->
+            {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+                {% if p %}
+                <li class="page-item {% if p == pagination.page %}active{% endif %}">
+                    <a class="page-link rounded"
+                       href="{{ url_for('leads_list', page=p,
+                           search=search_query, stage=stage_filter, state=state_filter,
+                           origin=origin_filter, owner=owner_filter, lead_type=lead_type_filter,
+                           updated_from=updated_from, updated_to=updated_to,
+                           created_from=created_from, created_to=created_to) }}">
+                        {{ p }}
+                    </a>
+                </li>
+                {% else %}
+                <li class="page-item disabled"><span class="page-link rounded">…</span></li>
+                {% endif %}
+            {% endfor %}
+
+            <!-- Next -->
+            <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                <a class="page-link rounded"
+                   href="{{ url_for('leads_list', page=pagination.next_num,
+                       search=search_query, stage=stage_filter, state=state_filter,
+                       origin=origin_filter, owner=owner_filter, lead_type=lead_type_filter,
+                       updated_from=updated_from, updated_to=updated_to,
+                       created_from=created_from, created_to=created_to) }}">
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+            </li>
+
+        </ul>
+    </nav>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.getElementById('selectAll').addEventListener('change', function () {
+        document.querySelectorAll('.lead-check').forEach(cb => cb.checked = this.checked);
+    });
+
+    document.getElementById('syncForm').addEventListener('submit', function () {
+        document.getElementById('syncBtn').classList.add('syncing');
+    });
+
+    const fbSyncForm = document.getElementById('fbSyncForm');
+    if (fbSyncForm) {
+        fbSyncForm.addEventListener('submit', function () {
+            const btn = document.getElementById('fbSyncBtn');
+            btn.disabled = true;
+            btn.querySelector('.fb-sync-text').style.display = 'none';
+            btn.querySelector('.fb-sync-spinner').style.display = 'inline-block';
+        });
+    }
+
+    document.getElementById('refreshTokenBtn').addEventListener('click', function () {
+        const btn = this;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Refreshing...';
+        fetch('{{ url_for("indiamart_refresh_token_route") }}', { method: 'POST',
+            headers: { 'X-CSRFToken': document.querySelector('meta[name=csrf-token]')?.content || '' }
+        })
+        .then(r => r.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Token';
+            if (data.success) {
+                alert('✅ ' + data.message);
+                location.reload();
+            } else {
+                alert('❌ ' + data.error);
+            }
+        })
+        .catch(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Token';
+            alert('Network error. Please try again.');
+        });
+    });
+
+    // Persist filter state across lead view/back navigation
+    const FILTER_KEY = 'leadfy_filter_params';
+    const currentParams = window.location.search;
+
+    // If the page was loaded with no filters (bare /leads), check if we have a saved filter
+    if (!currentParams || currentParams === '?') {
+        const saved = sessionStorage.getItem(FILTER_KEY);
+        if (saved && saved !== '?') {
+            window.location.replace(window.location.pathname + saved);
+        }
+    } else {
+        // Save current filter state whenever filters are active
+        sessionStorage.setItem(FILTER_KEY, currentParams);
+    }
+
+    // Clear saved filter when user explicitly clears filters
+    document.querySelector('a[href="{{ url_for("leads_list") }}"]')?.addEventListener('click', function () {
+        sessionStorage.removeItem(FILTER_KEY);
+    });
+
+    let currentNoteLeadId = null;
+
+    function openNoteModal(el) {
+        currentNoteLeadId = el.dataset.leadId;
+        document.getElementById('noteLeadName').textContent = el.dataset.leadName;
+        document.getElementById('noteTextarea').value = el.dataset.note;
+        new bootstrap.Modal(document.getElementById('noteModal')).show();
+    }
+
+    function saveNote() {
+        if (!currentNoteLeadId) return;
+        const note = document.getElementById('noteTextarea').value;
+        const formData = new FormData();
+        formData.append('notes', note);
+        fetch(`/leads/${currentNoteLeadId}/note`, { method: 'POST', body: formData })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    bootstrap.Modal.getInstance(document.getElementById('noteModal')).hide();
+                    location.reload();
+                }
+            });
+    }
+</script>
+{% endblock %}

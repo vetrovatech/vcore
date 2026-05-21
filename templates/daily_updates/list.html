@@ -69,7 +69,7 @@
                             <h5 class="mb-0">{{ update.user.username }}</h5>
                             <small class="text-muted">
                                 <i class="bi bi-clock"></i>
-                                {{ update.created_at.strftime('%I:%M %p') }}
+                                {{ (update.created_at | to_ist).strftime('%I:%M %p') }}
                                 {% if update.updated_at != update.created_at %}
                                 <span class="badge bg-secondary ms-1">Edited</span>
                                 {% endif %}

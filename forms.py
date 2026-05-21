@@ -41,6 +41,7 @@ class ProjectForm(FlaskForm):
     """Project creation/edit form"""
     name = StringField('Project Name', validators=[DataRequired(), Length(max=200)])
     owner_id = SelectField('Project Owner', coerce=int, validators=[DataRequired()])
+    assigned_to_id = SelectField('Assigned To', coerce=int, validators=[Optional()])
     start_date = DateField('Start Date', validators=[DataRequired()], format='%Y-%m-%d')
     expected_end_date = DateField('Expected End Date', validators=[DataRequired()], format='%Y-%m-%d')
     actual_end_date = DateField('Actual End Date', validators=[Optional()], format='%Y-%m-%d')

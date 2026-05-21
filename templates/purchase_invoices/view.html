@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}{{ invoice.serial_number }} - Purchase Invoice{% endblock %}
+
+{% block extra_css %}
+<style>
+    .view-card {
+        background: #fff;
+        border-radius: 0.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        padding: 1.75rem;
+        margin-bottom: 1.25rem;
+    }
+    .section-title {
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: #94a3b8;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid #f1f5f9;
+    }
+    .detail-row { display:flex; justify-content:space-between; padding: 0.55rem 0; border-bottom: 1px solid #f8fafc; }
+    .detail-label { font-size: 0.8rem; color: #94a3b8; font-weight: 600; }
+    .detail-value { font-size: 0.875rem; color: #1e293b; font-weight: 500; text-align:right; }
+    .pi-banner {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        border-radius: 0.75rem;
+        padding: 1.25rem 1.5rem;
+        color: white;
+        margin-bottom: 1.5rem;
+    }
+    .bill-image { max-width:100%; border-radius: 0.5rem; border:1px solid #e2e8f0; }
+    .badge-gst    { background:#dcfce7; color:#15803d; }
+    .badge-nongst { background:#fef9c3; color:#854d0e; }
+    .badge-paid    { background:#dcfce7; color:#15803d; }
+    .badge-pending { background:#fef3c7; color:#92400e; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+
+    <!-- Banner -->
+    <div class="pi-banner d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+            <div class="d-flex align-items-center gap-2">
+                <a href="{{ url_for('purchase_invoices_list') }}"
+                   class="btn btn-sm text-white" style="opacity:0.8;">
+                    <i class="bi bi-arrow-left"></i>
+                </a>
+                <h4 class="mb-0 fw-bold">{{ invoice.serial_number }}</h4>
+                {% if invoice.status == 'Paid' %}
+                <span class="badge badge-paid rounded-pill px-3">Paid</span>
+                {% else %}
+                <span class="badge badge-pending rounded-pill px-3">Pending</span>
+                {% endif %}
+            </div>
+            <small class="opacity-75 ms-5">Bill No: {{ invoice.bill_number }}</small>
+        </div>
+        {% if current_user.is_manager_or_admin() %}
+        <a href="{{ url_for('purchase_invoice_edit', id=invoice.id) }}"
+           class="btn btn-light btn-sm fw-semibold">
+            <i class="bi bi-pencil me-1"></i> Edit
+        </a>
+        {% endif %}
+    </div>
+
+    <div class="row g-3">
+        <!-- Left: Invoice Details -->
+        <div class="col-md-7">
+            <div class="view-card">
+                <div class="section-title">Invoice Details</div>
+
+                <div class="detail-row">
+                    <span class="detail-label">Vendor</span>
+                    <span class="detail-value">
+                        <a href="{{ url_for('supplier_view', id=invoice.supplier.id) }}">
+                            {{ invoice.supplier.name }}
+                        </a>
+                    </span>
+                </div>
+                {% if invoice.quote %}
+                <div class="detail-row">
+                    <span class="detail-label">Linked Quotation</span>
+                    <span class="detail-value">
+                        <a href="{{ url_for('quote_view', id=invoice.quote.id) }}" target="_blank">
+                            {{ invoice.quote.quote_number }} — {{ invoice.quote.customer_name }}
+                        </a>
+                    </span>
+                </div>
+                {% elif invoice.project %}
+                <div class="detail-row">
+                    <span class="detail-label">Project</span>
+                    <span class="detail-value">
+                        <a href="{{ url_for('project_view', id=invoice.project.id) }}">
+                            {{ invoice.project.name }}
+                        </a>
+                    </span>
+                </div>
+                {% endif %}
+                <div class="detail-row">
+                    <span class="detail-label">Bill Number</span>
+                    <span class="detail-value">{{ invoice.bill_number }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Invoice Type</span>
+                    <span class="detail-value">
+                        {% if invoice.invoice_type == 'GST' %}
+                        <span class="badge badge-gst rounded-pill px-2">GST</span>
+                        {% else %}
+                        <span class="badge badge-nongst rounded-pill px-2">Non-GST</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Invoice Amount</span>
+                    <span class="detail-value fw-bold" style="font-size:1rem;">
+                        {% if invoice.invoice_amount %}
+                        &#8377;{{ '{:,.2f}'.format(invoice.invoice_amount) }}
+                        {% else %}—{% endif %}
+                    </span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Status</span>
+                    <span class="detail-value">
+                        {% if invoice.status == 'Paid' %}
+                        <span class="badge badge-paid rounded-pill px-2">Paid</span>
+                        {% else %}
+                        <span class="badge badge-pending rounded-pill px-2">Pending</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Created By</span>
+                    <span class="detail-value">{{ invoice.creator.username }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Created On</span>
+                    <span class="detail-value">{{ invoice.created_at.strftime('%d %b %Y, %I:%M %p') }}</span>
+                </div>
+
+                {% if invoice.notes %}
+                <div class="mt-3">
+                    <div class="detail-label mb-1">Notes</div>
+                    <div style="background:#f8fafc; border-radius:0.5rem; padding:0.75rem; font-size:0.875rem;">
+                        {{ invoice.notes }}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Right: Bill Image -->
+        <div class="col-md-5">
+            <div class="view-card">
+                <div class="section-title">Bill Image</div>
+                {% if invoice.bill_image_url %}
+                    {% if invoice.bill_image_url.endswith('.pdf') %}
+                    <a href="{{ bill_image_presigned }}" target="_blank"
+                       class="btn btn-outline-danger w-100">
+                        <i class="bi bi-file-pdf me-2"></i> View PDF Bill
+                    </a>
+                    {% else %}
+                    <a href="{{ bill_image_presigned }}" target="_blank">
+                        <img src="{{ bill_image_presigned }}" class="bill-image w-100"
+                             alt="Bill Image">
+                    </a>
+                    <small class="text-muted d-block mt-1 text-center">Click image to open full size</small>
+                    {% endif %}
+                {% else %}
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-image" style="font-size:2rem;"></i>
+                    <p class="mt-2 mb-0 small">No image uploaded</p>
+                </div>
+                {% endif %}
+            </div>
+
+            {% if current_user.is_admin() %}
+            <div class="view-card">
+                <div class="section-title">Danger Zone</div>
+                <form method="POST" action="{{ url_for('purchase_invoice_delete', id=invoice.id) }}"
+                      onsubmit="return confirm('Delete {{ invoice.serial_number }}? This cannot be undone.')">
+
+                    <button type="submit" class="btn btn-outline-danger btn-sm w-100">
+                        <i class="bi bi-trash me-1"></i> Delete Invoice
+                    </button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+{% endblock %}

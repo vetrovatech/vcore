@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if invoice else 'New' }} Purchase Invoice{% endblock %}
+
+{% block extra_css %}
+<style>
+    .form-card {
+        background: #fff;
+        border-radius: 0.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        padding: 1.75rem;
+        margin-bottom: 1.5rem;
+    }
+    .section-title {
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: #94a3b8;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid #f1f5f9;
+    }
+    .form-label { font-weight: 600; font-size: 0.85rem; }
+    .required-star { color: #ef4444; }
+    .image-preview {
+        max-width: 100%;
+        max-height: 200px;
+        border-radius: 0.5rem;
+        border: 1px solid #e2e8f0;
+        object-fit: contain;
+    }
+    .add-new-link {
+        font-size: 0.8rem;
+        cursor: pointer;
+        color: #2563eb;
+        text-decoration: none;
+    }
+    .add-new-link:hover { text-decoration: underline; }
+    .quote-option-sub { font-size: 0.75rem; color: #94a3b8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex align-items-center gap-2 mb-3">
+        <a href="{{ url_for('purchase_invoices_list') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i>
+        </a>
+        <h5 class="mb-0 fw-bold">
+            {{ 'Edit ' + invoice.serial_number if invoice else 'New Purchase Invoice' }}
+        </h5>
+    </div>
+
+    <form method="POST" enctype="multipart/form-data">
+
+        <div class="form-card">
+            <div class="section-title">Invoice Details</div>
+            <div class="row g-3">
+
+                <!-- Vendor -->
+                <div class="col-md-6">
+                    <label class="form-label">Vendor <span class="required-star">*</span></label>
+                    <div class="d-flex gap-2 align-items-center">
+                        <select name="supplier_id" id="supplierSelect" class="form-select" required>
+                            <option value="">— Select Vendor —</option>
+                            {% for s in suppliers %}
+                            <option value="{{ s.id }}"
+                                {% if invoice and invoice.supplier_id == s.id %}selected{% endif %}>
+                                {{ s.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <a class="add-new-link text-nowrap" data-bs-toggle="modal" data-bs-target="#addVendorModal">
+                            <i class="bi bi-plus-circle"></i> New
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Linked Quotation (replaces Project) -->
+                <div class="col-md-6">
+                    <label class="form-label">Linked Quotation <span class="required-star">*</span></label>
+                    <select name="quote_id" class="form-select" required>
+                        <option value="">— Select Accepted Quotation —</option>
+                        {% for q in accepted_quotes %}
+                        <option value="{{ q.id }}"
+                            {% if invoice and invoice.quote_id == q.id %}selected{% endif %}>
+                            {{ q.quote_number }} — {{ q.customer_name }}
+                            {% if q.customer_city %}({{ q.customer_city }}){% endif %}
+                            · ₹{{ "{:,.0f}".format(q.total) }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Only Accepted quotations are shown.</div>
+                </div>
+
+                <!-- Bill Number -->
+                <div class="col-md-4">
+                    <label class="form-label">Bill Number <span class="required-star">*</span></label>
+                    <input type="text" name="bill_number" class="form-control" required
+                           value="{{ invoice.bill_number if invoice else '' }}"
+                           placeholder="e.g. INV-2024-001">
+                </div>
+
+                <!-- Invoice Type -->
+                <div class="col-md-4">
+                    <label class="form-label">Invoice Type</label>
+                    <div class="d-flex gap-3 mt-1">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="invoice_type"
+                                   id="typeGST" value="GST"
+                                   {% if not invoice or invoice.invoice_type == 'GST' %}checked{% endif %}>
+                            <label class="form-check-label" for="typeGST">GST</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="invoice_type"
+                                   id="typeNonGST" value="Non-GST"
+                                   {% if invoice and invoice.invoice_type == 'Non-GST' %}checked{% endif %}>
+                            <label class="form-check-label" for="typeNonGST">Non-GST</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Invoice Amount -->
+                <div class="col-md-4">
+                    <label class="form-label">Invoice Amount (incl. Taxes)</label>
+                    <div class="input-group">
+                        <span class="input-group-text">&#8377;</span>
+                        <input type="number" name="invoice_amount" id="invoiceAmount" class="form-control"
+                               step="0.01" min="0" placeholder="0.00"
+                               value="{{ invoice.invoice_amount if invoice and invoice.invoice_amount else '' }}"
+                               oninput="updateBalance()">
+                    </div>
+                </div>
+
+                <!-- Amount Paid (Vendor Payment) -->
+                <div class="col-md-4">
+                    <label class="form-label">Amount Paid to Vendor</label>
+                    <div class="input-group">
+                        <span class="input-group-text">&#8377;</span>
+                        <input type="number" name="amount_paid" id="amountPaid" class="form-control"
+                               step="0.01" min="0" placeholder="0.00"
+                               value="{{ invoice.amount_paid if invoice and invoice.amount_paid else '0' }}"
+                               oninput="updateBalance()">
+                    </div>
+                    <div class="form-text">Enter advance or partial payment made so far.</div>
+                </div>
+
+                <!-- Vendor Balance (calculated, read-only) -->
+                <div class="col-md-4">
+                    <label class="form-label">Vendor Balance Due</label>
+                    <div class="input-group">
+                        <span class="input-group-text">&#8377;</span>
+                        <input type="text" id="vendorBalance" class="form-control bg-light" readonly placeholder="—">
+                    </div>
+                    <div class="form-text" id="vendorPayStatus"></div>
+                </div>
+
+                <!-- Bill Image -->
+                <div class="col-md-12">
+                    <label class="form-label">
+                        Bill Image
+                        {% if not invoice %}<span class="required-star">*</span>{% endif %}
+                        <small class="text-muted fw-normal">(JPG, PNG or PDF)</small>
+                    </label>
+                    <input type="file" name="bill_image" class="form-control"
+                           accept="image/*,.pdf"
+                           {% if not invoice %}required{% endif %}
+                           onchange="previewImage(this)">
+                    {% if invoice and invoice.bill_image_url %}
+                    <div class="mt-2">
+                        <small class="text-muted">Current file:</small><br>
+                        {% if invoice.bill_image_url.endswith('.pdf') %}
+                        <a href="{{ bill_image_presigned }}" target="_blank" class="btn btn-outline-secondary btn-sm mt-1">
+                            <i class="bi bi-file-pdf"></i> View PDF
+                        </a>
+                        {% else %}
+                        <img src="{{ bill_image_presigned }}" class="image-preview mt-1" id="imgPreview">
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <img id="imgPreview" class="image-preview mt-2 d-none">
+                    {% endif %}
+                </div>
+
+                <!-- Notes / PI Details -->
+                <div class="col-12">
+                    <label class="form-label">PI Details / Notes <small class="text-muted fw-normal">(optional)</small></label>
+                    <textarea name="notes" class="form-control" rows="2"
+                              placeholder="What was purchased, material details, etc.">{{ invoice.notes if invoice and invoice.notes else '' }}</textarea>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary px-4">
+                <i class="bi bi-save me-1"></i> {{ 'Update' if invoice else 'Save Invoice' }}
+            </button>
+            <a href="{{ url_for('purchase_invoices_list') }}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<!-- Add Vendor Modal -->
+<div class="modal fade" id="addVendorModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-building me-2"></i>Add New Vendor</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Vendor Name <span class="required-star">*</span></label>
+                    <input type="text" id="newVendorName" class="form-control" placeholder="Company / Supplier name">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Phone <span class="required-star">*</span></label>
+                    <input type="text" id="newVendorPhone" class="form-control" placeholder="Phone number">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">GSTIN <span class="text-muted fw-normal">(optional)</span></label>
+                    <input type="text" id="newVendorGST" class="form-control" placeholder="e.g. 29ABCDE1234F1Z5">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Address <span class="text-muted fw-normal">(optional)</span></label>
+                    <textarea id="newVendorAddress" class="form-control" rows="3" placeholder="Street, City, State, PIN"></textarea>
+                </div>
+                <div id="vendorError" class="alert alert-danger py-2 d-none"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveVendor()">
+                    <i class="bi bi-save me-1"></i> Save Vendor
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function updateBalance() {
+    const inv  = parseFloat(document.getElementById('invoiceAmount').value) || 0;
+    const paid = parseFloat(document.getElementById('amountPaid').value)    || 0;
+    const bal  = inv - paid;
+    const balEl    = document.getElementById('vendorBalance');
+    const statusEl = document.getElementById('vendorPayStatus');
+    if (inv > 0) {
+        balEl.value = bal.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        if (paid <= 0)       { statusEl.textContent = 'Status: Pending'; statusEl.className = 'form-text text-muted'; }
+        else if (paid >= inv){ statusEl.textContent = 'Status: Paid';    statusEl.className = 'form-text text-success fw-semibold'; }
+        else                 { statusEl.textContent = `Status: Partial · Balance ₹${bal.toLocaleString('en-IN')}`; statusEl.className = 'form-text text-warning fw-semibold'; }
+    } else {
+        balEl.value = '';
+        statusEl.textContent = '';
+    }
+}
+
+function previewImage(input) {
+    const preview = document.getElementById('imgPreview');
+    if (input.files && input.files[0]) {
+        const file = input.files[0];
+        if (file.type === 'application/pdf') { preview.classList.add('d-none'); return; }
+        const reader = new FileReader();
+        reader.onload = e => { preview.src = e.target.result; preview.classList.remove('d-none'); };
+        reader.readAsDataURL(file);
+    }
+}
+
+function saveVendor() {
+    const name    = document.getElementById('newVendorName').value.trim();
+    const phone   = document.getElementById('newVendorPhone').value.trim();
+    const gstin   = document.getElementById('newVendorGST').value.trim();
+    const address = document.getElementById('newVendorAddress').value.trim();
+    const errEl   = document.getElementById('vendorError');
+    if (!name)  { errEl.textContent = 'Vendor name is required.';  errEl.classList.remove('d-none'); return; }
+    if (!phone) { errEl.textContent = 'Phone number is required.'; errEl.classList.remove('d-none'); return; }
+    errEl.classList.add('d-none');
+    const fd = new FormData();
+    fd.append('name', name);
+    fd.append('phone', phone);
+    fd.append('gstin', gstin);
+    fd.append('address', address);
+    fetch('{{ url_for("supplier_quick_add") }}', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                const sel = document.getElementById('supplierSelect');
+                sel.add(new Option(data.name, data.id, true, true));
+                bootstrap.Modal.getInstance(document.getElementById('addVendorModal')).hide();
+                document.getElementById('newVendorName').value    = '';
+                document.getElementById('newVendorPhone').value   = '';
+                document.getElementById('newVendorGST').value     = '';
+                document.getElementById('newVendorAddress').value = '';
+            } else { errEl.textContent = data.error; errEl.classList.remove('d-none'); }
+        });
+}
+
+// Init balance on page load (edit mode)
+document.addEventListener('DOMContentLoaded', updateBalance);
+</script>
+{% endblock %}

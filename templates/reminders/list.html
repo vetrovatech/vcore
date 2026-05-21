@@ -47,7 +47,7 @@
                                 {% endif %}
                             </td>
                             <td>{{ reminder.user.username }}</td>
-                            <td>{{ reminder.reminder_datetime.strftime('%d %b %Y, %I:%M %p') }}</td>
+                            <td>{{ (reminder.reminder_datetime | to_ist).strftime('%d %b %Y, %I:%M %p') }}</td>
                             <td>
                                 {% if reminder.is_recurring %}
                                 <span class="badge bg-success">{{ reminder.recurrence_pattern|title }}</span>

@@ -1,0 +1,454 @@
+{% extends "base.html" %}
+{% block title %}{{ lead.name or 'Unknown' }} — Leadfy{% endblock %}
+
+{% block extra_css %}
+<style>
+    .lead-header-card {
+        background: #fff;
+        border-radius: 0.75rem;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+        padding: 1.5rem;
+        margin-bottom: 1.25rem;
+    }
+    .lead-avatar-lg {
+        width: 54px; height: 54px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 700; font-size: 1.2rem; color: white; flex-shrink: 0;
+    }
+    .lead-name { font-size: 1.3rem; font-weight: 700; color: #1e293b; margin: 0; }
+    .lead-meta { font-size: 0.81rem; color: #64748b; margin-top: 0.2rem; }
+    .stage-badge { font-size: 0.73rem; font-weight: 600; padding: 0.28rem 0.7rem; border-radius: 20px; }
+
+    .action-btn {
+        display: inline-flex; align-items: center; gap: 0.4rem;
+        padding: 0.42rem 1rem; border-radius: 0.5rem;
+        font-size: 0.82rem; font-weight: 600;
+        text-decoration: none; border: 1.5px solid; transition: all 0.15s;
+    }
+    .btn-call  { border-color:#bfdbfe;background:#eff6ff;color:#2563eb; }
+    .btn-call:hover   { background:#2563eb;color:white; }
+    .btn-wa    { border-color:#bbf7d0;background:#f0fdf4;color:#16a34a; }
+    .btn-wa:hover     { background:#16a34a;color:white; }
+    .btn-email { border-color:#e2e8f0;background:#f8fafc;color:#475569; }
+    .btn-email:hover  { background:#475569;color:white; }
+    .btn-edit  { border-color:#e2e8f0;background:#f8fafc;color:#475569; }
+    .btn-edit:hover   { background:#475569;color:white; }
+
+    .info-card {
+        background: #fff; border-radius: 0.75rem;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+        padding: 1.25rem 1.5rem; margin-bottom: 1.25rem;
+    }
+    .info-card h6 {
+        font-size: 0.68rem; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.8px;
+        color: #94a3b8; margin-bottom: 1rem;
+    }
+    .detail-row {
+        display: flex; justify-content: space-between; align-items: flex-start;
+        padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9; font-size: 0.84rem;
+    }
+    .detail-row:last-child { border-bottom: none; }
+    .detail-label { color: #64748b; font-weight: 500; min-width: 120px; display:flex; align-items:center; gap:0.35rem; }
+    .detail-value { color: #1e293b; font-weight: 600; text-align: right; word-break: break-word; max-width: 60%; }
+
+    .enquiry-box {
+        background: #f0f9ff; border: 1px solid #bae6fd;
+        border-radius: 0.5rem; padding: 0.85rem 1rem;
+        font-size: 0.88rem; color: #0c4a6e;
+        font-style: italic; line-height: 1.6;
+    }
+
+    .note-box {
+        background: #fefce8; border: 1px solid #fef08a;
+        border-radius: 0.5rem; padding: 0.85rem 1rem;
+        font-size: 0.85rem; color: #713f12; white-space: pre-wrap;
+    }
+
+    /* History */
+    .history-item { display:flex; gap:0.85rem; padding:0.85rem 0; border-bottom:1px solid #f1f5f9; }
+    .history-item:last-child { border-bottom:none; }
+    .history-icon {
+        width:30px; height:30px; border-radius:50%;
+        display:flex; align-items:center; justify-content:center;
+        font-size:0.72rem; flex-shrink:0; margin-top:2px;
+    }
+    .icon-stage   { background:#eff6ff;color:#2563eb; }
+    .icon-note    { background:#fefce8;color:#ca8a04; }
+    .icon-field   { background:#f0fdf4;color:#16a34a; }
+    .icon-created { background:#f5f3ff;color:#7c3aed; }
+    .history-text { font-size:0.83rem; color:#1e293b; line-height:1.5; }
+    .history-meta { font-size:0.72rem; color:#94a3b8; margin-top:0.15rem; }
+    .history-meta strong { color:#64748b; }
+
+    .pill-badge {
+        display:inline-block; font-size:0.7rem; font-weight:600;
+        padding:0.2rem 0.55rem; border-radius:20px; margin:0.1rem;
+    }
+    .unread-dot {
+        display:inline-flex; align-items:center; justify-content:center;
+        width:20px; height:20px; border-radius:50%;
+        background:#ef4444; color:white; font-size:0.65rem; font-weight:700;
+    }
+    .stage-selector { cursor:pointer; font-size:0.75rem; }
+    .stage-selector:hover { opacity:0.8; }
+    .empty-history { text-align:center; padding:2rem 1rem; color:#94a3b8; font-size:0.84rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="mb-3">
+    <a href="{{ url_for('leads_list') }}" class="text-muted text-decoration-none" style="font-size:0.84rem;">
+        <i class="bi bi-arrow-left"></i> Back to Leads
+    </a>
+</div>
+
+<!-- ── HEADER ── -->
+<div class="lead-header-card">
+    <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+
+        <div class="d-flex align-items-center gap-3">
+            <div class="lead-avatar-lg" style="background:#6366f1;">
+                {{ lead.get_initials() }}
+            </div>
+            <div>
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <h1 class="lead-name">{{ lead.name or 'Unknown' }}</h1>
+                    <span class="badge stage-badge bg-{{ lead.get_stage_badge_class() }}">{{ lead.stage }}</span>
+
+                    {% if lead.lead_type == 'Missed Call' %}
+                    <span class="badge pill-badge" style="background:#fef2f2;color:#dc2626;">
+                        <i class="bi bi-telephone-x-fill"></i> Missed Call
+                    </span>
+                    {% elif lead.lead_type == 'Call' %}
+                    <span class="badge pill-badge" style="background:#eff6ff;color:#2563eb;">
+                        <i class="bi bi-telephone-fill"></i> Call
+                    </span>
+                    {% elif lead.lead_type == 'Buy Lead' %}
+                    <span class="badge pill-badge" style="background:#f0fdf4;color:#16a34a;">
+                        <i class="bi bi-cart-check-fill"></i> Buy Lead
+                    </span>
+                    {% elif lead.lead_type %}
+                    <span class="badge pill-badge" style="background:#f1f5f9;color:#475569;">
+                        <i class="bi bi-envelope-fill"></i> {{ lead.lead_type }}
+                    </span>
+                    {% endif %}
+
+                    {% if lead.is_gst_registered %}
+                    <span class="badge pill-badge" style="background:#ecfdf5;color:#065f46;">
+                        <i class="bi bi-patch-check-fill"></i> GST Registered
+                    </span>
+                    {% endif %}
+
+                    {% if lead.is_starred %}
+                    <span class="badge pill-badge" style="background:#fefce8;color:#854d0e;">
+                        <i class="bi bi-star-fill"></i> Starred
+                    </span>
+                    {% endif %}
+
+                    {% if lead.unread_count and lead.unread_count > 0 %}
+                    <span class="unread-dot" title="{{ lead.unread_count }} unread messages">
+                        {{ lead.unread_count }}
+                    </span>
+                    {% endif %}
+
+                    {% if lead.origin == 'IndiaMart' %}
+                    <span class="badge bg-success pill-badge">IndiaMart</span>
+                    {% endif %}
+                </div>
+
+                <div class="lead-meta mt-1">
+                    Owner: <strong>{{ lead.owner.username if lead.owner else '—' }}</strong>
+                    {% if lead.assigned_to %}&nbsp;&middot;&nbsp; Assigned: <strong>{{ lead.assigned_to.username }}</strong>{% endif %}
+                    &nbsp;&middot;&nbsp; Age: <strong>{{ lead.get_age_days() }} days</strong>
+                    {% if lead.company %}&nbsp;&middot;&nbsp; <i class="bi bi-building"></i> <strong>{{ lead.company }}</strong>{% endif %}
+                </div>
+                <div class="lead-meta">
+                    Updated {{ (lead.updated_at | to_ist).strftime('%d %b %Y, %I:%M %p') }}
+                    {% if lead.creator %} by <strong>{{ lead.creator.username }}</strong>{% endif %}
+                </div>
+
+                {% if lead.indiamart_labels %}
+                <div class="mt-1">
+                    {% for lbl in lead.indiamart_labels.split(',') %}
+                    <span class="pill-badge" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;">
+                        <i class="bi bi-tag"></i> {{ lbl.strip() }}
+                    </span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="d-flex flex-wrap gap-2">
+            {% if lead.contact %}
+            <a href="tel:{{ lead.contact }}" class="action-btn btn-call">
+                <i class="bi bi-telephone-fill"></i> {{ lead.contact }}
+            </a>
+            <a href="https://wa.me/91{{ lead.contact | replace(' ','') | replace('-','') }}"
+               target="_blank" class="action-btn btn-wa">
+                <i class="bi bi-whatsapp"></i> WhatsApp
+            </a>
+            {% endif %}
+            {% if lead.email %}
+            <a href="mailto:{{ lead.email }}" class="action-btn btn-email">
+                <i class="bi bi-envelope-fill"></i> {{ lead.email }}
+            </a>
+            {% endif %}
+            <a href="{{ url_for('lead_edit', id=lead.id) }}" class="action-btn btn-edit">
+                <i class="bi bi-pencil-fill"></i> Edit
+            </a>
+        </div>
+    </div>
+
+    <!-- Quick Stage Change -->
+    <div class="mt-3 pt-3 border-top d-flex align-items-center gap-2 flex-wrap">
+        <span style="font-size:0.73rem;color:#94a3b8;font-weight:700;letter-spacing:0.5px;">MOVE TO:</span>
+        {% for s in ['New Lead','Contacted','Not Connected','Qualified','PI Shared','Closed Won','Closed Lost','Junk'] %}
+        {% if s != lead.stage %}
+        <form method="POST" action="{{ url_for('lead_edit', id=lead.id) }}" style="display:inline;">
+            <input type="hidden" name="stage" value="{{ s }}">
+            <input type="hidden" name="name" value="{{ lead.name or '' }}">
+            <input type="hidden" name="contact" value="{{ lead.contact or '' }}">
+            <input type="hidden" name="email" value="{{ lead.email or '' }}">
+            <input type="hidden" name="city" value="{{ lead.city or '' }}">
+            <input type="hidden" name="state" value="{{ lead.state or '' }}">
+            <input type="hidden" name="origin" value="{{ lead.origin or '' }}">
+            <input type="hidden" name="owner_id" value="{{ lead.owner_id or '' }}">
+            <button type="submit" class="btn btn-sm {% if s == 'Junk' %}btn-outline-dark{% else %}btn-outline-secondary{% endif %} stage-selector">{{ s }}</button>
+        </form>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    <!-- B2B / B2C Label -->
+    <div class="mt-2 pt-2 border-top d-flex align-items-center gap-2 flex-wrap">
+        <span style="font-size:0.73rem;color:#94a3b8;font-weight:700;letter-spacing:0.5px;">CUSTOMER TYPE:</span>
+        <button onclick="setCustomerType('B2B')"
+            class="btn btn-sm {% if lead.customer_type == 'B2B' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+            id="btn-b2b">B2B</button>
+        <button onclick="setCustomerType('B2C')"
+            class="btn btn-sm {% if lead.customer_type == 'B2C' %}btn-success{% else %}btn-outline-success{% endif %}"
+            id="btn-b2c">B2C</button>
+        {% if lead.customer_type %}
+        <span class="text-muted" style="font-size:0.75rem;">Currently: <strong>{{ lead.customer_type }}</strong></span>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-3">
+
+    <!-- ── LEFT COLUMN ── -->
+    <div class="col-lg-4">
+
+        <!-- Enquiry Message -->
+        {% if lead.last_message %}
+        <div class="info-card">
+            <h6><i class="bi bi-chat-quote-fill text-primary"></i> Enquiry Message</h6>
+            <div class="enquiry-box">"{{ lead.last_message }}"</div>
+        </div>
+        {% endif %}
+
+        <!-- Contact Details -->
+        <div class="info-card">
+            <h6><i class="bi bi-person-lines-fill"></i> Contact Details</h6>
+
+            {% if lead.contact %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-telephone"></i> Phone</span>
+                <span class="detail-value">{{ lead.contact }}</span>
+            </div>
+            {% endif %}
+
+            {% if lead.email %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-envelope"></i> Email</span>
+                <span class="detail-value" style="word-break:break-all;">{{ lead.email }}</span>
+            </div>
+            {% endif %}
+
+            {% if lead.company %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-building"></i> Company</span>
+                <span class="detail-value">{{ lead.company }}</span>
+            </div>
+            {% endif %}
+
+            {% if lead.city or lead.state %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-geo-alt"></i> Location</span>
+                <span class="detail-value">
+                    {% if lead.city and lead.state %}{{ lead.city }}, {{ lead.state }}
+                    {% elif lead.city %}{{ lead.city }}
+                    {% else %}{{ lead.state }}{% endif %}
+                </span>
+            </div>
+            {% endif %}
+
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-patch-check"></i> GST</span>
+                <span class="detail-value">
+                    {% if lead.is_gst_registered %}
+                    <span class="text-success fw-bold">Yes</span>
+                    {% else %}
+                    <span class="text-muted">No</span>
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+
+        <!-- Product / Requirement -->
+        <div class="info-card">
+            <h6><i class="bi bi-box-seam-fill"></i> Requirement</h6>
+
+            {% if lead.product_interest %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-box-seam"></i> Product</span>
+                <span class="detail-value">{{ lead.product_interest }}</span>
+            </div>
+            {% endif %}
+
+            {% if lead.product_category %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-tag"></i> Category</span>
+                <span class="detail-value">{{ lead.product_category }}</span>
+            </div>
+            {% endif %}
+
+            {% if lead.product_qty %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-stack"></i> Quantity</span>
+                <span class="detail-value">{{ lead.product_qty }}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- IndiaMart Info -->
+        {% if lead.origin == 'IndiaMart' %}
+        <div class="info-card">
+            <h6><i class="bi bi-shop"></i> IndiaMart Info</h6>
+
+            {% if lead.indiamart_added_date %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-calendar-plus"></i> Enquiry Date</span>
+                <span class="detail-value">{{ (lead.indiamart_added_date | to_ist).strftime('%d %b %Y, %I:%M %p') }}</span>
+            </div>
+            {% endif %}
+
+            {% if lead.indiamart_last_contact %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-clock-history"></i> Last Contact</span>
+                <span class="detail-value">{{ (lead.indiamart_last_contact | to_ist).strftime('%d %b %Y, %I:%M %p') }}</span>
+            </div>
+            {% endif %}
+
+            {% if lead.unread_count %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-chat-dots"></i> Unread Msgs</span>
+                <span class="detail-value">
+                    <span class="badge bg-danger">{{ lead.unread_count }}</span>
+                </span>
+            </div>
+            {% endif %}
+
+            {% if lead.buyer_glid %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-hash"></i> Buyer GLID</span>
+                <span class="detail-value text-muted">{{ lead.buyer_glid }}</span>
+            </div>
+            {% endif %}
+
+            {% if lead.indiamart_notes %}
+            <div class="mt-2">
+                <div class="filter-label mb-1" style="font-size:0.7rem;color:#94a3b8;font-weight:700;">INDIAMART NOTES</div>
+                <div class="note-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#14532d;">{{ lead.indiamart_notes }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+    </div>
+
+    <!-- ── RIGHT COLUMN ── -->
+    <div class="col-lg-8">
+
+        <!-- Notes -->
+        <div class="info-card">
+            <h6><i class="bi bi-sticky-fill text-warning"></i> Notes</h6>
+            {% if lead.notes %}
+            <div class="note-box mb-2">{{ lead.notes }}</div>
+            {% endif %}
+            <textarea class="form-control" id="noteInput" rows="3"
+                placeholder="Add a note..." style="font-size:0.84rem;">{{ lead.notes or '' }}</textarea>
+            <button class="btn btn-warning btn-sm mt-2" onclick="saveNote()">
+                <i class="bi bi-save"></i> Save Note
+            </button>
+        </div>
+
+        <!-- History -->
+        <div class="info-card">
+            <h6>
+                <i class="bi bi-clock-history"></i> History
+                <span class="badge bg-secondary ms-1" style="font-size:0.62rem;">{{ history|length }}</span>
+            </h6>
+
+            {% if history %}
+            {% for entry in history %}
+            <div class="history-item">
+                <div class="history-icon
+                    {% if entry.action == 'stage_change' %}icon-stage
+                    {% elif entry.action == 'note' %}icon-note
+                    {% elif entry.action == 'created' %}icon-created
+                    {% else %}icon-field{% endif %}">
+                    {% if entry.action == 'stage_change' %}<i class="bi bi-arrow-left-right"></i>
+                    {% elif entry.action == 'note' %}<i class="bi bi-sticky-fill"></i>
+                    {% elif entry.action == 'created' %}<i class="bi bi-person-plus-fill"></i>
+                    {% else %}<i class="bi bi-pencil-fill"></i>{% endif %}
+                </div>
+                <div style="flex:1;">
+                    <div class="history-text">{{ entry.description | safe }}</div>
+                    <div class="history-meta">
+                        By <strong>{{ entry.user.username if entry.user else '—' }}</strong>
+                        &middot; {{ (entry.created_at | to_ist).strftime('%d %b %Y, %I:%M %p') }}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% else %}
+            <div class="empty-history">
+                <i class="bi bi-clock-history d-block mb-2" style="font-size:2rem;"></i>
+                No history yet. Changes will appear here.
+            </div>
+            {% endif %}
+        </div>
+
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function saveNote() {
+    const note = document.getElementById('noteInput').value;
+    const fd = new FormData();
+    fd.append('notes', note);
+    fetch('{{ url_for("lead_save_note", id=lead.id) }}', { method:'POST', body:fd })
+        .then(r => r.json())
+        .then(d => { if (d.success) location.reload(); });
+}
+
+function setCustomerType(type) {
+    const current = '{{ lead.customer_type or "" }}';
+    // Toggle off if already selected
+    const newType = current === type ? '' : type;
+    const fd = new FormData();
+    fd.append('customer_type', newType);
+    fetch('{{ url_for("lead_set_customer_type", id=lead.id) }}', { method:'POST', body:fd })
+        .then(r => r.json())
+        .then(d => { if (d.success) location.reload(); });
+}
+</script>
+{% endblock %}

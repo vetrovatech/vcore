@@ -13,6 +13,14 @@ document.addEventListener('DOMContentLoaded', function () {
     // Check if we're editing an existing quote
     if (window.existingQuoteData && window.existingQuoteData.items.length > 0) {
         if (window.existingQuoteData.quoteType === 'B2C') {
+            // Restore rate mode before loading rows
+            if (window.existingQuoteData.b2cRateMode === 'qty') {
+                b2cRateMode = 'qty';
+                const modeSelect = document.querySelector('#b2cItemsTable thead select');
+                if (modeSelect) modeSelect.value = 'qty';
+                const sizeHeader = document.getElementById('b2cSizeHeader');
+                if (sizeHeader) sizeHeader.textContent = 'Qty';
+            }
             // Load flat B2C items (all items are non-group leaf nodes)
             loadB2CItems(window.existingQuoteData.items.filter(i => !i.is_group));
         } else {
@@ -24,6 +32,9 @@ document.addEventListener('DOMContentLoaded', function () {
                        document.querySelector('input[type="hidden"][name="quote_type"]');
         if (!typeEl || typeEl.value !== 'B2C') {
             addGroup();
+            // Default handling to 1% for new B2B quotes
+            const handlingPctEl = document.getElementById('handling_percentage');
+            if (handlingPctEl && !handlingPctEl.value) handlingPctEl.value = 1;
         }
     }
 
@@ -66,28 +77,34 @@ function loadExistingItems(items) {
                 <td class="item-number" style="font-weight: bold;">${groupCounter}</td>
                 <td colspan="12">
                     <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                        <input type="text" class="form-control form-control-sm particular-input" 
-                               name="items[${itemCounter}][particular]" 
+                        <input type="text" class="form-control form-control-sm particular-input"
+                               name="items[${itemCounter}][particular]"
                                value="${item.particular}"
                                placeholder="Product Group (e.g., 8mm Toughened Glass)"
                                style="font-weight: bold; flex: 1; min-width: 200px;" required>
                         <button type="button" class="btn btn-sm btn-info" onclick="openGlassCatalogModal(this)" title="Browse Glass Catalog">
                             <i class="bi bi-grid-3x3"></i> Browse
                         </button>
+                        <label class="form-label mb-0" style="white-space: nowrap;">Rate (₹/sqm):</label>
+                        <input type="number" step="0.01" class="form-control form-control-sm group-rate-input"
+                               name="items[${itemCounter}][rate_sqper]"
+                               value="${item.rate_sqper || ''}"
+                               placeholder="0.00" style="width: 90px;" min="0"
+                               oninput="propagateGroupRate(this)" title="Set rate for all items in this group">
                         <label class="form-label mb-0" style="white-space: nowrap;">Chargeable Extra (MM):</label>
-                        <input type="number" class="form-control form-control-sm chargeable-extra-input" 
-                               name="items[${itemCounter}][chargeable_extra]" 
+                        <input type="number" class="form-control form-control-sm chargeable-extra-input"
+                               name="items[${itemCounter}][chargeable_extra]"
                                value="${item.chargeable_extra || 30}"
                                style="width: 80px;" min="0">
                         <label class="form-label mb-0" style="white-space: nowrap;">Hole Price:</label>
-                        <input type="number" step="0.01" class="form-control form-control-sm hole-price-input" 
-                               name="items[${itemCounter}][hole_price]" 
-                               value="${item.hole_price || 400}"
+                        <input type="number" step="0.01" class="form-control form-control-sm hole-price-input"
+                               name="items[${itemCounter}][hole_price]"
+                               value="${item.hole_price}"
                                style="width: 80px;" min="0">
                         <label class="form-label mb-0" style="white-space: nowrap;">Cutout Price:</label>
-                        <input type="number" step="0.01" class="form-control form-control-sm cutout-price-input" 
-                               name="items[${itemCounter}][cutout_price]" 
-                               value="${item.cutout_price || 100}"
+                        <input type="number" step="0.01" class="form-control form-control-sm cutout-price-input"
+                               name="items[${itemCounter}][cutout_price]"
+                               value="${item.cutout_price}"
                                style="width: 80px;" min="0">
                         <button type="button" class="btn btn-sm btn-primary" onclick="recalculateGroupItems(this)" title="Recalculate all items in this group">
                             <i class="bi bi-arrow-clockwise"></i>
@@ -149,62 +166,63 @@ function addSubItemWithData(groupRow, data) {
             <input type="number" step="0.01" class="form-control form-control-sm size-input actual-width" 
                    name="items[${itemCounter}][actual_width]" 
                    value="${data.actual_width || ''}"
-                   placeholder="Width" onchange="applyChargeableExtra(this)">
+                   placeholder="Width" oninput="applyChargeableExtra(this)">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input actual-height" 
-                   name="items[${itemCounter}][actual_height]" 
+            <input type="number" step="0.01" class="form-control form-control-sm size-input actual-height"
+                   name="items[${itemCounter}][actual_height]"
                    value="${data.actual_height || ''}"
-                   placeholder="Height" onchange="applyChargeableExtra(this)">
+                   placeholder="Height" oninput="applyChargeableExtra(this)">
         </td>
         <td>
-            <select class="form-select form-select-sm" name="items[${itemCounter}][unit]">
+            <select class="form-select form-select-sm" name="items[${itemCounter}][unit]"
+                    onchange="calculateItemTotal(this)">
                 <option value="MM" ${data.unit === 'MM' ? 'selected' : ''}>MM</option>
                 <option value="sqft" ${data.unit === 'sqft' ? 'selected' : ''}>sqft</option>
                 <option value="pcs" ${data.unit === 'pcs' ? 'selected' : ''}>pcs</option>
             </select>
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input chargeable-width" 
-                   name="items[${itemCounter}][chargeable_width]" 
+            <input type="number" step="0.01" class="form-control form-control-sm size-input chargeable-width"
+                   name="items[${itemCounter}][chargeable_width]"
                    value="${data.chargeable_width || ''}"
-                   placeholder="Width" onchange="calculateItemTotal(this)">
+                   placeholder="Width" oninput="calculateItemTotal(this)">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input chargeable-height" 
-                   name="items[${itemCounter}][chargeable_height]" 
+            <input type="number" step="0.01" class="form-control form-control-sm size-input chargeable-height"
+                   name="items[${itemCounter}][chargeable_height]"
                    value="${data.chargeable_height || ''}"
-                   placeholder="Height" onchange="calculateItemTotal(this)">
+                   placeholder="Height" oninput="calculateItemTotal(this)">
         </td>
         <td>
-            <input type="number" class="form-control form-control-sm qty-input" 
-                   name="items[${itemCounter}][quantity]" 
+            <input type="number" class="form-control form-control-sm qty-input"
+                   name="items[${itemCounter}][quantity]"
                    value="${data.quantity}"
-                   min="1" onchange="calculateItemTotal(this)" required>
+                   min="1" oninput="calculateItemTotal(this)" required>
         </td>
         <td>
-            <input type="number" step="0.0001" class="form-control form-control-sm unit-square-display" 
-                   name="items[${itemCounter}][unit_square]" 
+            <input type="number" step="0.0001" class="form-control form-control-sm unit-square-display"
+                   name="items[${itemCounter}][unit_square]"
                    value="${data.unit_square ? data.unit_square.toFixed(4) : ''}"
                    placeholder="0.0000" readonly>
         </td>
         <td>
-            <input type="number" class="form-control form-control-sm hole-input" 
-                   name="items[${itemCounter}][hole]" 
+            <input type="number" class="form-control form-control-sm hole-input"
+                   name="items[${itemCounter}][hole]"
                    value="${data.hole || 0}"
-                   min="0" onchange="calculateItemTotal(this)">
+                   min="0" oninput="calculateItemTotal(this)">
         </td>
         <td>
-            <input type="number" class="form-control form-control-sm cutout-input" 
-                   name="items[${itemCounter}][cutout]" 
+            <input type="number" class="form-control form-control-sm cutout-input"
+                   name="items[${itemCounter}][cutout]"
                    value="${data.cutout || 0}"
-                   min="0" onchange="calculateItemTotal(this)">
+                   min="0" oninput="calculateItemTotal(this)">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm rate-input" 
-                   name="items[${itemCounter}][rate_sqper]" 
+            <input type="number" step="0.01" class="form-control form-control-sm rate-input"
+                   name="items[${itemCounter}][rate_sqper]"
                    value="${data.rate_sqper}"
-                   placeholder="Rate" onchange="calculateItemTotal(this)" required>
+                   placeholder="Rate" oninput="calculateItemTotal(this)" required>
         </td>
         <td>
             <input type="number" step="0.01" class="form-control form-control-sm total-display" 
@@ -257,28 +275,30 @@ function addGroup() {
         <td class="item-number" style="font-weight: bold;">${groupCounter}</td>
         <td colspan="12">
             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                <input type="text" class="form-control form-control-sm particular-input" 
-                       name="items[${itemCounter}][particular]" 
+                <input type="text" class="form-control form-control-sm particular-input"
+                       name="items[${itemCounter}][particular]"
                        placeholder="Product Group (e.g., 8mm Toughened Glass)"
                        style="font-weight: bold; flex: 1; min-width: 200px;" required>
                 <button type="button" class="btn btn-sm btn-info" onclick="openGlassCatalogModal(this)" title="Browse Glass Catalog">
                     <i class="bi bi-grid-3x3"></i> Browse
                 </button>
+                <label class="form-label mb-0" style="white-space: nowrap;">Rate (₹/sqm):</label>
+                <input type="number" step="0.01" class="form-control form-control-sm group-rate-input"
+                       name="items[${itemCounter}][rate_sqper]"
+                       placeholder="0.00" style="width: 90px;" min="0"
+                       oninput="propagateGroupRate(this)" title="Set rate for all items in this group">
                 <label class="form-label mb-0" style="white-space: nowrap;">Chargeable Extra (MM):</label>
-                <input type="number" class="form-control form-control-sm chargeable-extra-input" 
-                       name="items[${itemCounter}][chargeable_extra]" 
-                       value="30"
-                       style="width: 80px;" min="0">
+                <input type="number" class="form-control form-control-sm chargeable-extra-input"
+                       name="items[${itemCounter}][chargeable_extra]"
+                       value="30" style="width: 80px;" min="0">
                 <label class="form-label mb-0" style="white-space: nowrap;">Hole Price:</label>
-                <input type="number" step="0.01" class="form-control form-control-sm hole-price-input" 
-                       name="items[${itemCounter}][hole_price]" 
-                       value="400"
-                       style="width: 80px;" min="0">
+                <input type="number" step="0.01" class="form-control form-control-sm hole-price-input"
+                       name="items[${itemCounter}][hole_price]"
+                       value="400" style="width: 80px;" min="0">
                 <label class="form-label mb-0" style="white-space: nowrap;">Cutout Price:</label>
-                <input type="number" step="0.01" class="form-control form-control-sm cutout-price-input" 
-                       name="items[${itemCounter}][cutout_price]" 
-                       value="100"
-                       style="width: 80px;" min="0">
+                <input type="number" step="0.01" class="form-control form-control-sm cutout-price-input"
+                       name="items[${itemCounter}][cutout_price]"
+                       value="100" style="width: 80px;" min="0">
                 <button type="button" class="btn btn-sm btn-primary" onclick="recalculateGroupItems(this)" title="Recalculate all items in this group">
                     <i class="bi bi-arrow-clockwise"></i>
                 </button>
@@ -329,56 +349,57 @@ function addSubItem(button) {
             <input type="hidden" name="items[${itemCounter}][chargeable_extra]" value="${chargeableExtra}">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input actual-width" 
-                   name="items[${itemCounter}][actual_width]" 
-                   placeholder="Width" onchange="applyChargeableExtra(this)">
+            <input type="number" step="0.01" class="form-control form-control-sm size-input actual-width"
+                   name="items[${itemCounter}][actual_width]"
+                   placeholder="Width" oninput="applyChargeableExtra(this)">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input actual-height" 
-                   name="items[${itemCounter}][actual_height]" 
-                   placeholder="Height" onchange="applyChargeableExtra(this)">
+            <input type="number" step="0.01" class="form-control form-control-sm size-input actual-height"
+                   name="items[${itemCounter}][actual_height]"
+                   placeholder="Height" oninput="applyChargeableExtra(this)">
         </td>
         <td>
-            <select class="form-select form-select-sm" name="items[${itemCounter}][unit]">
+            <select class="form-select form-select-sm" name="items[${itemCounter}][unit]"
+                    onchange="calculateItemTotal(this)">
                 <option value="MM" selected>MM</option>
                 <option value="sqft">sqft</option>
                 <option value="pcs">pcs</option>
             </select>
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input chargeable-width" 
-                   name="items[${itemCounter}][chargeable_width]" 
-                   placeholder="Width" onchange="calculateItemTotal(this)">
+            <input type="number" step="0.01" class="form-control form-control-sm size-input chargeable-width"
+                   name="items[${itemCounter}][chargeable_width]"
+                   placeholder="Width" oninput="calculateItemTotal(this)">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm size-input chargeable-height" 
-                   name="items[${itemCounter}][chargeable_height]" 
-                   placeholder="Height" onchange="calculateItemTotal(this)">
+            <input type="number" step="0.01" class="form-control form-control-sm size-input chargeable-height"
+                   name="items[${itemCounter}][chargeable_height]"
+                   placeholder="Height" oninput="calculateItemTotal(this)">
         </td>
         <td>
-            <input type="number" class="form-control form-control-sm qty-input" 
-                   name="items[${itemCounter}][quantity]" 
-                   value="1" min="1" onchange="calculateItemTotal(this)" required>
+            <input type="number" class="form-control form-control-sm qty-input"
+                   name="items[${itemCounter}][quantity]"
+                   value="1" min="1" oninput="calculateItemTotal(this)" required>
         </td>
         <td>
-            <input type="number" step="0.0001" class="form-control form-control-sm unit-square-display" 
-                   name="items[${itemCounter}][unit_square]" 
+            <input type="number" step="0.0001" class="form-control form-control-sm unit-square-display"
+                   name="items[${itemCounter}][unit_square]"
                    placeholder="0.0000" readonly>
         </td>
         <td>
-            <input type="number" class="form-control form-control-sm hole-input" 
-                   name="items[${itemCounter}][hole]" 
-                   value="0" min="0" onchange="calculateItemTotal(this)">
+            <input type="number" class="form-control form-control-sm hole-input"
+                   name="items[${itemCounter}][hole]"
+                   value="0" min="0" oninput="calculateItemTotal(this)">
         </td>
         <td>
-            <input type="number" class="form-control form-control-sm cutout-input" 
-                   name="items[${itemCounter}][cutout]" 
-                   value="0" min="0" onchange="calculateItemTotal(this)">
+            <input type="number" class="form-control form-control-sm cutout-input"
+                   name="items[${itemCounter}][cutout]"
+                   value="0" min="0" oninput="calculateItemTotal(this)">
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm rate-input" 
-                   name="items[${itemCounter}][rate_sqper]" 
-                   placeholder="Rate" onchange="calculateItemTotal(this)" required>
+            <input type="number" step="0.01" class="form-control form-control-sm rate-input"
+                   name="items[${itemCounter}][rate_sqper]"
+                   placeholder="Rate" oninput="calculateItemTotal(this)" required>
         </td>
         <td>
             <input type="number" step="0.01" class="form-control form-control-sm total-display" 
@@ -400,13 +421,11 @@ function addSubItem(button) {
         groupRow.after(row);
     }
 
-    // Auto-populate rate if group has stored rate from glass catalog selection
-    const storedRate = groupRow.dataset.ratePerSqm;
-    if (storedRate) {
+    // Auto-populate rate from group rate input (covers both manual entry and glass catalog)
+    const groupRate = groupRow.querySelector('.group-rate-input')?.value;
+    if (groupRate) {
         const rateInput = row.querySelector('.rate-input');
-        if (rateInput) {
-            rateInput.value = storedRate;
-        }
+        if (rateInput) rateInput.value = groupRate;
     }
 
     itemCounter++;
@@ -452,36 +471,40 @@ function removeItem(button) {
 }
 
 /**
- * Calculate total for a single item using: Area (Sq Mtr) × Rate / Sq Mtr × Quantity + Hole/Cutout charges
+ * Calculate total for a single item.
+ * - MM/sqft: Area (Sq Mtr) × Rate × Quantity + Hole/Cutout charges
+ * - pcs:     Rate × Quantity  (no area — dimensions are ignored)
  */
 function calculateItemTotal(input) {
     const row = input.closest('.item-row');
 
-    // Calculate unit square from chargeable dimensions
-    const chargeableWidth = parseFloat(row.querySelector('.chargeable-width')?.value) || 0;
+    const chargeableWidth  = parseFloat(row.querySelector('.chargeable-width')?.value)  || 0;
     const chargeableHeight = parseFloat(row.querySelector('.chargeable-height')?.value) || 0;
-    const unit = row.querySelector('select[name*="[unit]"]')?.value || 'MM';
+    const unit     = row.querySelector('select[name*="[unit]"]')?.value || 'MM';
+    const quantity = parseInt(row.querySelector('.qty-input')?.value)   || 0;
+    const rate     = parseFloat(row.querySelector('.rate-input')?.value) || 0;
 
     let unitSquare = 0;
-    if (chargeableWidth && chargeableHeight) {
-        if (unit === 'MM') {
-            // Convert MM² to M² (Sq Mtr)
-            unitSquare = (chargeableWidth * chargeableHeight) / 1000000;
-        } else {
-            unitSquare = chargeableWidth * chargeableHeight;
+    let total      = 0;
+
+    if (unit === 'pcs') {
+        // Per-piece: total = rate × qty, no area involved
+        total = rate * quantity;
+    } else {
+        // Area-based: MM or sqft
+        if (chargeableWidth && chargeableHeight) {
+            unitSquare = unit === 'MM'
+                ? (chargeableWidth * chargeableHeight) / 1000000
+                : chargeableWidth * chargeableHeight;
         }
+        total = unitSquare * rate * quantity;
     }
 
-    // Update unit square display
+    // Update unit square display (blank for pcs)
     const unitSquareInput = row.querySelector('.unit-square-display');
     if (unitSquareInput) {
-        unitSquareInput.value = unitSquare.toFixed(4);
+        unitSquareInput.value = unit === 'pcs' ? '' : unitSquare.toFixed(4);
     }
-
-    // Calculate base total: Area (Sq Mtr) × Rate / Sq Mtr × Quantity
-    const quantity = parseInt(row.querySelector('.qty-input')?.value) || 0;
-    const rate = parseFloat(row.querySelector('.rate-input')?.value) || 0;
-    let total = unitSquare * rate * quantity;
 
     // Add hole and cutout charges from parent group
     const holes = parseInt(row.querySelector('.hole-input')?.value) || 0;
@@ -563,6 +586,51 @@ function updateTotals() {
     const jumboField = document.getElementById('jumbo_size_charges');
     if (jumboField) jumboField.value = jumboSizeCharges.toFixed(2);
 
+    // Summarise hole & cutout charges across all sub-items (informational — already in subtotal)
+    let totalHolesSummary = 0;
+    let totalHolesCount = 0;
+    let totalCutoutsSummary = 0;
+    let totalCutoutsCount = 0;
+    document.querySelectorAll('.sub-item-row').forEach(subRow => {
+        const holes   = parseInt(subRow.querySelector('.hole-input')?.value) || 0;
+        const cutouts = parseInt(subRow.querySelector('.cutout-input')?.value) || 0;
+        if (holes > 0 || cutouts > 0) {
+            const parentId = subRow.dataset.parentId;
+            const groupRow = parentId ? document.querySelector(`[data-item-id="${parentId}"]`) : null;
+            const holePrice   = parseFloat(groupRow?.querySelector('.hole-price-input')?.value) || 0;
+            const cutoutPrice = parseFloat(groupRow?.querySelector('.cutout-price-input')?.value) || 0;
+            totalHolesCount     += holes;
+            totalHolesSummary   += holes * holePrice;
+            totalCutoutsCount   += cutouts;
+            totalCutoutsSummary += cutouts * cutoutPrice;
+        }
+    });
+    const holesRow  = document.getElementById('row_holes_summary');
+    const cutoutRow = document.getElementById('row_cutout_summary');
+    if (holesRow) {
+        holesRow.style.display = totalHolesSummary > 0 ? '' : 'none';
+        const labelEl = holesRow.querySelector('td:first-child');
+        if (labelEl) labelEl.innerHTML = `Holes Charges (${totalHolesCount} holes) <small class="text-muted">(incl. in subtotal)</small>:`;
+        const el = document.getElementById('disp_holes_summary');
+        if (el) el.textContent = totalHolesSummary.toFixed(2);
+    }
+    if (cutoutRow) {
+        cutoutRow.style.display = totalCutoutsSummary > 0 ? '' : 'none';
+        const labelEl = cutoutRow.querySelector('td:first-child');
+        if (labelEl) labelEl.innerHTML = `Cutout Charges (${totalCutoutsCount} cutouts) <small class="text-muted">(incl. in subtotal)</small>:`;
+        const el = document.getElementById('disp_cutout_summary');
+        if (el) el.textContent = totalCutoutsSummary.toFixed(2);
+    }
+
+    // Handling: % of subtotal — B2B only
+    const handlingPctEl = document.getElementById('handling_percentage');
+    const handlingPct = parseFloat(handlingPctEl?.value) || 0;
+    const handlingCharges = handlingPctEl ? (subtotal * handlingPct) / 100 : 0;
+    const handlingField = document.getElementById('handling_charges');
+    if (handlingField) handlingField.value = handlingCharges.toFixed(2);
+    const handlingHint = document.getElementById('handling_amount_hint');
+    if (handlingHint) handlingHint.textContent = handlingPct > 0 ? `= ₹${handlingCharges.toFixed(2)}` : '';
+
     // Get all charges
     const installationCharges = parseFloat(document.getElementById('installation_charges')?.value) || 0;
     const transportCharges = parseFloat(document.getElementById('transport_charges')?.value) || 0;
@@ -570,15 +638,57 @@ function updateTotals() {
     const holesCharges = parseFloat(document.getElementById('holes_charges')?.value) || 0;
     const shapeCuttingCharges = parseFloat(document.getElementById('shape_cutting_charges')?.value) || 0;
     const templateCharges = parseFloat(document.getElementById('template_charges')?.value) || 0;
-    const handlingCharges = parseFloat(document.getElementById('handling_charges')?.value) || 0;
     const polishCharges = parseFloat(document.getElementById('polish_charges')?.value) || 0;
     const documentCharges = parseFloat(document.getElementById('document_charges')?.value) || 0;
     const frostedCharges = parseFloat(document.getElementById('frosted_charges')?.value) || 0;
 
-    // Calculate taxable amount (subtotal + all charges)
-    const taxableAmount = subtotal + installationCharges + transportCharges + cutoutCharges +
+    // Insurance: % of subtotal (glass only)
+    const insurancePct = parseFloat(document.getElementById('insurance_percentage')?.value) || 0;
+    const insuranceCharges = (subtotal * insurancePct) / 100;
+    const insuranceField = document.getElementById('insurance_charges');
+    if (insuranceField) insuranceField.value = insuranceCharges.toFixed(2);
+    const insuranceHint = document.getElementById('insurance_amount_hint');
+    if (insuranceHint) insuranceHint.textContent = insurancePct > 0 ? `= ₹${insuranceCharges.toFixed(2)}` : '';
+
+    // Show/hide individual charge rows in Totals panel
+    const chargeFields = [
+        ['installation_charges', installationCharges],
+        ['transport_charges',    transportCharges],
+        ['shape_cutting_charges',shapeCuttingCharges],
+        ['jumbo_size_charges',   jumboSizeCharges],
+        ['template_charges',     templateCharges],
+        ['handling_charges',     handlingCharges],
+        ['polish_charges',       polishCharges],
+        ['document_charges',     documentCharges],
+        ['frosted_charges',      frostedCharges],
+    ];
+    chargeFields.forEach(([key, val]) => {
+        const row = document.getElementById(`row_${key}`);
+        const el  = document.getElementById(`disp_${key}`);
+        if (row) row.style.display = val > 0 ? '' : 'none';
+        if (el)  el.textContent    = val.toFixed(2);
+    });
+    // Insurance row
+    const insRow = document.getElementById('row_insurance_charges');
+    const insEl  = document.getElementById('disp_insurance_charges');
+    const insPctEl = document.getElementById('disp_insurance_pct');
+    if (insRow) insRow.style.display = insuranceCharges > 0 ? '' : 'none';
+    if (insEl)  insEl.textContent    = insuranceCharges.toFixed(2);
+    if (insPctEl) insPctEl.textContent = insurancePct;
+
+    // Calculate extra charges subtotal
+    const chargesTotal = installationCharges + transportCharges + cutoutCharges +
         holesCharges + shapeCuttingCharges + jumboSizeCharges +
-        templateCharges + handlingCharges + polishCharges + documentCharges + frostedCharges;
+        templateCharges + handlingCharges + polishCharges + documentCharges + frostedCharges + insuranceCharges;
+
+    // Calculate taxable amount (subtotal + all charges)
+    const taxableAmount = subtotal + chargesTotal;
+
+    // Show/hide taxable amount row
+    const taxableRow = document.getElementById('taxable_row');
+    const taxableEl  = document.getElementById('taxable_display');
+    if (taxableRow) taxableRow.style.display = chargesTotal > 0 ? '' : 'none';
+    if (taxableEl)  taxableEl.textContent    = taxableAmount.toFixed(2);
 
     // Calculate GST
     const gstPercentage = parseFloat(document.getElementById('gst_percentage')?.value) || 18;
@@ -647,15 +757,29 @@ function addB2CItem(data) {
     const total       = data ? (data.total      || '')  : '';
     const displaySize = data ? (data.chargeable_width || data.unit_square || '') : '';
     const sizePh      = b2cRateMode === 'qty' ? 'e.g. 5' : 'e.g. 115';
+    const existingKey = data ? (data.image_s3_key || '') : '';
+    const existingUrl = data ? (data.image_presigned_url || '') : '';
 
     row.innerHTML = `
         <td class="b2c-row-num align-middle text-center">${rowNum}</td>
         <td>
-            <input type="text" class="form-control form-control-sm b2c-particular"
-                   name="items[${idx}][particular]"
-                   value="${particular}" placeholder="Product description" required>
+            <textarea class="form-control form-control-sm b2c-particular"
+                      name="items[${idx}][particular]"
+                      rows="2" placeholder="Product description" required
+                      style="resize:vertical; min-height:2.2rem;">${particular}</textarea>
             <input type="hidden" name="items[${idx}][is_group]"  value="false">
             <input type="hidden" name="items[${idx}][quantity]"  value="1">
+        </td>
+        <td class="text-center align-middle">
+            <label class="btn btn-outline-secondary btn-sm py-1 px-2 mb-1 d-block" style="font-size:0.75rem;cursor:pointer;" title="Upload product image">
+                <i class="bi bi-camera"></i> Upload
+                <input type="file" accept="image/*" class="b2c-img-input d-none" onchange="uploadB2CImage(this, ${idx})">
+            </label>
+            <span class="b2c-img-status d-block" style="font-size:0.7rem;color:#94a3b8;"></span>
+            <a class="b2c-img-thumb" href="#" target="_blank" style="display:none;">
+                <img style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;" alt="preview">
+            </a>
+            <input type="hidden" class="b2c-img-key" name="items[${idx}][image_s3_key]" value="${existingKey}">
         </td>
         <td>
             <input type="number" step="0.01" class="form-control form-control-sm b2c-size"
@@ -686,12 +810,58 @@ function addB2CItem(data) {
 
     tbody.appendChild(row);
 
+    // If editing and image already exists, show existing thumbnail directly from S3
+    if (existingKey) {
+        const thumbLink = row.querySelector('.b2c-img-thumb');
+        const thumbImg  = thumbLink.querySelector('img');
+        const url = existingUrl || `/api/quote-items/image-url?key=${encodeURIComponent(existingKey)}`;
+        thumbLink.href          = url;
+        thumbImg.src            = url;
+        thumbLink.style.display = 'inline-block';
+    }
+
     if (displaySize && rate) {
         row.querySelector('.b2c-total').readOnly = true;
         row.querySelector('.b2c-total').classList.add('bg-light');
     }
 
     updateB2CTotals();
+}
+
+function uploadB2CImage(input, idx) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const row      = input.closest('.b2c-item-row');
+    const statusEl = row.querySelector('.b2c-img-status');
+    const thumbEl  = row.querySelector('.b2c-img-thumb');
+    const thumbImg = thumbEl.querySelector('img');
+    const keyInput = row.querySelector('.b2c-img-key');
+
+    statusEl.textContent = 'Uploading…';
+    thumbEl.style.display = 'none';
+
+    const fd = new FormData();
+    fd.append('image', file);
+
+    fetch('/api/quote-items/upload-image', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                keyInput.value  = data.s3_key;
+                thumbImg.src    = data.presigned_url;
+                thumbEl.href    = data.presigned_url;
+                thumbEl.style.display = 'inline-block';
+                statusEl.textContent = '';
+            } else {
+                statusEl.textContent = 'Upload failed';
+                statusEl.style.color = '#ef4444';
+            }
+        })
+        .catch(() => {
+            statusEl.textContent = 'Upload failed';
+            statusEl.style.color = '#ef4444';
+        });
 }
 
 /**
@@ -750,25 +920,73 @@ function removeB2CItem(button) {
 }
 
 /**
- * Recalculate subtotal, SGST @9%, CGST @9%, round-off, grand total for B2C.
- * Includes Installation, Transport and Handling charges.
+ * Toggle B2C GST % input visibility when Apply GST checkbox is changed.
+ */
+function onB2CGstToggle() {
+    const applyGst = document.getElementById('b2c_apply_gst')?.checked;
+    const wrapper  = document.getElementById('b2c_gst_pct_wrapper');
+    if (wrapper) wrapper.style.display = applyGst ? '' : 'none';
+    updateB2CTotals();
+}
+
+/**
+ * Recalculate subtotal, SGST, CGST, round-off, grand total for B2C.
+ * Shows individual charge rows in the Totals panel (same as B2B).
+ * Respects Apply GST toggle and editable GST %.
  */
 function updateB2CTotals() {
+    // Glass items subtotal only
     let subtotal = 0;
     document.querySelectorAll('#b2cItemsBody .b2c-total').forEach(inp => {
         subtotal += parseFloat(inp.value) || 0;
     });
 
-    // Add B2C additional charges
-    subtotal += parseFloat(document.getElementById('b2c_installation_charges')?.value) || 0;
-    subtotal += parseFloat(document.getElementById('b2c_transport_charges')?.value)    || 0;
-    subtotal += parseFloat(document.getElementById('b2c_handling_charges')?.value)     || 0;
+    // B2C additional charges — kept separate so they show individually
+    const installCharges  = parseFloat(document.getElementById('b2c_installation_charges')?.value) || 0;
+    const transportCharges = parseFloat(document.getElementById('b2c_transport_charges')?.value)   || 0;
+    const handlingCharges  = parseFloat(document.getElementById('b2c_handling_charges')?.value)    || 0;
+    const chargesTotal     = installCharges + transportCharges + handlingCharges;
+    const taxableAmount    = subtotal + chargesTotal;
 
-    const sgst     = subtotal * 0.09;
-    const cgst     = subtotal * 0.09;
-    const preRound = subtotal + sgst + cgst;
+    // Show individual charge rows in shared Totals panel
+    const b2cChargeFields = [
+        ['installation_charges', installCharges],
+        ['transport_charges',    transportCharges],
+        ['handling_charges',     handlingCharges],
+    ];
+    b2cChargeFields.forEach(([key, val]) => {
+        const row = document.getElementById(`row_${key}`);
+        const el  = document.getElementById(`disp_${key}`);
+        if (row) row.style.display = val > 0 ? '' : 'none';
+        if (el)  el.textContent    = val.toFixed(2);
+    });
+
+    // Show/hide Taxable Amount row
+    const taxableRow = document.getElementById('taxable_row');
+    const taxableEl  = document.getElementById('taxable_display');
+    if (taxableRow) taxableRow.style.display = chargesTotal > 0 ? '' : 'none';
+    if (taxableEl)  taxableEl.textContent    = taxableAmount.toFixed(2);
+
+    const applyGst = document.getElementById('b2c_apply_gst')?.checked !== false;
+    const gstPct   = parseFloat(document.getElementById('b2c_gst_pct')?.value) || 0;
+    const halfPct  = gstPct / 2;
+
+    const sgst     = (applyGst && gstPct > 0) ? (taxableAmount * halfPct / 100) : 0;
+    const cgst     = (applyGst && gstPct > 0) ? (taxableAmount * halfPct / 100) : 0;
+    const preRound = taxableAmount + sgst + cgst;
     const rounded  = Math.round(preRound);
     const roundOff = rounded - preRound;
+
+    // Update SGST/CGST labels with actual rate
+    const sgstLabel = document.getElementById('b2c_sgst_label');
+    const cgstLabel = document.getElementById('b2c_cgst_label');
+    if (sgstLabel) sgstLabel.textContent = `SGST @${halfPct}%`;
+    if (cgstLabel) cgstLabel.textContent = `CGST @${halfPct}%`;
+
+    // Show/hide SGST+CGST rows based on toggle + %
+    const showGst = applyGst && gstPct > 0;
+    document.getElementById('b2c_sgst_row').style.display = showGst ? '' : 'none';
+    document.getElementById('b2c_cgst_row').style.display = showGst ? '' : 'none';
 
     document.getElementById('subtotal_display').textContent = subtotal.toFixed(2);
     document.getElementById('sgst_display').textContent     = sgst.toFixed(2);
@@ -776,13 +994,15 @@ function updateB2CTotals() {
     document.getElementById('roundoff_display').textContent = roundOff.toFixed(2);
     document.getElementById('total_display').textContent    = rounded.toFixed(2);
 
+    // subtotal hidden field = glass items only (charges stored in their own columns)
     document.getElementById('subtotal').value   = subtotal.toFixed(2);
     document.getElementById('gst_amount').value = (sgst + cgst).toFixed(2);
     document.getElementById('round_off').value  = roundOff.toFixed(2);
     document.getElementById('total').value      = rounded.toFixed(2);
 
-    const gstPct = document.getElementById('gst_percentage');
-    if (gstPct) gstPct.value = 18;
+    // Sync the gst_percentage field (submitted with the form)
+    const gstPctField = document.getElementById('gst_percentage');
+    if (gstPctField) gstPctField.value = (applyGst && gstPct > 0) ? gstPct : 0;
 }
 
 /**
@@ -811,6 +1031,24 @@ document.getElementById('quoteForm')?.addEventListener('submit', function () {
 // ── End B2C ──────────────────────────────────────────────────────────────────
 
 /**
+ * Propagate the group rate to all existing sub-items and recalculate their totals.
+ * Called whenever the group Rate (₹/sqm) input changes.
+ */
+function propagateGroupRate(input) {
+    const groupRow = input.closest('.group-row');
+    const groupId = groupRow.dataset.itemId;
+    const rate = input.value;
+
+    document.querySelectorAll(`[data-parent-id="${groupId}"]`).forEach(subItem => {
+        const rateInput = subItem.querySelector('.rate-input');
+        if (rateInput) {
+            rateInput.value = rate;
+            calculateItemTotal(rateInput);
+        }
+    });
+}
+
+/**
  * Recalculate all sub-items when group-level values change
  * This function is called when the refresh button is clicked
  */
@@ -818,40 +1056,34 @@ function recalculateGroupItems(button) {
     const groupRow = button.closest('.group-row');
     const groupId = groupRow.dataset.itemId;
 
-    // Get the group-level values
     const chargeableExtra = parseFloat(groupRow.querySelector('.chargeable-extra-input').value) || 30;
-    const holePrice = parseFloat(groupRow.querySelector('.hole-price-input').value) || 0;
-    const cutoutPrice = parseFloat(groupRow.querySelector('.cutout-price-input').value) || 0;
+    const groupRate = groupRow.querySelector('.group-rate-input')?.value;
 
-    // Find all sub-items for this group
     const subItems = document.querySelectorAll(`[data-parent-id="${groupId}"]`);
 
-    // Recalculate each sub-item
     subItems.forEach(subItem => {
-        // Update chargeable dimensions based on actual dimensions and chargeable extra
-        const actualWidthInput = subItem.querySelector('.actual-width');
-        const actualHeightInput = subItem.querySelector('.actual-height');
-        const actualWidth = parseFloat(actualWidthInput?.value) || 0;
-        const actualHeight = parseFloat(actualHeightInput?.value) || 0;
+        // Update chargeable dimensions from actual + extra
+        const actualWidth = parseFloat(subItem.querySelector('.actual-width')?.value) || 0;
+        const actualHeight = parseFloat(subItem.querySelector('.actual-height')?.value) || 0;
 
         if (actualWidth > 0 && actualHeight > 0) {
-            const chargeableWidthInput = subItem.querySelector('.chargeable-width');
-            const chargeableHeightInput = subItem.querySelector('.chargeable-height');
-
-            if (chargeableWidthInput && chargeableHeightInput) {
-                chargeableWidthInput.value = actualWidth + chargeableExtra;
-                chargeableHeightInput.value = actualHeight + chargeableExtra;
-            }
+            const cw = subItem.querySelector('.chargeable-width');
+            const ch = subItem.querySelector('.chargeable-height');
+            if (cw) cw.value = actualWidth + chargeableExtra;
+            if (ch) ch.value = actualHeight + chargeableExtra;
         }
 
-        // Trigger recalculation of the total
+        // Propagate group rate to sub-item if group rate is set
+        if (groupRate) {
+            const rateInput = subItem.querySelector('.rate-input');
+            if (rateInput) rateInput.value = groupRate;
+        }
+
         const anyInput = subItem.querySelector('.qty-input');
-        if (anyInput) {
-            calculateItemTotal(anyInput);
-        }
+        if (anyInput) calculateItemTotal(anyInput);
     });
 
-    // Show a brief visual feedback
+    // Brief visual feedback
     button.classList.add('btn-success');
     button.classList.remove('btn-primary');
     setTimeout(() => {

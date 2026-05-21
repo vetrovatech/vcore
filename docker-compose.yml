@@ -7,6 +7,8 @@ services:
       dockerfile: Dockerfile.local
     ports:
       - "8080:8080"
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=mysql+pymysql://cdcuser:Divyam123@ls-71c57fcd322c32a3616fd3e00e212391e383d4ba.c7cuq02uskcx.ap-south-1.rds.amazonaws.com:3306/vcore
       - SECRET_KEY=vcore-glassy-secret-key-2026-change-in-production

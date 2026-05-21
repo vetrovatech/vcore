@@ -43,7 +43,7 @@
                             <span class="badge bg-secondary">Inactive</span>
                             {% endif %}
                         </td>
-                        <td>{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+                        <td>{{ (user.created_at | to_ist).strftime('%Y-%m-%d') }}</td>
                         <td>
                             <a href="{{ url_for('user_edit', id=user.id) }}" class="btn btn-sm btn-outline-primary"
                                 title="Edit">

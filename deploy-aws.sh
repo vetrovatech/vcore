@@ -5,6 +5,10 @@
 echo "☁️  VCore AWS Lambda Deployment"
 echo "==============================="
 
+# Load credentials from .env
+export AWS_ACCESS_KEY_ID=$(grep AWS_ACCESS_KEY_ID .env | cut -d= -f2)
+export AWS_SECRET_ACCESS_KEY=$(grep AWS_SECRET_ACCESS_KEY .env | cut -d= -f2)
+
 # Configuration
 AWS_REGION="ap-south-1"
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -29,10 +33,10 @@ echo "🔐 Logging in to ECR..."
 aws ecr get-login-password --region $AWS_REGION | \
 docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
-# Build Docker image for Lambda
+# Build Docker image for Lambda (--provenance=false required for Lambda compatibility on Apple Silicon)
 echo ""
 echo "🏗️  Building Lambda Docker image..."
-docker build -t $ECR_REPO_NAME:$IMAGE_TAG -f Dockerfile .
+docker buildx build --platform linux/amd64 --provenance=false -t $ECR_REPO_NAME:$IMAGE_TAG -f Dockerfile --load .
 
 # Tag image for ECR
 echo ""
@@ -47,12 +51,19 @@ docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:$IM
 
 echo ""
 echo "✅ Image pushed successfully!"
+
+# Update Lambda function with new image
+LAMBDA_FUNCTION_NAME="vcore-api"
 echo ""
-echo "📝 Next steps:"
-echo "   1. Create Lambda function with container image"
-echo "   2. Set environment variables (DATABASE_URL, SECRET_KEY)"
-echo "   3. Configure API Gateway"
-echo "   4. Set up custom domain (vcore.glassy.in)"
+echo "🔄 Updating Lambda function..."
+aws lambda update-function-code \
+  --function-name $LAMBDA_FUNCTION_NAME \
+  --image-uri $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:$IMAGE_TAG \
+  --region $AWS_REGION \
+  --query 'FunctionArn' --output text
+
+echo ""
+echo "✅ Lambda updated successfully!"
 echo ""
 echo "🔗 Image URI:"
 echo "   $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:$IMAGE_TAG"

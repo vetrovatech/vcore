@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+{% block title %}{{ meeting.title }} — Meetings{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+    #checkin-map { height: 260px; border-radius: 10px; }
+    .checkin-btn {
+        font-size: 1.1rem;
+        padding: 0.75rem 2rem;
+        border-radius: 50px;
+    }
+    .status-badge-lg { font-size: 0.85rem; padding: 0.4em 0.9em; }
+    .photo-thumb { width: 100px; height: 100px; object-fit: cover; border-radius: 8px; cursor: pointer; }
+    .photo-wrapper { position: relative; display: inline-block; }
+    .photo-del { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.6);
+                 border: none; border-radius: 50%; color: #fff; width: 22px; height: 22px;
+                 font-size: 11px; display: none; align-items: center; justify-content: center; cursor: pointer; }
+    .photo-wrapper:hover .photo-del { display: flex; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-start mb-4">
+    <div>
+        <a href="{{ url_for('meetings_list') }}" class="text-muted text-decoration-none" style="font-size:0.85rem;">
+            <i class="bi bi-arrow-left me-1"></i>Meetings
+        </a>
+        <h4 class="mt-1 mb-0">{{ meeting.title }}</h4>
+        <div class="mt-1 d-flex flex-wrap gap-2 align-items-center">
+            <span class="badge bg-light text-secondary">{{ meeting.meeting_type }}</span>
+            {% if meeting.status == 'Completed' %}
+            <span class="badge bg-success status-badge-lg">Completed</span>
+            {% elif meeting.status == 'Checked In' %}
+            <span class="badge bg-warning text-dark status-badge-lg">Checked In</span>
+            {% elif meeting.status == 'Cancelled' %}
+            <span class="badge bg-secondary status-badge-lg">Cancelled</span>
+            {% else %}
+            <span class="badge bg-primary status-badge-lg">Scheduled</span>
+            {% endif %}
+            <span class="text-muted" style="font-size:0.8rem;">by <strong>{{ meeting.user.username if meeting.user else '?' }}</strong></span>
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('meeting_edit', id=meeting.id) }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+        <form method="POST" action="{{ url_for('meeting_delete', id=meeting.id) }}"
+              onsubmit="return confirm('Delete this meeting?')">
+            <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+        </form>
+    </div>
+</div>
+
+<div class="row g-3">
+
+    <!-- Left column: Details + GPS -->
+    <div class="col-md-7">
+
+        <!-- Meeting Details Card -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="row g-2" style="font-size:0.9rem;">
+                    {% if meeting.scheduled_at %}
+                    <div class="col-6">
+                        <div class="text-muted mb-1" style="font-size:0.75rem;text-transform:uppercase;">Scheduled</div>
+                        <strong>{{ (meeting.scheduled_at|to_ist).strftime('%d %b %Y, %I:%M %p') }}</strong>
+                    </div>
+                    {% endif %}
+                    {% if meeting.client_name or meeting.lead %}
+                    <div class="col-6">
+                        <div class="text-muted mb-1" style="font-size:0.75rem;text-transform:uppercase;">Client</div>
+                        <strong>{{ meeting.client_name or meeting.lead.name }}</strong>
+                        {% if meeting.client_phone %}
+                        <div><a href="tel:{{ meeting.client_phone }}" class="text-muted">{{ meeting.client_phone }}</a></div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    {% if meeting.client_address %}
+                    <div class="col-12">
+                        <div class="text-muted mb-1" style="font-size:0.75rem;text-transform:uppercase;">Address</div>
+                        {{ meeting.client_address }}
+                    </div>
+                    {% endif %}
+                    {% if meeting.lead %}
+                    <div class="col-6">
+                        <div class="text-muted mb-1" style="font-size:0.75rem;text-transform:uppercase;">Linked Lead</div>
+                        <a href="{{ url_for('lead_view', id=meeting.lead.id) }}">{{ meeting.lead.name }}</a>
+                    </div>
+                    {% endif %}
+                    {% if meeting.project %}
+                    <div class="col-6">
+                        <div class="text-muted mb-1" style="font-size:0.75rem;text-transform:uppercase;">Linked Project</div>
+                        <a href="{{ url_for('project_view', id=meeting.project.id) }}">{{ meeting.project.name }}</a>
+                    </div>
+                    {% endif %}
+                    {% if meeting.notes %}
+                    <div class="col-12 mt-1">
+                        <div class="text-muted mb-1" style="font-size:0.75rem;text-transform:uppercase;">Notes / Agenda</div>
+                        <div style="white-space:pre-line;">{{ meeting.notes }}</div>
+                    </div>
+                    {% endif %}
+                    {% if meeting.outcome %}
+                    <div class="col-12 mt-1">
+                        <div class="text-muted mb-1" style="font-size:0.75rem;text-transform:uppercase;">Outcome</div>
+                        <div style="white-space:pre-line;">{{ meeting.outcome }}</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- GPS Check-in Card -->
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold"><i class="bi bi-geo-alt-fill text-danger me-2"></i>GPS Check-in</span>
+                {% if meeting.check_in_time %}
+                <span class="text-success" style="font-size:0.85rem;">
+                    <i class="bi bi-check-circle-fill me-1"></i>{{ (meeting.check_in_time|to_ist).strftime('%d %b %Y, %I:%M %p') }}
+                </span>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% if meeting.check_in_lat %}
+                    <!-- Map showing check-in location -->
+                    <div id="checkin-map" class="mb-3"></div>
+                    <div style="font-size:0.85rem;">
+                        <i class="bi bi-geo-alt text-danger me-1"></i>{{ meeting.check_in_address or 'Location captured' }}
+                        {% if meeting.check_in_accuracy %}
+                        <span class="text-muted ms-2">(±{{ meeting.check_in_accuracy|int }}m accuracy)</span>
+                        {% endif %}
+                    </div>
+                    {% if meeting.check_out_time %}
+                    <div class="mt-2 text-success" style="font-size:0.85rem;">
+                        <i class="bi bi-box-arrow-right me-1"></i>Checked out: {{ (meeting.check_out_time|to_ist).strftime('%d %b %Y, %I:%M %p') }}
+                        {% set dur = meeting.duration_minutes() %}
+                        {% if dur %}
+                        <span class="badge bg-light text-dark ms-2">{{ dur }} min</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <p class="text-muted mb-3" style="font-size:0.9rem;">
+                        No check-in recorded yet. When you arrive at the client location, tap the button below.
+                    </p>
+                {% endif %}
+
+                <!-- Check-in / Check-out buttons -->
+                {% if meeting.user_id == current_user.id %}
+                <div class="mt-3 text-center">
+                    {% if meeting.status == 'Scheduled' %}
+                    <button class="btn btn-success checkin-btn" id="btnCheckin" onclick="doCheckIn()">
+                        <i class="bi bi-geo-alt-fill me-2"></i>Check In Now
+                    </button>
+                    <div id="checkin-spinner" class="mt-2 d-none">
+                        <div class="spinner-border spinner-border-sm text-success"></div>
+                        <span class="ms-2 text-muted">Getting your location…</span>
+                    </div>
+                    {% elif meeting.status == 'Checked In' %}
+                    <button class="btn btn-warning checkin-btn" id="btnCheckout" onclick="showCheckoutModal()">
+                        <i class="bi bi-box-arrow-right me-2"></i>Check Out
+                    </button>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Right column: Photos -->
+    <div class="col-md-5">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold"><i class="bi bi-camera me-2"></i>Photos</span>
+                <span class="badge bg-light text-dark">{{ meeting.photos|length }}</span>
+            </div>
+            <div class="card-body">
+                <!-- Photo grid -->
+                <div id="photo-grid" class="d-flex flex-wrap gap-2 mb-3">
+                    {% for photo in meeting.photos %}
+                    <div class="photo-wrapper" id="pw-{{ photo.id }}">
+                        <a href="{{ photo.photo_url }}" target="_blank">
+                            <img src="{{ photo.photo_url }}" class="photo-thumb" alt="{{ photo.caption or 'Photo' }}">
+                        </a>
+                        {% if meeting.user_id == current_user.id or current_user.is_manager_or_admin() %}
+                        <button class="photo-del" onclick="deletePhoto({{ photo.id }})" title="Delete">×</button>
+                        {% endif %}
+                        {% if photo.caption %}
+                        <div style="font-size:0.7rem;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ photo.caption }}</div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                    {% if not meeting.photos %}
+                    <p class="text-muted" style="font-size:0.85rem;" id="no-photos-msg">No photos yet.</p>
+                    {% endif %}
+                </div>
+
+                <!-- Upload form -->
+                {% if meeting.user_id == current_user.id or current_user.is_manager_or_admin() %}
+                <div>
+                    <label class="form-label" style="font-size:0.85rem;">Upload Photo</label>
+                    <input type="file" id="photoFile" accept="image/*" capture="environment" class="form-control form-control-sm mb-2">
+                    <input type="text" id="photoCaption" class="form-control form-control-sm mb-2" placeholder="Caption (optional)">
+                    <button class="btn btn-outline-primary btn-sm w-100" onclick="uploadPhoto()">
+                        <i class="bi bi-upload me-1"></i>Upload
+                    </button>
+                    <div id="upload-status" class="mt-1" style="font-size:0.8rem;"></div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Checkout Modal -->
+<div class="modal fade" id="checkoutModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Check Out</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <label class="form-label">Meeting Outcome <span class="text-muted">(optional)</span></label>
+                <textarea id="checkoutOutcome" class="form-control" rows="3"
+                          placeholder="What was discussed / decided?">{{ meeting.outcome or '' }}</textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" onclick="doCheckOut()">
+                    <i class="bi bi-box-arrow-right me-1"></i>Confirm Check Out
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const MEETING_ID = {{ meeting.id }};
+const CHECK_IN_LAT = {{ meeting.check_in_lat or 'null' }};
+const CHECK_IN_LNG = {{ meeting.check_in_lng or 'null' }};
+
+// Init map if check-in exists
+if (CHECK_IN_LAT && CHECK_IN_LNG) {
+    const map = L.map('checkin-map').setView([CHECK_IN_LAT, CHECK_IN_LNG], 16);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+    L.marker([CHECK_IN_LAT, CHECK_IN_LNG])
+        .addTo(map)
+        .bindPopup('Check-in location')
+        .openPopup();
+}
+
+// Check In
+function doCheckIn() {
+    const btn = document.getElementById('btnCheckin');
+    const spinner = document.getElementById('checkin-spinner');
+    btn.disabled = true;
+    spinner.classList.remove('d-none');
+
+    if (!navigator.geolocation) {
+        alert('Geolocation is not supported by your browser.');
+        btn.disabled = false;
+        spinner.classList.add('d-none');
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+        function(pos) {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            const acc = pos.coords.accuracy;
+
+            // Reverse geocode via Nominatim (free, no key needed)
+            fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`)
+                .then(r => r.json())
+                .catch(() => ({}))
+                .then(geo => {
+                    const address = geo.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+                    const fd = new FormData();
+                    fd.append('lat', lat);
+                    fd.append('lng', lng);
+                    fd.append('accuracy', acc);
+                    fd.append('address', address);
+                    return fetch(`/meetings/${MEETING_ID}/checkin`, { method: 'POST', body: fd });
+                })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        location.reload();
+                    } else {
+                        alert('Check-in failed: ' + d.error);
+                        btn.disabled = false;
+                        spinner.classList.add('d-none');
+                    }
+                });
+        },
+        function(err) {
+            let msg = '';
+            if (err.code === 1) {
+                msg = 'Location permission was denied.\n\nOn iPhone: Settings → Safari → Location → Allow\nOn Android: tap the lock icon in the browser address bar → allow Location.';
+            } else if (err.code === 2) {
+                msg = 'Location unavailable. Please make sure GPS/Location is turned ON in your phone settings, then try again.';
+            } else if (err.code === 3) {
+                msg = 'Location request timed out. Please try again in an open area with better GPS signal.';
+            } else {
+                msg = 'Could not get location: ' + err.message;
+            }
+            alert(msg);
+            btn.disabled = false;
+            spinner.classList.add('d-none');
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+}
+
+// Check Out
+function showCheckoutModal() {
+    new bootstrap.Modal(document.getElementById('checkoutModal')).show();
+}
+
+function doCheckOut() {
+    const outcome = document.getElementById('checkoutOutcome').value;
+
+    const tryCheckout = (lat, lng) => {
+        const fd = new FormData();
+        fd.append('lat', lat || 0);
+        fd.append('lng', lng || 0);
+        fd.append('outcome', outcome);
+        fetch(`/meetings/${MEETING_ID}/checkout`, { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(d => {
+                if (d.success) location.reload();
+                else alert('Error: ' + d.error);
+            });
+    };
+
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            pos => tryCheckout(pos.coords.latitude, pos.coords.longitude),
+            () => tryCheckout(0, 0),
+            { enableHighAccuracy: true, timeout: 8000 }
+        );
+    } else {
+        tryCheckout(0, 0);
+    }
+}
+
+// Photo upload
+function uploadPhoto() {
+    const file = document.getElementById('photoFile').files[0];
+    if (!file) { alert('Please select a photo first.'); return; }
+    const caption = document.getElementById('photoCaption').value;
+    const status = document.getElementById('upload-status');
+    status.textContent = 'Uploading…';
+
+    const fd = new FormData();
+    fd.append('photo', file);
+    fd.append('caption', caption);
+    fetch(`/meetings/${MEETING_ID}/upload-photo`, { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(d => {
+            if (d.success) {
+                status.textContent = '';
+                document.getElementById('no-photos-msg') && (document.getElementById('no-photos-msg').remove());
+                const grid = document.getElementById('photo-grid');
+                const wrap = document.createElement('div');
+                wrap.className = 'photo-wrapper';
+                wrap.id = 'pw-' + d.photo_id;
+                wrap.innerHTML = `
+                    <a href="${d.url}" target="_blank">
+                        <img src="${d.url}" class="photo-thumb">
+                    </a>
+                    <button class="photo-del" onclick="deletePhoto(${d.photo_id})" title="Delete">×</button>
+                `;
+                grid.appendChild(wrap);
+                document.getElementById('photoFile').value = '';
+                document.getElementById('photoCaption').value = '';
+            } else {
+                status.textContent = 'Error: ' + d.error;
+            }
+        });
+}
+
+// Delete photo
+function deletePhoto(photoId) {
+    if (!confirm('Delete this photo?')) return;
+    fetch(`/meetings/${MEETING_ID}/delete-photo/${photoId}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.success) {
+                const el = document.getElementById('pw-' + photoId);
+                if (el) el.remove();
+            }
+        });
+}
+</script>
+{% endblock %}

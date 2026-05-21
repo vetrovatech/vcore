@@ -42,15 +42,15 @@
 
                     <div class="row">
                         <div class="col-md-6 mb-3">
-                            <label for="phone" class="form-label">Phone</label>
+                            <label for="phone" class="form-label">Phone <span class="text-danger">*</span></label>
                             <input type="tel" class="form-control" id="phone" name="phone"
-                                value="{{ supplier.phone if supplier else '' }}">
+                                value="{{ supplier.phone if supplier else '' }}" required>
                         </div>
 
                         <div class="col-md-6 mb-3">
-                            <label for="email" class="form-label">Email</label>
+                            <label for="email" class="form-label">Email <span class="text-danger">*</span></label>
                             <input type="email" class="form-control" id="email" name="email"
-                                value="{{ supplier.email if supplier else '' }}">
+                                value="{{ supplier.email if supplier else '' }}" required>
                         </div>
                     </div>
 
@@ -92,9 +92,9 @@
                 <div class="card-body">
                     <div class="row">
                         <div class="col-md-6 mb-3">
-                            <label for="gstin" class="form-label">GSTIN</label>
+                            <label for="gstin" class="form-label">GSTIN <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="gstin" name="gstin"
-                                value="{{ supplier.gstin if supplier else '' }}" placeholder="22AAAAA0000A1Z5">
+                                value="{{ supplier.gstin if supplier else '' }}" placeholder="22AAAAA0000A1Z5" required>
                         </div>
 
                         <div class="col-md-6 mb-3">
@@ -142,7 +142,7 @@
         <div class="card-body">
             <div class="row">
                 <div class="col-md-4 mb-3">
-                    <label for="lead_time_days" class="form-label">Lead Time (days)</label>
+                    <label for="lead_time_days" class="form-label">Approx Sales</label>
                     <input type="number" class="form-control" id="lead_time_days" name="lead_time_days"
                         value="{{ supplier.lead_time_days if supplier else '' }}" placeholder="e.g., 7">
                 </div>
@@ -161,9 +161,9 @@
             </div>
 
             <div class="mb-3">
-                <label for="notes" class="form-label">Notes</label>
+                <label for="notes" class="form-label">Short note about vendor</label>
                 <textarea class="form-control" id="notes" name="notes" rows="3"
-                    placeholder="Any additional notes or comments">{{ supplier.notes if supplier else '' }}</textarea>
+                    placeholder="Any additional notes or comments about this vendor">{{ supplier.notes if supplier else '' }}</textarea>
             </div>
         </div>
     </div>

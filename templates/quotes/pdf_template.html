@@ -115,7 +115,7 @@
         <div class="company-name">GLASSY INDIA</div>
         <div class="company-details">
             VETROVA TECH SERVICES PRIVATE LIMITED<br>
-            Bangalore Seley Glass - A/2, Bommasandra Industrial Area, Bengaluru, Karnataka 560099<br>
+            6-L5, Attibele Industrial Area, Itchangur, Karnataka 562107<br>
             ☎ +91 85500 11196 | 📧 rohit@glassy.in | 🌐 www.glassy.in
         </div>
     </div>
@@ -161,6 +161,9 @@
                     {% endif %}
                     {% if quote.customer_phone %}
                     <div>Phone: {{ quote.customer_phone }}</div>
+                    {% endif %}
+                    {% if quote.customer_gst %}
+                    <div>GST: {{ quote.customer_gst }}</div>
                     {% endif %}
                 </td>
                 <td style="width: 50%;">
@@ -234,10 +237,118 @@
             <td class="text-right">{{ "{:,.2f}".format(quote.transport_charges) }}</td>
         </tr>
         {% endif %}
+        {% if quote.cutout_charges > 0 %}
+        <tr>
+            <td>Cutout Charges:</td>
+            <td class="text-right">{{ "{:,.2f}".format(quote.cutout_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% set ns = namespace(total_holes=0, total_hole_charges=0, total_cutouts=0, total_cutout_charges=0) %}
+        {% for item in quote.items %}
+            {% if not item.is_group %}
+                {% if item.hole %}
+                    {% set ns.total_holes = ns.total_holes + item.hole %}
+                    {% for parent in quote.items %}
+                        {% if parent.id == item.parent_id %}
+                            {% set ns.total_hole_charges = ns.total_hole_charges + item.hole * parent.hole_price %}
+                        {% endif %}
+                    {% endfor %}
+                {% endif %}
+                {% if item.cutout %}
+                    {% set ns.total_cutouts = ns.total_cutouts + item.cutout %}
+                    {% for parent in quote.items %}
+                        {% if parent.id == item.parent_id %}
+                            {% set ns.total_cutout_charges = ns.total_cutout_charges + item.cutout * parent.cutout_price %}
+                        {% endif %}
+                    {% endfor %}
+                {% endif %}
+            {% endif %}
+        {% endfor %}
+        {% if ns.total_holes > 0 %}
+        <tr>
+            <td>Holes Charges ({{ ns.total_holes }} holes):</td>
+            <td class="text-right">{{ "{:,.2f}".format(ns.total_hole_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% if ns.total_cutouts > 0 %}
+        <tr>
+            <td>Cutout Charges ({{ ns.total_cutouts }} cutouts):</td>
+            <td class="text-right">{{ "{:,.2f}".format(ns.total_cutout_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% if quote.shape_cutting_charges > 0 %}
+        <tr>
+            <td>Shape Cutting Charges:</td>
+            <td class="text-right">{{ "{:,.2f}".format(quote.shape_cutting_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% if quote.jumbo_size_charges > 0 %}
+        <tr>
+            <td>Jumbo Size Charges:</td>
+            <td class="text-right">{{ "{:,.2f}".format(quote.jumbo_size_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% if quote.template_charges > 0 %}
+        <tr>
+            <td>Template Charges:</td>
+            <td class="text-right">{{ "{:,.2f}".format(quote.template_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% if quote.handling_charges > 0 %}
+        <tr>
+            <td>Handling Charges:</td>
+            <td class="text-right">{{ "{:,.2f}".format(quote.handling_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% if quote.polish_charges > 0 %}
+        <tr>
+            <td>Polish Charges:</td>
+            <td class="text-right">{{ "{:,.2f}".format(quote.polish_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% if quote.document_charges > 0 %}
+        <tr>
+            <td>Document Charges:</td>
+            <td class="text-right">{{ "{:,.2f}".format(quote.document_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% if quote.frosted_charges > 0 %}
+        <tr>
+            <td>Frosted Charges:</td>
+            <td class="text-right">{{ "{:,.2f}".format(quote.frosted_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% if quote.insurance_charges > 0 %}
+        <tr>
+            <td>Insurance @{{ "%.4g" % quote.insurance_percentage }}%:</td>
+            <td class="text-right">{{ "{:,.2f}".format(quote.insurance_charges) }}</td>
+        </tr>
+        {% endif %}
+        {% set pdf_total_charges = quote.delivery_charges + quote.installation_charges + quote.freight_charges + quote.transport_charges + quote.cutout_charges + quote.holes_charges + quote.shape_cutting_charges + quote.jumbo_size_charges + quote.template_charges + quote.handling_charges + quote.polish_charges + quote.document_charges + quote.frosted_charges + quote.insurance_charges %}
+        {% if pdf_total_charges > 0 %}
+        <tr style="border-top:1px solid #ccc;">
+            <td><strong>Taxable Amount:</strong></td>
+            <td class="text-right"><strong>{{ "{:,.2f}".format(quote.subtotal + pdf_total_charges) }}</strong></td>
+        </tr>
+        {% endif %}
+        {% if quote.quote_type == 'B2C' %}
+            {% if quote.gst_amount > 0 %}
+            {% set half_gst = "%.4g" % (quote.gst_percentage / 2) %}
+            <tr>
+                <td>SGST @{{ half_gst }}%:</td>
+                <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
+            </tr>
+            <tr>
+                <td>CGST @{{ half_gst }}%:</td>
+                <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount / 2) }}</td>
+            </tr>
+            {% endif %}
+        {% else %}
         <tr>
             <td>GST @ {{ quote.gst_percentage }}%:</td>
             <td class="text-right">{{ "{:,.2f}".format(quote.gst_amount) }}</td>
         </tr>
+        {% endif %}
         <tr>
             <td>Round Off:</td>
             <td class="text-right">{{ "{:,.2f}".format(quote.round_off) }}</td>
@@ -270,6 +381,9 @@
         <p>In words: Ninety Four Thousand Six Hundred and Ten</p>
         <p><strong>For VETROVA TECH SERVICES PRIVATE LIMITED</strong><br>
             (Authorized Signatory)</p>
+        <p style="margin-top: 15px; font-size: 8pt; color: #888;">
+            Also at: Bangalore Safety Glass - A/2, Bommasandra Industrial Area, Bengaluru, Karnataka 560099
+        </p>
     </div>
 </body>
 

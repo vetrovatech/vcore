@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit Lead' if action == 'edit' else 'New Lead' }} - Leadfy{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="mb-0">
+            <i class="bi bi-person-lines-fill text-primary"></i>
+            {{ 'Edit Lead' if action == 'edit' else 'New Lead' }}
+        </h2>
+        <small class="text-muted">Leadfy &mdash; Lead Management</small>
+    </div>
+    <a href="{{ url_for('leads_list') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Leads
+    </a>
+</div>
+
+<div class="card" style="max-width: 600px;">
+    <div class="card-header" style="background: linear-gradient(135deg,#667eea,#764ba2); color:white; border-radius: 0.75rem 0.75rem 0 0;">
+        <h5 class="mb-0">
+            <i class="bi bi-{{ 'pencil-square' if action == 'edit' else 'person-plus-fill' }}"></i>
+            {{ 'Edit Lead' if action == 'edit' else 'Add New Lead' }}
+        </h5>
+    </div>
+    <div class="card-body p-4">
+        <form method="POST"
+            action="{{ url_for('lead_edit', id=lead.id) if action == 'edit' else url_for('lead_new') }}">
+
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Name</label>
+                <input type="text" class="form-control" name="name"
+                    value="{{ lead.name or '' if lead else '' }}"
+                    placeholder="Lead name (leave blank if unknown)">
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Owner</label>
+                <select class="form-select" name="owner_id">
+                    <option value="">— Select Owner —</option>
+                    {% for u in users %}
+                    <option value="{{ u.id }}"
+                        {% if lead and lead.owner_id == u.id %}selected{% endif %}>
+                        {{ u.username }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Assign To</label>
+                <select class="form-select" name="assigned_to_id">
+                    <option value="">— Unassigned —</option>
+                    {% for u in users %}
+                    <option value="{{ u.id }}"
+                        {% if lead and lead.assigned_to_id == u.id %}selected{% endif %}>
+                        {{ u.username }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <div class="form-text">Only the assigned user will see this lead in their list.</div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Contact (Phone)</label>
+                <input type="text" class="form-control" name="contact"
+                    value="{{ lead.contact or '' if lead else '' }}"
+                    placeholder="e.g. 9876543210">
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-6">
+                    <label class="form-label fw-semibold">City</label>
+                    <input type="text" class="form-control" name="city"
+                        value="{{ lead.city or '' if lead else '' }}" placeholder="City">
+                </div>
+                <div class="col-6">
+                    <label class="form-label fw-semibold">State</label>
+                    <input type="text" class="form-control" name="state"
+                        value="{{ lead.state or '' if lead else '' }}" placeholder="State">
+                </div>
+            </div>
+
+            <div class="row g-3 mb-4">
+                <div class="col-6">
+                    <label class="form-label fw-semibold">Stage</label>
+                    <select class="form-select" name="stage">
+                        {% for s in ['New Lead','Contacted','Not Connected','Qualified','PI Shared','Closed Won','Closed Lost','Junk'] %}
+                        <option value="{{ s }}"
+                            {% if lead and lead.stage == s %}selected
+                            {% elif not lead and s == 'New Lead' %}selected{% endif %}>
+                            {{ s }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-6">
+                    <label class="form-label fw-semibold">Origin</label>
+                    <input type="text" class="form-control" name="origin"
+                        value="{{ lead.origin or '' if lead else '' }}"
+                        placeholder="e.g. Facebook, Google">
+                </div>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check2-circle"></i>
+                    {{ 'Save Changes' if action == 'edit' else 'Save Lead' }}
+                </button>
+                <a href="{{ url_for('leads_list') }}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

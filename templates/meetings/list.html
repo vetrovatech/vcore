@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Meetings — VCore{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="mb-0"><i class="bi bi-geo-alt me-2"></i>Meetings</h4>
+        <small class="text-muted">{{ meetings|length }} meeting{{ 's' if meetings|length != 1 }}</small>
+    </div>
+    <div class="d-flex gap-2">
+        {% if current_user.is_manager_or_admin() %}
+        <a href="{{ url_for('meetings_map') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-map"></i> Map View
+        </a>
+        {% endif %}
+        <a href="{{ url_for('meeting_new') }}" class="btn btn-primary btn-sm">
+            <i class="bi bi-plus-lg"></i> New Meeting
+        </a>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+    <div class="card-body py-2">
+        <form method="GET" class="row g-2 align-items-end">
+            {% if current_user.is_manager_or_admin() %}
+            <div class="col-md-2">
+                <label class="form-label form-label-sm mb-1">Salesman</label>
+                <select name="user_id" class="form-select form-select-sm">
+                    <option value="">All</option>
+                    {% for u in users %}
+                    <option value="{{ u.id }}" {% if request.args.get('user_id')|string == u.id|string %}selected{% endif %}>{{ u.username }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div class="col-md-2">
+                <label class="form-label form-label-sm mb-1">Type</label>
+                <select name="meeting_type" class="form-select form-select-sm">
+                    <option value="">All Types</option>
+                    {% for t in meeting_types %}
+                    <option value="{{ t }}" {% if request.args.get('meeting_type') == t %}selected{% endif %}>{{ t }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label form-label-sm mb-1">Status</label>
+                <select name="status" class="form-select form-select-sm">
+                    <option value="">All</option>
+                    {% for s in meeting_statuses %}
+                    <option value="{{ s }}" {% if request.args.get('status') == s %}selected{% endif %}>{{ s }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label form-label-sm mb-1">From</label>
+                <input type="date" name="date_from" class="form-control form-control-sm" value="{{ request.args.get('date_from','') }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label form-label-sm mb-1">To</label>
+                <input type="date" name="date_to" class="form-control form-control-sm" value="{{ request.args.get('date_to','') }}">
+            </div>
+            <div class="col-md-2 d-flex gap-2">
+                <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
+                <a href="{{ url_for('meetings_list') }}" class="btn btn-outline-secondary btn-sm">Clear</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Meetings Table -->
+{% if meetings %}
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Title / Client</th>
+                    {% if current_user.is_manager_or_admin() %}<th>Salesman</th>{% endif %}
+                    <th>Type</th>
+                    <th>Scheduled</th>
+                    <th>Check-in</th>
+                    <th>Location</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in meetings %}
+                <tr>
+                    <td>
+                        <a href="{{ url_for('meeting_view', id=m.id) }}" class="fw-semibold text-decoration-none">{{ m.title }}</a>
+                        {% if m.client_name %}
+                        <div class="text-muted" style="font-size:0.8rem;"><i class="bi bi-person me-1"></i>{{ m.client_name }}</div>
+                        {% elif m.lead %}
+                        <div class="text-muted" style="font-size:0.8rem;"><i class="bi bi-person-lines-fill me-1"></i>{{ m.lead.name }}</div>
+                        {% endif %}
+                        {% if m.photos|length > 0 %}
+                        <span class="badge bg-light text-secondary" style="font-size:0.7rem;"><i class="bi bi-camera"></i> {{ m.photos|length }}</span>
+                        {% endif %}
+                    </td>
+                    {% if current_user.is_manager_or_admin() %}
+                    <td><span class="badge bg-light text-dark">{{ m.user.username if m.user else '—' }}</span></td>
+                    {% endif %}
+                    <td><span class="badge bg-light text-secondary">{{ m.meeting_type }}</span></td>
+                    <td style="font-size:0.85rem;">
+                        {% if m.scheduled_at %}
+                        {{ (m.scheduled_at|to_ist).strftime('%d %b, %I:%M %p') }}
+                        {% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    <td style="font-size:0.85rem;">
+                        {% if m.check_in_time %}
+                        <span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>{{ (m.check_in_time|to_ist).strftime('%d %b, %I:%M %p') }}</span>
+                        {% else %}<span class="text-muted">Not checked in</span>{% endif %}
+                    </td>
+                    <td style="font-size:0.8rem; max-width:160px;" class="text-truncate">
+                        {% if m.check_in_address %}
+                        <i class="bi bi-geo-alt text-danger me-1"></i>{{ m.check_in_address[:60] }}{% if m.check_in_address|length > 60 %}…{% endif %}
+                        {% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if m.status == 'Completed' %}
+                        <span class="badge bg-success">Completed</span>
+                        {% elif m.status == 'Checked In' %}
+                        <span class="badge bg-warning text-dark">Checked In</span>
+                        {% elif m.status == 'Cancelled' %}
+                        <span class="badge bg-secondary">Cancelled</span>
+                        {% else %}
+                        <span class="badge bg-primary">Scheduled</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{{ url_for('meeting_view', id=m.id) }}" class="btn btn-outline-primary btn-sm">View</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="text-center py-5 text-muted">
+    <i class="bi bi-geo-alt" style="font-size:3rem;opacity:0.3;"></i>
+    <p class="mt-3">No meetings found. <a href="{{ url_for('meeting_new') }}">Create one</a>.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -253,9 +253,9 @@
 
 <div class="mt-3">
     <small class="text-muted">
-        Created: {{ glass_type.created_at.strftime('%d %b %Y, %I:%M %p') }}
+        Created: {{ (glass_type.created_at | to_ist).strftime('%d %b %Y, %I:%M %p') }}
         {% if glass_type.updated_at != glass_type.created_at %}
-        | Last updated: {{ glass_type.updated_at.strftime('%d %b %Y, %I:%M %p') }}
+        | Last updated: {{ (glass_type.updated_at | to_ist).strftime('%d %b %Y, %I:%M %p') }}
         {% endif %}
     </small>
 </div>

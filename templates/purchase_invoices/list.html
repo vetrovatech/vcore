@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% block title %}Purchase Invoices{% endblock %}
+
+{% block extra_css %}
+<style>
+    .pi-header {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        border-radius: 0.75rem;
+        padding: 1.25rem 1.5rem;
+        color: white;
+        margin-bottom: 1.5rem;
+    }
+    .filter-card {
+        background: #fff;
+        border-radius: 0.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.25rem;
+    }
+    .filter-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #94a3b8;
+        letter-spacing: 0.6px;
+        margin-bottom: 0.35rem;
+    }
+    .table-card {
+        background: #fff;
+        border-radius: 0.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        overflow: hidden;
+    }
+    .table thead th {
+        background: #f8fafc;
+        color: #64748b;
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 2px solid #e2e8f0;
+        padding: 0.75rem 1rem;
+    }
+    .table tbody td {
+        padding: 0.85rem 1rem;
+        vertical-align: middle;
+        font-size: 0.875rem;
+        border-bottom: 1px solid #f1f5f9;
+    }
+    .badge-gst    { background:#dcfce7; color:#15803d; }
+    .badge-nongst { background:#fef9c3; color:#854d0e; }
+    .badge-paid    { background:#dcfce7; color:#15803d; }
+    .badge-pending { background:#fef3c7; color:#92400e; }
+    .sno-badge {
+        background: #f1f5f9;
+        color: #475569;
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 0.2rem 0.55rem;
+        border-radius: 0.4rem;
+    }
+    .empty-state { text-align:center; padding: 3rem 1rem; color:#94a3b8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+
+    <!-- Header -->
+    <div class="pi-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+            <h4 class="mb-0 fw-bold"><i class="bi bi-receipt me-2"></i>Purchase Invoices</h4>
+            <small class="opacity-75">{{ invoices|length }} invoice{{ 's' if invoices|length != 1 }}</small>
+        </div>
+        {% if current_user.is_manager_or_admin() %}
+        <a href="{{ url_for('purchase_invoice_new') }}" class="btn btn-light btn-sm fw-semibold">
+            <i class="bi bi-plus-circle me-1"></i> New Invoice
+        </a>
+        {% endif %}
+    </div>
+
+    <!-- Filters -->
+    <div class="filter-card">
+        <form method="GET" class="row g-2 align-items-end">
+            <div class="col-6 col-md-3">
+                <div class="filter-label">Vendor</div>
+                <select name="supplier" class="form-select form-select-sm">
+                    <option value="">All Vendors</option>
+                    {% for s in suppliers %}
+                    <option value="{{ s.id }}" {% if supplier_filter == s.id|string %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="filter-label">Project</div>
+                <select name="project" class="form-select form-select-sm">
+                    <option value="">All Projects</option>
+                    {% for p in projects %}
+                    <option value="{{ p.id }}" {% if project_filter == p.id|string %}selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <div class="filter-label">Invoice Type</div>
+                <select name="invoice_type" class="form-select form-select-sm">
+                    <option value="">All Types</option>
+                    <option value="GST"     {% if type_filter == 'GST' %}selected{% endif %}>GST</option>
+                    <option value="Non-GST" {% if type_filter == 'Non-GST' %}selected{% endif %}>Non-GST</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <div class="filter-label">Status</div>
+                <select name="status" class="form-select form-select-sm">
+                    <option value="">All Status</option>
+                    <option value="Paid"    {% if status_filter == 'Paid' %}selected{% endif %}>Paid</option>
+                    <option value="Pending" {% if status_filter == 'Pending' %}selected{% endif %}>Pending</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-2 d-flex gap-2">
+                <button type="submit" class="btn btn-primary btn-sm flex-fill">
+                    <i class="bi bi-funnel"></i> Filter
+                </button>
+                <a href="{{ url_for('purchase_invoices_list') }}" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-x"></i>
+                </a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Table -->
+    <div class="table-card">
+        {% if invoices %}
+        <div class="table-responsive">
+            <table class="table mb-0">
+                <thead>
+                    <tr>
+                        <th>S.No</th>
+                        <th>Bill No.</th>
+                        <th>Vendor</th>
+                        <th>Project</th>
+                        <th>Type</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for inv in invoices %}
+                    <tr>
+                        <td><span class="sno-badge">{{ inv.serial_number }}</span></td>
+                        <td class="fw-semibold">{{ inv.bill_number }}</td>
+                        <td>{{ inv.supplier.name }}</td>
+                        <td>{{ inv.project.name }}</td>
+                        <td>
+                            {% if inv.invoice_type == 'GST' %}
+                            <span class="badge badge-gst rounded-pill px-2">GST</span>
+                            {% else %}
+                            <span class="badge badge-nongst rounded-pill px-2">Non-GST</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if inv.invoice_amount %}
+                            <span class="fw-semibold">&#8377;{{ '{:,.2f}'.format(inv.invoice_amount) }}</span>
+                            {% else %}—{% endif %}
+                        </td>
+                        <td>
+                            {% if inv.status == 'Paid' %}
+                            <span class="badge badge-paid rounded-pill px-2">Paid</span>
+                            {% else %}
+                            <span class="badge badge-pending rounded-pill px-2">Pending</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-muted" style="font-size:0.8rem;">
+                            {{ inv.created_at.strftime('%d %b %Y') }}
+                        </td>
+                        <td>
+                            <div class="d-flex gap-1">
+                                <a href="{{ url_for('purchase_invoice_view', id=inv.id) }}"
+                                   class="btn btn-outline-primary btn-sm py-0 px-2">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                {% if current_user.is_manager_or_admin() %}
+                                <a href="{{ url_for('purchase_invoice_edit', id=inv.id) }}"
+                                   class="btn btn-outline-secondary btn-sm py-0 px-2">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                {% endif %}
+                                {% if current_user.is_admin() %}
+                                <form method="POST" action="{{ url_for('purchase_invoice_delete', id=inv.id) }}"
+                                      onsubmit="return confirm('Delete {{ inv.serial_number }}?')">
+
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-2">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-receipt" style="font-size:2.5rem;"></i>
+            <p class="mt-2 mb-1 fw-semibold">No invoices found</p>
+            <small>Adjust filters or create a new invoice</small>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

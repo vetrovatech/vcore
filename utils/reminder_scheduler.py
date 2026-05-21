@@ -49,6 +49,13 @@ class ReminderScheduler:
                         custom_subject=reminder.subject,
                         custom_message=reminder.message
                     )
+                elif reminder.reminder_type == 'quote' and reminder.quote:
+                    result = self.email_service.send_quote_followup(
+                        reminder.quote,
+                        reminder.user,
+                        custom_subject=reminder.subject,
+                        custom_message=reminder.message
+                    )
                 else:
                     result = {'success': False, 'error': 'Invalid reminder type or missing reference'}
                 
@@ -113,6 +120,7 @@ class ReminderScheduler:
             reminder_type=reminder.reminder_type,
             project_id=reminder.project_id,
             task_id=reminder.task_id,
+            quote_id=reminder.quote_id,
             user_id=reminder.user_id,
             reminder_datetime=next_datetime,
             subject=reminder.subject,

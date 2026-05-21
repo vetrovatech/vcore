@@ -19,10 +19,14 @@
         <div class="card-body">
             <div class="row">
                 <div class="col-md-6">
-                    <div class="mb-3">
+                    <div class="mb-3 position-relative">
                         <label class="form-label">Customer Name *</label>
-                        <input type="text" class="form-control" name="customer_name"
-                            value="{{ quote.customer_name if quote else '' }}" required>
+                        <input type="text" class="form-control" id="customer_name" name="customer_name"
+                            value="{{ quote.customer_name if quote else '' }}" required
+                            autocomplete="off" placeholder="Type to search saved clients…">
+                        <div id="clientDropdown"
+                             class="list-group shadow position-absolute w-100"
+                             style="display:none; z-index:1050; top:100%; max-height:220px; overflow-y:auto;"></div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Address</label>
@@ -52,6 +56,12 @@
                         <label class="form-label">Email</label>
                         <input type="email" class="form-control" name="customer_email"
                             value="{{ quote.customer_email if quote else '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">GST Number</label>
+                        <input type="text" class="form-control" name="customer_gst"
+                            value="{{ quote.customer_gst if quote else '' }}" placeholder="e.g. 22AAAAA0000A1Z5"
+                            maxlength="20">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Dispatch To</label>
@@ -167,10 +177,11 @@
                 <table class="table table-sm mb-0" id="b2cItemsTable">
                     <thead class="table-light">
                         <tr>
-                            <th style="width:5%;">S.No</th>
-                            <th style="width:38%;">Particular</th>
-                            <th style="width:14%;" id="b2cSizeHeader">Size (Sqft)</th>
-                            <th style="width:20%;">
+                            <th style="width:4%;">S.No</th>
+                            <th style="width:30%;">Particular</th>
+                            <th style="width:14%;">Product Image</th>
+                            <th style="width:12%;" id="b2cSizeHeader">Size (Sqft)</th>
+                            <th style="width:18%;">
                                 <select class="form-select form-select-sm fw-semibold border-0 bg-transparent p-0"
                                         style="width:auto; cursor:pointer;"
                                         onchange="onB2CRateModeChange(this)">
@@ -178,7 +189,7 @@
                                     <option value="qty">Rate / Qty</option>
                                 </select>
                             </th>
-                            <th style="width:15%;">Total (₹)</th>
+                            <th style="width:14%;">Total (₹)</th>
                             <th style="width:8%;">Action</th>
                         </tr>
                     </thead>
@@ -293,9 +304,16 @@
                                 name="template_charges" value="{{ quote.template_charges if quote else 0 }}">
                         </div>
                         <div class="col-md-6 mb-2">
-                            <label class="form-label">Handling Charges</label>
-                            <input type="number" step="0.01" class="form-control charge-input" id="handling_charges"
-                                name="handling_charges" value="{{ quote.handling_charges if quote else 0 }}">
+                            <label class="form-label">Handling Charges <small class="text-muted">(% of subtotal)</small></label>
+                            <div class="input-group">
+                                <input type="number" step="0.01" min="0" max="100" class="form-control"
+                                    id="handling_percentage" name="handling_percentage"
+                                    value="{{ quote.handling_percentage if quote else 1 }}"
+                                    oninput="updateTotals()" placeholder="1">
+                                <span class="input-group-text">%</span>
+                            </div>
+                            <small class="text-muted" id="handling_amount_hint"></small>
+                            <input type="hidden" id="handling_charges" name="handling_charges" value="{{ quote.handling_charges if quote else 0 }}">
                         </div>
                         <div class="col-md-6 mb-2">
                             <label class="form-label">Polish Charges</label>
@@ -312,9 +330,21 @@
                             <input type="number" step="0.01" class="form-control charge-input" id="frosted_charges"
                                 name="frosted_charges" value="{{ quote.frosted_charges if quote else 0 }}">
                         </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Insurance <small class="text-muted">(% of subtotal)</small></label>
+                            <div class="input-group">
+                                <input type="number" step="0.01" min="0" max="100" class="form-control"
+                                    id="insurance_percentage" name="insurance_percentage"
+                                    value="{{ quote.insurance_percentage if quote else 0 }}"
+                                    oninput="updateTotals()" placeholder="0">
+                                <span class="input-group-text">%</span>
+                            </div>
+                            <small class="text-muted" id="insurance_amount_hint"></small>
+                        </div>
                         <!-- Hidden fields for cutout and holes charges - set to 0 -->
                         <input type="hidden" id="cutout_charges" name="cutout_charges" value="0">
                         <input type="hidden" id="holes_charges" name="holes_charges" value="0">
+                        <input type="hidden" id="insurance_charges" name="insurance_charges" value="0">
                     </div>
                 </div>
             </div>
@@ -331,6 +361,58 @@
                             <td>Subtotal:</td>
                             <td class="text-end"><strong id="subtotal_display">0.00</strong></td>
                         </tr>
+                        <tr id="row_holes_summary" style="display:none;">
+                            <td class="text-muted small">Holes Charges <small>(incl. in subtotal)</small>:</td>
+                            <td class="text-end text-muted small" id="disp_holes_summary">0.00</td>
+                        </tr>
+                        <tr id="row_cutout_summary" style="display:none;">
+                            <td class="text-muted small">Cutout Charges <small>(incl. in subtotal)</small>:</td>
+                            <td class="text-end text-muted small" id="disp_cutout_summary">0.00</td>
+                        </tr>
+                        <tr id="row_installation_charges" style="display:none;">
+                            <td class="text-muted small">Installation Charges:</td>
+                            <td class="text-end text-muted small" id="disp_installation_charges">0.00</td>
+                        </tr>
+                        <tr id="row_transport_charges" style="display:none;">
+                            <td class="text-muted small">Transport Charges:</td>
+                            <td class="text-end text-muted small" id="disp_transport_charges">0.00</td>
+                        </tr>
+                        <tr id="row_shape_cutting_charges" style="display:none;">
+                            <td class="text-muted small">Shape Cutting Charges:</td>
+                            <td class="text-end text-muted small" id="disp_shape_cutting_charges">0.00</td>
+                        </tr>
+                        <tr id="row_jumbo_size_charges" style="display:none;">
+                            <td class="text-muted small">Jumbo Size Charges:</td>
+                            <td class="text-end text-muted small" id="disp_jumbo_size_charges">0.00</td>
+                        </tr>
+                        <tr id="row_template_charges" style="display:none;">
+                            <td class="text-muted small">Template Charges:</td>
+                            <td class="text-end text-muted small" id="disp_template_charges">0.00</td>
+                        </tr>
+                        <tr id="row_handling_charges" style="display:none;">
+                            <td class="text-muted small">Handling Charges:</td>
+                            <td class="text-end text-muted small" id="disp_handling_charges">0.00</td>
+                        </tr>
+                        <tr id="row_polish_charges" style="display:none;">
+                            <td class="text-muted small">Polish Charges:</td>
+                            <td class="text-end text-muted small" id="disp_polish_charges">0.00</td>
+                        </tr>
+                        <tr id="row_document_charges" style="display:none;">
+                            <td class="text-muted small">Document Charges:</td>
+                            <td class="text-end text-muted small" id="disp_document_charges">0.00</td>
+                        </tr>
+                        <tr id="row_frosted_charges" style="display:none;">
+                            <td class="text-muted small">Frosted Charges:</td>
+                            <td class="text-end text-muted small" id="disp_frosted_charges">0.00</td>
+                        </tr>
+                        <tr id="row_insurance_charges" style="display:none;">
+                            <td class="text-muted small">Insurance (<span id="disp_insurance_pct">0</span>%):</td>
+                            <td class="text-end text-muted small" id="disp_insurance_charges">0.00</td>
+                        </tr>
+                        <tr id="taxable_row" style="display:none;" class="table-light">
+                            <td><strong>Taxable Amount:</strong></td>
+                            <td class="text-end"><strong id="taxable_display">0.00</strong></td>
+                        </tr>
                         <!-- B2B: single GST % field -->
                         <tr id="b2b_gst_row">
                             <td>
@@ -341,13 +423,31 @@
                             </td>
                             <td class="text-end"><strong id="gst_display">0.00</strong></td>
                         </tr>
+                        <!-- B2C: GST toggle + editable % -->
+                        <tr id="b2c_gst_ctrl_row" style="display:none;">
+                            <td colspan="2">
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <div class="form-check form-switch mb-0">
+                                        <input class="form-check-input" type="checkbox" role="switch"
+                                            id="b2c_apply_gst" checked onchange="onB2CGstToggle()">
+                                        <label class="form-check-label" for="b2c_apply_gst">Apply GST</label>
+                                    </div>
+                                    <span id="b2c_gst_pct_wrapper">
+                                        <input type="number" step="0.01" min="0" max="100"
+                                            class="form-control form-control-sm d-inline-block"
+                                            id="b2c_gst_pct" value="18" style="width:65px;"
+                                            oninput="updateB2CTotals()"> %
+                                    </span>
+                                </div>
+                            </td>
+                        </tr>
                         <!-- B2C: SGST + CGST split rows -->
                         <tr id="b2c_sgst_row" style="display:none;">
-                            <td>SGST @9%</td>
+                            <td id="b2c_sgst_label">SGST @9%</td>
                             <td class="text-end"><strong id="sgst_display">0.00</strong></td>
                         </tr>
                         <tr id="b2c_cgst_row" style="display:none;">
-                            <td>CGST @9%</td>
+                            <td id="b2c_cgst_label">CGST @9%</td>
                             <td class="text-end"><strong id="cgst_display">0.00</strong></td>
                         </tr>
                         <tr>
@@ -404,13 +504,17 @@
     // Pre-populate existing items when editing
     window.existingQuoteData = {
         quoteType: "{{ quote.quote_type }}",
+        gstPercentage: {{ quote.gst_percentage|float }},
+        b2cRateMode: "{{ 'qty' if quote.items | selectattr('unit', 'equalto', 'pcs') | list | length > 0 else 'sqft' }}",
         items: [
             {%for item in quote.items if not item.parent_id %}
     {
         id: {{ item.id }},
         is_group: {{ 'true' if item.is_group else 'false' }},
         item_number: {{ item.item_number }},
-        particular: "{{item.particular|replace('"', '\\"')}}",
+        particular: {{ item.particular | tojson }},
+        image_s3_key: {{ item.image_s3_key | tojson if item.image_s3_key else 'null' }},
+        image_presigned_url: {{ (item.image_s3_key | item_image_url) | tojson if item.image_s3_key else 'null' }},
             actual_width: {{ item.actual_width if item.actual_width else 'null' }},
         actual_height: {{ item.actual_height if item.actual_height else 'null' }},
         chargeable_width: {{ item.chargeable_width if item.chargeable_width else 'null' }},
@@ -428,7 +532,7 @@
     {%for child in item.children | sort(attribute = 'sort_order') %}
     {
         id: {{ child.id }},
-        particular: "{{child.particular|replace('"', '\\"')}}",
+        particular: {{ child.particular | tojson }},
             actual_width: {{ child.actual_width if child.actual_width else 'null' }},
         actual_height: {{ child.actual_height if child.actual_height else 'null' }},
         chargeable_width: {{ child.chargeable_width if child.chargeable_width else 'null' }},
@@ -566,9 +670,24 @@
         document.getElementById('b2cItemsSection').style.display = isB2C ? ''     : 'none';
 
         // Totals: toggle GST rows
-        document.getElementById('b2b_gst_row').style.display  = isB2C ? 'none' : '';
-        document.getElementById('b2c_sgst_row').style.display = isB2C ? ''     : 'none';
-        document.getElementById('b2c_cgst_row').style.display = isB2C ? ''     : 'none';
+        document.getElementById('b2b_gst_row').style.display      = isB2C ? 'none' : '';
+        document.getElementById('b2c_gst_ctrl_row').style.display  = isB2C ? ''     : 'none';
+        // SGST/CGST rows controlled by updateB2CTotals (via checkbox + %)
+        if (!isB2C) {
+            document.getElementById('b2c_sgst_row').style.display = 'none';
+            document.getElementById('b2c_cgst_row').style.display = 'none';
+        }
+
+        // Pre-populate B2C GST settings from existing quote data (edit mode)
+        if (isB2C && window.existingQuoteData) {
+            const gstPct = parseFloat(window.existingQuoteData.gstPercentage) || 0;
+            const applyGstChk = document.getElementById('b2c_apply_gst');
+            const gstPctInput = document.getElementById('b2c_gst_pct');
+            const wrapper     = document.getElementById('b2c_gst_pct_wrapper');
+            if (applyGstChk) applyGstChk.checked = gstPct > 0;
+            if (gstPctInput) gstPctInput.value   = gstPct > 0 ? gstPct : 18;
+            if (wrapper)     wrapper.style.display = gstPct > 0 ? '' : 'none';
+        }
 
         // Hide/show B2B additional charges; show/hide B2C charges section
         const additionalChargesCol = document.getElementById('additionalChargesCol');
@@ -580,7 +699,15 @@
             });
         }
         const b2cChargesSection = document.getElementById('b2cChargesSection');
-        if (b2cChargesSection) b2cChargesSection.style.display = isB2C ? '' : 'none';
+        if (b2cChargesSection) {
+            b2cChargesSection.style.display = isB2C ? '' : 'none';
+            // CRITICAL: disable B2C charge inputs when in B2B mode — they share the same
+            // name attributes as B2B inputs and appear first in the DOM, so if not disabled
+            // Flask reads their value (0) instead of the actual B2B charge values.
+            b2cChargesSection.querySelectorAll('input').forEach(el => {
+                el.disabled = !isB2C;
+            });
+        }
 
         // Expand totals col to right side when B2C (additional charges hidden)
         const totalsCol = document.getElementById('totalsCol');
@@ -624,6 +751,83 @@
 
     // Apply on initial load
     document.addEventListener('DOMContentLoaded', () => applyMode(currentType()));
+})();
+</script>
+
+<!-- ── Client Autocomplete ────────────────────────────────────────────────── -->
+<script>
+(function () {
+    const nameInput  = document.getElementById('customer_name');
+    const dropdown   = document.getElementById('clientDropdown');
+    if (!nameInput || !dropdown) return;
+
+    let debounceTimer = null;
+
+    // ── helpers to get/set form fields ──
+    function field(name) {
+        return document.querySelector(`[name="${name}"]`);
+    }
+    function setField(name, val) {
+        const el = field(name);
+        if (el) el.value = val || '';
+    }
+
+    // ── fill all customer fields from a client object ──
+    function fillClient(c) {
+        nameInput.value = c.name;
+        setField('customer_phone',   c.phone);
+        setField('customer_email',   c.email);
+        setField('customer_address', c.address);
+        setField('customer_city',    c.city);
+        setField('customer_state',   c.state);
+        setField('customer_gst',     c.gst_number);
+        setField('dispatch_to',      c.dispatch_to);
+        hideDropdown();
+    }
+
+    // ── render dropdown items ──
+    function showResults(clients) {
+        dropdown.innerHTML = '';
+        if (!clients.length) { hideDropdown(); return; }
+        clients.forEach(c => {
+            const item = document.createElement('button');
+            item.type      = 'button';
+            item.className = 'list-group-item list-group-item-action py-2 px-3';
+            const sub = [c.phone, c.city, c.gst_number].filter(Boolean).join(' · ');
+            item.innerHTML = `<strong>${c.name}</strong>${sub ? `<br><small class="text-muted">${sub}</small>` : ''}`;
+            item.addEventListener('mousedown', e => {
+                e.preventDefault();   // prevent blur before click
+                fillClient(c);
+            });
+            dropdown.appendChild(item);
+        });
+        dropdown.style.display = '';
+    }
+
+    function hideDropdown() { dropdown.style.display = 'none'; }
+
+    // ── debounced search ──
+    nameInput.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        const q = nameInput.value.trim();
+        if (q.length < 1) { hideDropdown(); return; }
+        debounceTimer = setTimeout(() => {
+            fetch(`/api/clients/search?q=${encodeURIComponent(q)}`)
+                .then(r => r.json())
+                .then(showResults)
+                .catch(() => hideDropdown());
+        }, 300);   // 300 ms debounce
+    });
+
+    nameInput.addEventListener('blur',  () => setTimeout(hideDropdown, 150));
+    nameInput.addEventListener('focus', () => {
+        if (nameInput.value.trim().length >= 1) nameInput.dispatchEvent(new Event('input'));
+    });
+
+    // Close on Escape
+    nameInput.addEventListener('keydown', e => {
+        if (e.key === 'Escape') hideDropdown();
+    });
 })();
 </script>
 {% endblock %}

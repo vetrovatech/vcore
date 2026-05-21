@@ -254,12 +254,40 @@
                                 Sales & Procurement</h6>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and 'tally' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('tally_index') }}">
+                                <i class="bi bi-bar-chart-line"></i> Tally
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {% if request.endpoint and 'quote' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('quotes_list') }}">
                                 <i class="bi bi-file-earmark-text"></i> Quotes
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and 'lead' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('leads_list') }}">
+                                <i class="bi bi-person-lines-fill"></i> Leadfy
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and 'meeting' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('meetings_list') }}">
+                                <i class="bi bi-geo-alt"></i> Meetings
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and 'client' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('clients_list') }}">
+                                <i class="bi bi-people"></i> Clients
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and 'purchase_invoice' in request.endpoint %}active{% endif %}"
+                                href="{{ url_for('purchase_invoices_list') }}">
+                                <i class="bi bi-receipt"></i> Purchase Invoices
+                            </a>
                             <a class="nav-link {% if request.endpoint and 'supplier' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('suppliers_list') }}">
                                 <i class="bi bi-building"></i> Suppliers

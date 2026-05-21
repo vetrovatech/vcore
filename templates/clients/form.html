@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit Client' if client else 'New Client' }} - VCore{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-person-lines-fill"></i> {{ 'Edit Client' if client else 'New Client' }}</h2>
+    <a href="{{ url_for('clients_list') }}" class="btn btn-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Clients
+    </a>
+</div>
+
+<form method="POST">
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h6 class="mb-0">Client Details</h6>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Client / Company Name <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" name="name"
+                           value="{{ client.name if client else '' }}" required>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Phone</label>
+                    <input type="tel" class="form-control" name="phone"
+                           value="{{ client.phone or '' if client else '' }}" placeholder="Optional">
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">Email</label>
+                    <input type="email" class="form-control" name="email"
+                           value="{{ client.email or '' if client else '' }}" placeholder="Optional">
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Address</label>
+                    <textarea class="form-control" name="address" rows="2"
+                              placeholder="Optional">{{ client.address or '' if client else '' }}</textarea>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">City</label>
+                    <input type="text" class="form-control" name="city"
+                           value="{{ client.city or '' if client else '' }}" placeholder="Optional">
+                </div>
+                <div class="col-md-3 mb-3">
+                    <label class="form-label">State</label>
+                    <input type="text" class="form-control" name="state"
+                           value="{{ client.state or '' if client else '' }}" placeholder="Optional">
+                </div>
+
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">GST Number</label>
+                    <input type="text" class="form-control" name="gst_number"
+                           value="{{ client.gst_number or '' if client else '' }}"
+                           placeholder="Optional — e.g. 22AAAAA0000A1Z5" maxlength="20">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">Default Quote Type</label>
+                    <select class="form-select" name="quote_type">
+                        <option value="">— Not set —</option>
+                        <option value="B2B" {{ 'selected' if client and client.quote_type == 'B2B' }}>B2B</option>
+                        <option value="B2C" {{ 'selected' if client and client.quote_type == 'B2C' }}>B2C</option>
+                    </select>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">Dispatch To</label>
+                    <textarea class="form-control" name="dispatch_to" rows="2"
+                              placeholder="Optional — leave blank to use main address">{{ client.dispatch_to or '' if client else '' }}</textarea>
+                </div>
+
+                <div class="col-12 mb-3">
+                    <label class="form-label">Notes <small class="text-muted">(internal only)</small></label>
+                    <textarea class="form-control" name="notes" rows="2"
+                              placeholder="Optional">{{ client.notes or '' if client else '' }}</textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mb-5">
+        <button type="submit" class="btn btn-primary btn-lg">
+            <i class="bi bi-save"></i> Save Client
+        </button>
+        <a href="{{ url_for('clients_list') }}" class="btn btn-secondary btn-lg ms-2">
+            <i class="bi bi-x-circle"></i> Cancel
+        </a>
+    </div>
+</form>
+{% endblock %}

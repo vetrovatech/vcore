@@ -48,10 +48,11 @@ class User(UserMixin, db.Model):
 class Project(db.Model):
     """Project model for tracking live projects"""
     __tablename__ = 'projects'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
     owner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    assigned_to_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     start_date = db.Column(db.Date, nullable=False)
     expected_end_date = db.Column(db.Date, nullable=False)
     actual_end_date = db.Column(db.Date, nullable=True)
@@ -59,25 +60,44 @@ class Project(db.Model):
     comments = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
+
     # Relationships
     tasks = db.relationship('PromotorTask', backref='project', lazy=True)
-    
+    assigned_to = db.relationship('User', foreign_keys=[assigned_to_id], lazy=True)
+    history = db.relationship('ProjectHistory', backref='project', lazy=True, order_by='ProjectHistory.created_at.desc()')
+
     def is_overdue(self):
         """Check if project is overdue"""
         if self.status != 'Completed' and self.expected_end_date:
             return datetime.now().date() > self.expected_end_date
         return False
-    
+
     def days_remaining(self):
         """Calculate days remaining until expected end date"""
         if self.status != 'Completed' and self.expected_end_date:
             delta = self.expected_end_date - datetime.now().date()
             return delta.days
         return None
-    
+
     def __repr__(self):
         return f'<Project {self.name} ({self.status})>'
+
+
+class ProjectHistory(db.Model):
+    """Audit log for project changes"""
+    __tablename__ = 'project_history'
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False, index=True)
+    changed_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    action = db.Column(db.String(50), nullable=False)  # 'Created', 'Updated'
+    changes = db.Column(db.Text, nullable=True)  # JSON list of {field, old, new}
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    changed_by = db.relationship('User', foreign_keys=[changed_by_id], lazy=True)
+
+    def __repr__(self):
+        return f'<ProjectHistory project={self.project_id} action={self.action}>'
 
 
 class TaskTemplate(db.Model):
@@ -347,6 +367,7 @@ class Quote(db.Model):
     customer_state = db.Column(db.String(100), nullable=True)
     customer_phone = db.Column(db.String(20), nullable=True)
     customer_email = db.Column(db.String(120), nullable=True)
+    customer_gst = db.Column(db.String(20), nullable=True)
     
     # Billing and shipping
     invoice_to = db.Column(db.Text, nullable=True)  # Billing address if different
@@ -364,10 +385,13 @@ class Quote(db.Model):
     shape_cutting_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     jumbo_size_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     template_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    handling_percentage = db.Column(db.Numeric(5, 2), default=1.00, nullable=False)
     handling_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     polish_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     document_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     frosted_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    insurance_percentage = db.Column(db.Numeric(5, 2), default=0.00, nullable=False)
+    insurance_charges = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     gst_percentage = db.Column(db.Numeric(5, 2), default=18.00, nullable=False)
     gst_amount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     round_off = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
@@ -382,15 +406,35 @@ class Quote(db.Model):
     payment_terms = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default='Draft', index=True)  # Draft, Sent, Accepted, Rejected, Expired
     quote_type = db.Column(db.Enum('B2B', 'B2C'), default='B2B', nullable=False)  # B2B or B2C quote
-    
+
+    # Tally / fulfillment fields
+    delivery_status = db.Column(db.String(20), nullable=False, default='Pending')  # Pending, Dispatched, Delivered
+    amount_received = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)   # online/bank payment received
+    cash_received   = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)   # cash payment received
+    misc_purchases  = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)   # extra costs (labour, transport, etc.)
+
     # Metadata
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
+
     # Relationships
     items = db.relationship('QuoteItem', backref='quote', lazy=True, cascade='all, delete-orphan')
     creator = db.relationship('User', foreign_keys=[created_by], backref='quotes')
+    purchase_invoices = db.relationship('PurchaseInvoice', backref='quote', lazy='dynamic',
+                                        foreign_keys='PurchaseInvoice.quote_id')
+
+    @property
+    def total_received(self):
+        return float(self.amount_received or 0) + float(self.cash_received or 0)
+
+    @property
+    def client_payment_status(self):
+        received = self.total_received
+        total    = float(self.total or 0)
+        if received <= 0:                        return 'Pending'
+        if total > 0 and received >= total:      return 'Received'
+        return 'Partial'
     
     # Indexes
     __table_args__ = (
@@ -465,6 +509,22 @@ class Quote(db.Model):
         return f'<Quote {self.quote_number} - {self.customer_name}>'
 
 
+class QuoteComment(db.Model):
+    """Comment/activity log for a quote"""
+    __tablename__ = 'quote_comments'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    quote_id   = db.Column(db.Integer, db.ForeignKey('quotes.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    comment    = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    user  = db.relationship('User', foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f'<QuoteComment quote={self.quote_id} user={self.user_id}>'
+
+
 class QuoteItem(db.Model):
     """Quote item model for individual line items in a quote with hierarchical support"""
     __tablename__ = 'quote_items'
@@ -482,8 +542,9 @@ class QuoteItem(db.Model):
     
     # Item details
     item_number = db.Column(db.Integer, nullable=False)  # Line item number (1, 2, 3...)
-    particular = db.Column(db.String(300), nullable=False)  # Product name/description
-    
+    particular    = db.Column(db.Text, nullable=False)
+    image_s3_key  = db.Column(db.String(500), nullable=True)
+
     # Actual dimensions (what was measured/ordered)
     actual_width = db.Column(db.Numeric(10, 2), nullable=True)
     actual_height = db.Column(db.Numeric(10, 2), nullable=True)
@@ -786,16 +847,315 @@ class SupplierPricing(db.Model):
         return f'<SupplierPricing {self.supplier.name if self.supplier else "N/A"} - {self.glass_type.name if self.glass_type else "N/A"}>'
 
 
+class Lead(db.Model):
+    """Lead model for Leadfy lead management"""
+    __tablename__ = 'leads'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Lead information
+    name = db.Column(db.String(200), nullable=True)  # nullable for unknown leads
+    contact = db.Column(db.String(20), nullable=True)
+    email = db.Column(db.String(200), nullable=True)
+    city = db.Column(db.String(100), nullable=True)
+    state = db.Column(db.String(100), nullable=True)
+
+    # Facebook Lead Ads integration
+    facebook_lead_id = db.Column(db.String(50), nullable=True, unique=True, index=True)
+
+    # IndiaMart integration
+    indiamart_id = db.Column(db.String(50), nullable=True, unique=True, index=True)
+    buyer_glid = db.Column(db.String(50), nullable=True)
+    company = db.Column(db.String(200), nullable=True)
+    product_interest = db.Column(db.String(200), nullable=True)
+    product_qty = db.Column(db.String(100), nullable=True)
+    product_category = db.Column(db.String(200), nullable=True)
+    lead_type = db.Column(db.String(50), nullable=True)
+    customer_type = db.Column(db.String(10), nullable=True)  # B2B or B2C
+    has_whatsapp = db.Column(db.Boolean, default=False)
+    is_gst_registered = db.Column(db.Boolean, default=False)
+    is_starred = db.Column(db.Boolean, default=False)
+    last_message = db.Column(db.Text, nullable=True)
+    unread_count = db.Column(db.Integer, default=0)
+    indiamart_added_date = db.Column(db.DateTime, nullable=True)
+    indiamart_last_contact = db.Column(db.DateTime, nullable=True)
+    indiamart_notes = db.Column(db.Text, nullable=True)
+    indiamart_labels = db.Column(db.String(500), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    is_untouched = db.Column(db.Boolean, default=True)
+
+    # Stage and origin
+    stage = db.Column(db.String(50), nullable=False, default='New Lead', index=True)
+    # New Lead, Contacted, Not Connected, Qualified, PI Shared, Closed Won, Closed Lost, Junk
+    origin = db.Column(db.String(100), nullable=True, index=True)
+
+    # Ownership
+    owner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    assigned_to_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    owner = db.relationship('User', foreign_keys=[owner_id], backref='owned_leads')
+    assigned_to = db.relationship('User', foreign_keys=[assigned_to_id], backref='assigned_leads')
+    creator = db.relationship('User', foreign_keys=[created_by], backref='created_leads')
+
+    # Indexes
+    __table_args__ = (
+        db.Index('idx_lead_stage', 'stage'),
+        db.Index('idx_lead_owner', 'owner_id'),
+        db.Index('idx_lead_assigned_to', 'assigned_to_id'),
+        db.Index('idx_lead_created_at', 'created_at'),
+        db.Index('idx_lead_updated_at', 'updated_at'),
+    )
+
+    def get_stage_badge_class(self):
+        """Get Bootstrap badge class based on stage"""
+        stage_classes = {
+            'New Lead': 'primary',
+            'Contacted': 'info',
+            'Not Connected': 'warning',
+            'Qualified': 'warning',
+            'PI Shared': 'secondary',
+            'Closed Won': 'success',
+            'Closed Lost': 'danger',
+            'Junk': 'dark',
+        }
+        return stage_classes.get(self.stage, 'secondary')
+
+    def get_initials(self):
+        """Get initials from name"""
+        if not self.name:
+            return '?'
+        parts = self.name.strip().split()
+        if len(parts) >= 2:
+            return (parts[0][0] + parts[-1][0]).upper()
+        return parts[0][0].upper() if parts else '?'
+
+    def get_age_days(self):
+        return (datetime.utcnow() - self.created_at).days
+
+    def __repr__(self):
+        return f'<Lead {self.name or "Unknown"} ({self.stage})>'
+
+
+class LeadHistory(db.Model):
+    """Tracks all changes made to a lead"""
+    __tablename__ = 'lead_history'
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey('leads.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    action = db.Column(db.String(50), nullable=False)   # stage_change, note, field_change, created
+    description = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    lead = db.relationship('Lead', backref=db.backref('history', lazy='dynamic', cascade='all, delete-orphan'))
+    user = db.relationship('User', foreign_keys=[user_id])
+
+
+class IndiamartToken(db.Model):
+    """Stores IndiaMart API session token"""
+    __tablename__ = 'indiamart_tokens'
+
+    id = db.Column(db.Integer, primary_key=True)
+    ak_token = db.Column(db.Text, nullable=False)
+    refresh_token = db.Column(db.Text, nullable=True)   # extracted from JWT payload if present
+    glid = db.Column(db.String(50), nullable=True)
+    mobile = db.Column(db.String(20), nullable=True)
+    user_ip = db.Column(db.String(50), nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def is_valid(self):
+        if not self.expires_at:
+            return False
+        return datetime.utcnow() < self.expires_at
+
+    def expires_soon(self, minutes=120):
+        """True if token expires within the given number of minutes."""
+        if not self.expires_at:
+            return True
+        from datetime import timedelta
+        return datetime.utcnow() >= (self.expires_at - timedelta(minutes=minutes))
+
+
+class PurchaseInvoice(db.Model):
+    """Purchase Invoice model — tracks bills received from suppliers"""
+    __tablename__ = 'purchase_invoices'
+
+    id = db.Column(db.Integer, primary_key=True)
+    serial_number = db.Column(db.String(20), nullable=False, unique=True, index=True)  # PI-001
+
+    # Relationships
+    supplier_id = db.Column(db.Integer, db.ForeignKey('suppliers.id'), nullable=False, index=True)
+    project_id  = db.Column(db.Integer, db.ForeignKey('projects.id'),  nullable=True,  index=True)  # legacy, nullable
+    quote_id    = db.Column(db.Integer, db.ForeignKey('quotes.id'),    nullable=True,  index=True)
+
+    # Bill details
+    bill_number    = db.Column(db.String(100), nullable=False)
+    bill_image_url = db.Column(db.Text, nullable=True)
+    invoice_type   = db.Column(db.String(10), nullable=False, default='GST')  # GST / Non-GST
+    invoice_amount = db.Column(db.Numeric(12, 2), nullable=True)
+    amount_paid    = db.Column(db.Numeric(12, 2), nullable=False, default=0.00)
+
+    # Metadata
+    notes      = db.Column(db.Text, nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # ORM relationships
+    supplier = db.relationship('Supplier', backref=db.backref('purchase_invoices', lazy='dynamic'))
+    project  = db.relationship('Project',  backref=db.backref('purchase_invoices', lazy='dynamic'))
+    creator  = db.relationship('User',     foreign_keys=[created_by])
+
+    @property
+    def vendor_payment_status(self):
+        paid  = float(self.amount_paid or 0)
+        total = float(self.invoice_amount or 0)
+        if paid <= 0:                      return 'Pending'
+        if total > 0 and paid >= total:    return 'Paid'
+        return 'Partial'
+
+    def __repr__(self):
+        return f'<PurchaseInvoice {self.serial_number}>'
+
+
+class Meeting(db.Model):
+    """Meeting / field visit record with GPS check-in"""
+    __tablename__ = 'meetings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+
+    # Assigned salesman
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+
+    # Optional links
+    lead_id = db.Column(db.Integer, db.ForeignKey('leads.id'), nullable=True, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True, index=True)
+
+    # Client details (free text — filled even without a linked lead)
+    client_name = db.Column(db.String(200), nullable=True)
+    client_phone = db.Column(db.String(20), nullable=True)
+    client_address = db.Column(db.Text, nullable=True)
+
+    # Type and schedule
+    meeting_type = db.Column(db.String(50), nullable=False, default='Lead Visit')
+    # Lead Visit | Site Survey | Installation | Follow-up | General
+    scheduled_at = db.Column(db.DateTime, nullable=True)
+
+    # GPS check-in
+    check_in_time = db.Column(db.DateTime, nullable=True)
+    check_in_lat = db.Column(db.Float, nullable=True)
+    check_in_lng = db.Column(db.Float, nullable=True)
+    check_in_accuracy = db.Column(db.Float, nullable=True)   # metres
+    check_in_address = db.Column(db.String(500), nullable=True)
+
+    # GPS check-out
+    check_out_time = db.Column(db.DateTime, nullable=True)
+    check_out_lat = db.Column(db.Float, nullable=True)
+    check_out_lng = db.Column(db.Float, nullable=True)
+
+    # Outcome
+    notes = db.Column(db.Text, nullable=True)
+    outcome = db.Column(db.String(200), nullable=True)
+
+    # Status: Scheduled | Checked In | Completed | Cancelled
+    status = db.Column(db.String(20), nullable=False, default='Scheduled', index=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = db.relationship('User', foreign_keys=[user_id], backref='meetings')
+    creator_user = db.relationship('User', foreign_keys=[created_by], backref='created_meetings')
+    lead = db.relationship('Lead', foreign_keys=[lead_id], backref='meetings')
+    project = db.relationship('Project', foreign_keys=[project_id], backref='meetings')
+    photos = db.relationship('MeetingPhoto', backref='meeting', lazy=True,
+                              cascade='all, delete-orphan')
+
+    def duration_minutes(self):
+        if self.check_in_time and self.check_out_time:
+            return int((self.check_out_time - self.check_in_time).total_seconds() / 60)
+        return None
+
+    def __repr__(self):
+        return f'<Meeting {self.id} - {self.title}>'
+
+
+class MeetingPhoto(db.Model):
+    """Photos attached to a meeting visit"""
+    __tablename__ = 'meeting_photos'
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey('meetings.id', ondelete='CASCADE'),
+                            nullable=False, index=True)
+    photo_url = db.Column(db.Text, nullable=False)
+    caption = db.Column(db.String(200), nullable=True)
+    uploaded_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    uploader = db.relationship('User', foreign_keys=[uploaded_by])
+
+    def __repr__(self):
+        return f'<MeetingPhoto {self.id} for meeting {self.meeting_id}>'
+
+
+class Client(db.Model):
+    """Saved client/customer details for quote autocomplete"""
+    __tablename__ = 'clients'
+
+    id           = db.Column(db.Integer, primary_key=True)
+    name         = db.Column(db.String(200), nullable=False, index=True)
+    phone        = db.Column(db.String(20),  nullable=True)
+    email        = db.Column(db.String(120), nullable=True)
+    address      = db.Column(db.Text,        nullable=True)
+    city         = db.Column(db.String(100), nullable=True)
+    state        = db.Column(db.String(100), nullable=True)
+    gst_number   = db.Column(db.String(20),  nullable=True)
+    dispatch_to  = db.Column(db.Text,        nullable=True)
+    quote_type   = db.Column(db.Enum('B2B', 'B2C'), nullable=True)  # preferred type
+    notes        = db.Column(db.Text,        nullable=True)
+    created_at   = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at   = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('idx_client_name', 'name'),
+    )
+
+    def to_dict(self):
+        return {
+            'id':          self.id,
+            'name':        self.name,
+            'phone':       self.phone  or '',
+            'email':       self.email  or '',
+            'address':     self.address or '',
+            'city':        self.city   or '',
+            'state':       self.state  or '',
+            'gst_number':  self.gst_number or '',
+            'dispatch_to': self.dispatch_to or '',
+            'quote_type':  self.quote_type or '',
+            'notes':       self.notes  or '',
+        }
+
+
 class Reminder(db.Model):
     """Email reminder model for projects and tasks"""
     __tablename__ = 'reminders'
     
     id = db.Column(db.Integer, primary_key=True)
     
-    # Polymorphic reminder (can be for project or task)
-    reminder_type = db.Column(db.String(20), nullable=False)  # 'project' or 'task'
+    # Polymorphic reminder (can be for project, task, or quote)
+    reminder_type = db.Column(db.String(20), nullable=False)  # 'project', 'task', or 'quote'
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True, index=True)
     task_id = db.Column(db.Integer, db.ForeignKey('promotor_tasks.id'), nullable=True, index=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('quotes.id'), nullable=True, index=True)
     
     # Reminder details
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
@@ -824,6 +1184,7 @@ class Reminder(db.Model):
     user = db.relationship('User', backref='reminders', foreign_keys=[user_id])
     project = db.relationship('Project', backref='reminders', foreign_keys=[project_id])
     task = db.relationship('PromotorTask', backref='reminders', foreign_keys=[task_id])
+    quote = db.relationship('Quote', backref='reminders', foreign_keys=[quote_id])
     
     # Indexes
     __table_args__ = (

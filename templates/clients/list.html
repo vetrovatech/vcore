@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Clients - VCore{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-people"></i> Clients</h2>
+    <a href="{{ url_for('client_new') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> New Client
+    </a>
+</div>
+
+<!-- Search -->
+<form method="GET" class="mb-3">
+    <div class="input-group" style="max-width:400px;">
+        <input type="text" class="form-control" name="q" value="{{ q }}" placeholder="Search by name…">
+        <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-search"></i></button>
+        {% if q %}
+        <a href="{{ url_for('clients_list') }}" class="btn btn-outline-danger"><i class="bi bi-x"></i></a>
+        {% endif %}
+    </div>
+</form>
+
+{% if clients %}
+<div class="card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Name</th>
+                        <th>Phone</th>
+                        <th>Email</th>
+                        <th>City / State</th>
+                        <th>GST Number</th>
+                        <th>Type</th>
+                        <th style="width:120px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in clients %}
+                    <tr>
+                        <td>
+                            <strong>{{ c.name }}</strong>
+                            {% if c.notes %}
+                            <br><small class="text-muted">{{ c.notes[:60] }}{% if c.notes|length > 60 %}…{% endif %}</small>
+                            {% endif %}
+                        </td>
+                        <td>{{ c.phone or '—' }}</td>
+                        <td>{{ c.email or '—' }}</td>
+                        <td>
+                            {% if c.city or c.state %}
+                                {{ [c.city, c.state] | select | join(', ') }}
+                            {% else %}—{% endif %}
+                        </td>
+                        <td><code>{{ c.gst_number or '—' }}</code></td>
+                        <td>
+                            {% if c.quote_type %}
+                            <span class="badge bg-{{ 'primary' if c.quote_type == 'B2B' else 'success' }}">
+                                {{ c.quote_type }}
+                            </span>
+                            {% else %}—{% endif %}
+                        </td>
+                        <td>
+                            <a href="{{ url_for('client_edit', id=c.id) }}"
+                               class="btn btn-sm btn-outline-secondary me-1" title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <form method="POST" action="{{ url_for('client_delete', id=c.id) }}"
+                                  class="d-inline"
+                                  onsubmit="return confirm('Delete client {{ c.name }}?')">
+                                <button class="btn btn-sm btn-outline-danger" title="Delete">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<div class="text-muted mt-2 small">{{ clients|length }} client{{ 's' if clients|length != 1 }}</div>
+
+{% else %}
+<div class="text-center py-5 text-muted">
+    <i class="bi bi-people" style="font-size:3rem;"></i>
+    <p class="mt-2">
+        {% if q %}No clients matching "{{ q }}".{% else %}No clients saved yet.{% endif %}
+    </p>
+    <p class="small">Clients are saved automatically when you create or edit a quote.</p>
+</div>
+{% endif %}
+{% endblock %}
