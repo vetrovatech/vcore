@@ -405,7 +405,7 @@ class Quote(db.Model):
     # Terms and status
     payment_terms = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default='Draft', index=True)  # Draft, Sent, Accepted, Rejected, Expired
-    quote_type = db.Column(db.Enum('B2B', 'B2C'), default='B2B', nullable=False)  # B2B or B2C quote
+    quote_type = db.Column(db.Enum('B2B', 'B2C', name='quote_type_enum'), default='B2B', nullable=False)  # B2B or B2C quote
 
     # Tally / fulfillment fields
     delivery_status = db.Column(db.String(20), nullable=False, default='Pending')  # Pending, Dispatched, Delivered
@@ -1120,7 +1120,7 @@ class Client(db.Model):
     state        = db.Column(db.String(100), nullable=True)
     gst_number   = db.Column(db.String(20),  nullable=True)
     dispatch_to  = db.Column(db.Text,        nullable=True)
-    quote_type   = db.Column(db.Enum('B2B', 'B2C'), nullable=True)  # preferred type
+    quote_type   = db.Column(db.Enum('B2B', 'B2C', name='client_quote_type_enum'), nullable=True)  # preferred type
     notes        = db.Column(db.Text,        nullable=True)
     created_at   = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at   = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
