@@ -10,7 +10,7 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=mysql+pymysql://cdcuser:Divyam123@ls-71c57fcd322c32a3616fd3e00e212391e383d4ba.c7cuq02uskcx.ap-south-1.rds.amazonaws.com:3306/vcore
+      - DATABASE_URL=postgresql+psycopg2://dbmasteruser:myvetropgpwd@ls-bcf74fccc09e57a790a55363aa6f915516415ae9.c7cuq02uskcx.ap-south-1.rds.amazonaws.com:5432/vcore?sslmode=require
       - SECRET_KEY=vcore-glassy-secret-key-2026-change-in-production
       - ENVIRONMENT=development
     volumes:

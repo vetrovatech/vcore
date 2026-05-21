@@ -1,28 +1,12 @@
 """
 Import updated product descriptions from CSV
 """
-import pymysql
 import csv
 import os
 from dotenv import load_dotenv
+from sqlalchemy import create_engine
 
-# Load environment variables
 load_dotenv()
-
-def parse_database_url(url):
-    """Parse MySQL database URL"""
-    url = url.replace('mysql+pymysql://', '')
-    auth, rest = url.split('@')
-    user, password = auth.split(':')
-    host_port, database = rest.split('/')
-    host, port = host_port.split(':')
-    return {
-        'host': host,
-        'user': user,
-        'password': password,
-        'database': database,
-        'port': int(port)
-    }
 
 def main():
     csv_filename = 'new_product_descriptions.csv'
@@ -38,10 +22,8 @@ def main():
         print("❌ DATABASE_URL not found in .env file")
         return
     
-    db_config = parse_database_url(db_url)
-    
     print("🔗 Connecting to database...")
-    connection = pymysql.connect(**db_config)
+    connection = create_engine(db_url).raw_connection()
     
     try:
         with connection.cursor() as cursor:

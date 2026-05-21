@@ -2,29 +2,12 @@
 Generate SEO-friendly product descriptions for glassy.in products
 Creates a CSV file with product_id, current_description, and new_description
 """
-import pymysql
 import csv
 import os
 from dotenv import load_dotenv
+from sqlalchemy import create_engine
 
-# Load environment variables
 load_dotenv()
-
-def parse_database_url(url):
-    """Parse MySQL database URL"""
-    # Format: mysql+pymysql://user:password@host:port/database
-    url = url.replace('mysql+pymysql://', '')
-    auth, rest = url.split('@')
-    user, password = auth.split(':')
-    host_port, database = rest.split('/')
-    host, port = host_port.split(':')
-    return {
-        'host': host,
-        'user': user,
-        'password': password,
-        'database': database,
-        'port': int(port)
-    }
 
 def generate_seo_description(product_name, category):
     """
@@ -114,10 +97,8 @@ def main():
         print("❌ DATABASE_URL not found in .env file")
         return
     
-    db_config = parse_database_url(db_url)
-    
     print("🔗 Connecting to database...")
-    connection = pymysql.connect(**db_config)
+    connection = create_engine(db_url).raw_connection()
     
     try:
         with connection.cursor() as cursor:
