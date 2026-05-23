@@ -260,10 +260,26 @@
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {% if request.endpoint and 'quote' in request.endpoint %}active{% endif %}"
-                                href="{{ url_for('quotes_list') }}">
-                                <i class="bi bi-file-earmark-text"></i> Quotes
+                            <a class="nav-link {% if request.endpoint == 'quotes_list' or (request.endpoint and request.endpoint.startswith('quote_')) %}active{% endif %}"
+                                data-bs-toggle="collapse" href="#quotationsSubmenu" role="button"
+                                aria-expanded="{% if request.endpoint and 'quote' in request.endpoint %}true{% else %}false{% endif %}">
+                                <i class="bi bi-file-earmark-text"></i> Quotation
                             </a>
+                            <ul class="collapse list-unstyled ps-4 {% if request.endpoint and 'quote' in request.endpoint %}show{% endif %}"
+                                id="quotationsSubmenu">
+                                <li>
+                                    <a class="nav-link py-1 {% if request.endpoint == 'quotes_list' or (request.endpoint and request.endpoint.startswith('quote_')) %}active{% endif %}"
+                                       href="{{ url_for('quotes_list') }}">
+                                        <i class="bi bi-dot"></i> Quotes
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="nav-link py-1 {% if request.endpoint and request.endpoint.startswith('bathqube_') %}active{% endif %}"
+                                       href="{{ url_for('bathqube_quotes_list') }}">
+                                        <i class="bi bi-droplet-half"></i> Bathqube Quotation
+                                    </a>
+                                </li>
+                            </ul>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link {% if request.endpoint and 'lead' in request.endpoint %}active{% endif %}"

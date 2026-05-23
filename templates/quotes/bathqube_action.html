@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ action_label }} — {{ quote.estimate_number or quote.id }}{% endblock %}
+{% block content %}
+<h3 class="mb-3">
+    <i class="bi bi-send"></i> Send <strong>{{ action_label }}</strong>
+    <small class="text-muted">— {{ quote.estimate_number or quote.id }} {{ quote.customer_name }}</small>
+</h3>
+
+<form method="POST" action="{{ url_for('bathqube_quote_action', id=quote.id, action=action) }}">
+    <div class="card mb-3">
+        <div class="card-header">
+            <strong>Customer email</strong>
+            <span class="text-muted small">— prefilled from template, edit as needed before sending.</span>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label">To</label>
+                <input class="form-control" value="{{ quote.email or '— no email on file (action will be logged but no email sent) —' }}" readonly>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Subject</label>
+                <input class="form-control" name="subject" value="{{ subject }}">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Body</label>
+                <textarea class="form-control" name="message" rows="14">{{ body }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-success">
+            <i class="bi bi-send"></i> Send email
+        </button>
+        <a href="{{ url_for('bathqube_quote_view', id=quote.id) }}" class="btn btn-secondary">Cancel</a>
+    </div>
+</form>
+{% endblock %}

@@ -13,28 +13,32 @@ class EmailService:
         self.sender_email = os.getenv('RESEND_SENDER_EMAIL', 'info@glassy.in')
         self.app_url = os.getenv('APP_URL', 'http://localhost:5000')
 
-    def send_email(self, to, subject, body, html=None):
+    def send_email(self, to, subject, body, html=None, attachments=None, from_email=None):
         """
-        Send email via Resend
+        Send email via Resend.
 
-        Args:
-            to: Recipient email address (string)
-            subject: Email subject
-            body: Plain text body
-            html: HTML body (optional)
-
-        Returns:
-            dict: Success status with message_id
+        attachments: list of dicts: [{'filename': 'estimate.pdf', 'content': <bytes>}]
+        from_email: override sender (useful when a feature has its own branded sender)
         """
         try:
             params = {
-                "from": self.sender_email,
+                "from": from_email or self.sender_email,
                 "to": [to],
                 "subject": subject,
                 "text": body,
             }
             if html:
                 params["html"] = html
+            if attachments:
+                import base64
+                params["attachments"] = [
+                    {
+                        "filename": a["filename"],
+                        "content": base64.b64encode(a["content"]).decode("ascii")
+                            if isinstance(a["content"], (bytes, bytearray)) else a["content"],
+                    }
+                    for a in attachments
+                ]
 
             response = resend.Emails.send(params)
 

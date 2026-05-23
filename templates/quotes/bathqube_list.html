@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Bathqube Quotations - VCore{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-droplet-half"></i> Bathqube Quotations</h2>
+    <span class="text-muted small">Auto-ingested from bathqube.com configurator</span>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('bathqube_quotes_list') }}" class="row g-3">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="search"
+                       placeholder="Search name, phone, email or estimate #"
+                       value="{{ search }}">
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" name="stage">
+                    <option value="">All stages</option>
+                    {% for s in stages %}
+                    <option value="{{ s }}" {% if stage==s %}selected{% endif %}>{{ stage_labels[s] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-5">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
+                <a href="{{ url_for('bathqube_quotes_list') }}" class="btn btn-secondary">
+                    <i class="bi bi-x-circle"></i> Clear
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if quotes %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Estimate #</th>
+                        <th>Received</th>
+                        <th>Customer</th>
+                        <th>Phone</th>
+                        <th>Total</th>
+                        <th>Stage</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for q in quotes %}
+                    <tr>
+                        <td><strong>{{ q.estimate_number or ('BQ-' ~ q.id) }}</strong></td>
+                        <td>{{ q.created_at.strftime('%d %b %Y') }}</td>
+                        <td>{{ q.customer_name }}</td>
+                        <td>{{ q.phone }}</td>
+                        <td>₹{{ '{:,.0f}'.format(q.revised_total or q.total or 0) }}</td>
+                        <td><span class="badge bg-info text-dark">{{ stage_labels.get(q.stage, q.stage) }}</span></td>
+                        <td>
+                            <a href="{{ url_for('bathqube_quote_view', id=q.id) }}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted text-center my-4">No Bathqube quotations yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

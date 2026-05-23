@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}Revise Bill — {{ quote.estimate_number or quote.id }}{% endblock %}
+{% block content %}
+<h3 class="mb-3">
+    <i class="bi bi-pencil-square"></i> Revise Bill
+    <small class="text-muted">— {{ quote.estimate_number or quote.id }} {{ quote.customer_name }}</small>
+</h3>
+
+<form method="POST" action="{{ url_for('bathqube_quote_revise', id=quote.id) }}" id="reviseForm">
+
+    <!-- Customer -->
+    <div class="card mb-3">
+        <div class="card-header"><strong>Customer</strong></div>
+        <div class="card-body row g-3">
+            <div class="col-md-6">
+                <label class="form-label">Name</label>
+                <input class="form-control" name="customer_name" value="{{ quote.customer_name }}" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Phone</label>
+                <input class="form-control" name="phone" value="{{ quote.phone }}" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Pincode</label>
+                <input class="form-control" name="pincode" value="{{ quote.pincode or '' }}">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Email</label>
+                <input class="form-control" name="email" type="email" value="{{ quote.email or '' }}">
+            </div>
+            <div class="col-md-12">
+                <label class="form-label">Site address</label>
+                <textarea class="form-control" name="site_address" rows="2">{{ quote.site_address or '' }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <!-- Line items -->
+    <div class="card mb-3 border-warning">
+        <div class="card-header bg-warning bg-opacity-25 d-flex justify-content-between align-items-center">
+            <span><strong>Line items</strong>
+                <span class="small text-muted">— add a discount as a row with a negative rate (e.g. <code>-2500</code>).</span>
+            </span>
+            <button type="button" class="btn btn-sm btn-warning" id="addItemBtn">
+                <i class="bi bi-plus-circle"></i> Add item
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-sm align-middle mb-0" id="itemsTable">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 55%;">Description</th>
+                        <th style="width: 12%;">Qty</th>
+                        <th style="width: 15%;">Rate (₹)</th>
+                        <th style="width: 15%;" class="text-end">Amount (₹)</th>
+                        <th style="width: 3%;"></th>
+                    </tr>
+                </thead>
+                <tbody id="itemsBody">
+                    {% for it in quote.items %}
+                    <tr class="item-row">
+                        <td><input class="form-control form-control-sm desc" name="item_description" value="{{ it.description }}"></td>
+                        <td><input class="form-control form-control-sm qty" name="item_quantity" type="number" step="0.01" value="{{ it.quantity }}"></td>
+                        <td><input class="form-control form-control-sm rate" name="item_rate" type="number" step="0.01" value="{{ it.rate }}"></td>
+                        <td class="text-end amount">₹0.00</td>
+                        <td><button type="button" class="btn btn-sm btn-link text-danger remove-row"><i class="bi bi-x-lg"></i></button></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Totals -->
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header"><strong>Tax &amp; payment</strong></div>
+                <div class="card-body row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">GST %</label>
+                        <input class="form-control" name="gst_percentage" id="gstInput"
+                               type="number" step="0.01" min="0" value="{{ quote.gst_percentage or 18 }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Amount received</label>
+                        <input class="form-control" name="amount_received" id="amountReceivedInput"
+                               type="number" step="0.01" value="{{ quote.amount_received or 0 }}">
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header"><strong>Totals</strong> <span class="small text-muted">— auto-computed</span></div>
+                <div class="card-body p-0">
+                    <table class="table table-sm mb-0">
+                        <tr><td>Subtotal</td><td class="text-end" id="subtotalCell">₹0.00</td></tr>
+                        <tr><td>CGST</td><td class="text-end" id="cgstCell">₹0.00</td></tr>
+                        <tr><td>SGST</td><td class="text-end" id="sgstCell">₹0.00</td></tr>
+                        <tr class="table-warning"><th>Grand total (revised)</th><th class="text-end" id="grandTotalCell">₹0.00</th></tr>
+                        <tr><td>Balance payable</td><td class="text-end" id="balanceCell">₹0.00</td></tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Original (for context) -->
+    <div class="alert alert-light border small mb-3">
+        <strong>For reference — original totals from configurator:</strong>
+        Subtotal ₹{{ '{:,.2f}'.format(quote.subtotal or 0) }} ·
+        CGST ₹{{ '{:,.2f}'.format(quote.cgst or 0) }} ·
+        SGST ₹{{ '{:,.2f}'.format(quote.sgst or 0) }} ·
+        Total <strong>₹{{ '{:,.2f}'.format(quote.total or 0) }}</strong>
+    </div>
+
+    <!-- Email -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <strong>Customer email</strong>
+            <span class="text-muted small">— prefilled. Revised PDF (with line items) auto-attached.</span>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label">To</label>
+                <input class="form-control" value="{{ quote.email or '— no email on file —' }}" readonly>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Subject</label>
+                <input class="form-control" name="subject" value="{{ subject }}">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Body</label>
+                <textarea class="form-control" name="message" rows="10">{{ body }}</textarea>
+                <div class="form-text">Old → new totals are auto-included; you can edit or add custom notes.</div>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="send_email" name="send_email"
+                       {% if quote.email %}checked{% endif %} {% if not quote.email %}disabled{% endif %}>
+                <label class="form-check-label" for="send_email">
+                    Send revised estimate email to customer
+                    {% if not quote.email %}<span class="text-danger">(disabled — no email on file)</span>{% endif %}
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Internal notes -->
+    <div class="card mb-3">
+        <div class="card-header"><strong>Internal notes</strong> <span class="small text-muted">(not sent to customer)</span></div>
+        <div class="card-body">
+            <textarea class="form-control" name="notes" rows="3">{{ quote.notes or '' }}</textarea>
+        </div>
+    </div>
+
+    <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-warning">
+            <i class="bi bi-save"></i> Save &amp; send revised estimate
+        </button>
+        <a href="{{ url_for('bathqube_quote_view', id=quote.id) }}" class="btn btn-secondary">Cancel</a>
+    </div>
+</form>
+
+<template id="itemRowTemplate">
+    <tr class="item-row">
+        <td><input class="form-control form-control-sm desc" name="item_description" placeholder="e.g. Mirror upgrade / Installation / Discount"></td>
+        <td><input class="form-control form-control-sm qty" name="item_quantity" type="number" step="0.01" value="1"></td>
+        <td><input class="form-control form-control-sm rate" name="item_rate" type="number" step="0.01" value="0"></td>
+        <td class="text-end amount">₹0.00</td>
+        <td><button type="button" class="btn btn-sm btn-link text-danger remove-row"><i class="bi bi-x-lg"></i></button></td>
+    </tr>
+</template>
+
+<script>
+(function () {
+    const tbody = document.getElementById('itemsBody');
+    const tmpl = document.getElementById('itemRowTemplate');
+    const fmt = (n) => '₹' + (Math.round(n * 100) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    function recompute() {
+        let subtotal = 0;
+        tbody.querySelectorAll('.item-row').forEach(row => {
+            const q = parseFloat(row.querySelector('.qty').value) || 0;
+            const r = parseFloat(row.querySelector('.rate').value) || 0;
+            const amount = q * r;
+            row.querySelector('.amount').textContent = fmt(amount);
+            subtotal += amount;
+        });
+        const gst = parseFloat(document.getElementById('gstInput').value) || 0;
+        const cgst = subtotal * gst / 2 / 100;
+        const sgst = subtotal * gst / 2 / 100;
+        const grand = subtotal + cgst + sgst;
+        const received = parseFloat(document.getElementById('amountReceivedInput').value) || 0;
+        const balance = Math.max(0, grand - received);
+
+        document.getElementById('subtotalCell').textContent = fmt(subtotal);
+        document.getElementById('cgstCell').textContent = fmt(cgst);
+        document.getElementById('sgstCell').textContent = fmt(sgst);
+        document.getElementById('grandTotalCell').textContent = fmt(grand);
+        document.getElementById('balanceCell').textContent = fmt(balance);
+    }
+
+    function wireRow(row) {
+        row.querySelectorAll('input').forEach(i => i.addEventListener('input', recompute));
+        row.querySelector('.remove-row').addEventListener('click', () => {
+            row.remove();
+            recompute();
+        });
+    }
+
+    document.getElementById('addItemBtn').addEventListener('click', () => {
+        const node = tmpl.content.firstElementChild.cloneNode(true);
+        tbody.appendChild(node);
+        wireRow(node);
+        node.querySelector('.desc').focus();
+    });
+
+    document.getElementById('gstInput').addEventListener('input', recompute);
+    document.getElementById('amountReceivedInput').addEventListener('input', recompute);
+
+    tbody.querySelectorAll('.item-row').forEach(wireRow);
+    recompute();
+})();
+</script>
+{% endblock %}

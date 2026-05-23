@@ -1195,3 +1195,142 @@ class Reminder(db.Model):
     def __repr__(self):
         return f'<Reminder {self.id} - {self.reminder_type} - {self.status}>'
 
+
+# ============================================================================
+# BATHQUBE QUOTATIONS
+# ----------------------------------------------------------------------------
+# Mirror of glassyplatform's `bathspace-quotes` Payload collection. Glassy
+# pushes a quote here over HMAC-signed webhook after the configurator submits.
+# Vcore owns the post-purchase lifecycle (5 stages, each with a customer
+# message). Glassy stays the source of truth for the original configurator
+# snapshot; vcore owns edits + revised totals + stage transitions.
+# ============================================================================
+
+BATHQUBE_STAGES = (
+    'new',                   # webhook just landed, not yet acknowledged
+    'order_confirmation',    # (a) Thank you for shopping
+    'processing',            # (b) — message TBD
+    'bill_revision',         # (c) Revised prices shared
+    'order_ready',           # (d) Ready for dispatch, balance payable
+    'thank_you',             # (e) Final thank-you + review links
+)
+
+
+class BathqubeQuote(db.Model):
+    """Bathqube configurator quote, mirrored from glassyplatform."""
+    __tablename__ = 'bathqube_quotes'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Link back to the glassyplatform Payload record
+    external_id = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    estimate_number = db.Column(db.String(32), unique=True, nullable=True, index=True)
+
+    # Customer
+    customer_name = db.Column(db.String(200), nullable=False)
+    phone = db.Column(db.String(32), nullable=False, index=True)
+    email = db.Column(db.String(200), nullable=True, index=True)
+    pincode = db.Column(db.String(12), nullable=True)
+    site_address = db.Column(db.Text, nullable=True)
+
+    # Where the quote came from on bathqube.com
+    source_path = db.Column(db.String(255), nullable=True)
+    variant_size = db.Column(db.String(120), nullable=True)
+    variant_material = db.Column(db.String(120), nullable=True)
+
+    # Full configurator snapshot (panels, finishes, prices) as JSON string
+    config_data = db.Column(db.Text, nullable=True)
+
+    # Money — copied from configurator, editable in vcore after bill_revision
+    subtotal = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    cgst = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    sgst = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    total = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    revised_total = db.Column(db.Numeric(12, 2), nullable=True)
+    amount_received = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    gst_percentage = db.Column(db.Numeric(5, 2), default=18, nullable=False)
+    has_revision = db.Column(db.Boolean, default=False, nullable=False)
+
+    # Lifecycle
+    stage = db.Column(db.String(32), nullable=False, default='new', index=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    purchased_at = db.Column(db.DateTime, nullable=True)
+
+    # Audit log of stage transitions
+    events = db.relationship('BathqubeStatusEvent', backref='quote', lazy=True,
+                             cascade='all, delete-orphan',
+                             order_by='BathqubeStatusEvent.created_at.desc()')
+
+    # Editable line items (created on first revision, then persisted)
+    items = db.relationship('BathqubeQuoteItem', backref='quote', lazy=True,
+                            cascade='all, delete-orphan',
+                            order_by='BathqubeQuoteItem.sort_order')
+
+    @property
+    def balance_payable(self):
+        effective_total = float(self.revised_total if self.revised_total is not None else self.total or 0)
+        return max(0.0, effective_total - float(self.amount_received or 0))
+
+    @property
+    def config(self):
+        """Parsed configData JSON; returns {} if missing/invalid."""
+        if not self.config_data:
+            return {}
+        try:
+            return json.loads(self.config_data)
+        except Exception:
+            return {}
+
+    def __repr__(self):
+        return f'<BathqubeQuote {self.estimate_number or self.id} {self.customer_name} {self.stage}>'
+
+
+class BathqubeStatusEvent(db.Model):
+    """Audit log of every stage transition + message sent."""
+    __tablename__ = 'bathqube_status_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('bathqube_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+
+    from_stage = db.Column(db.String(32), nullable=True)
+    to_stage = db.Column(db.String(32), nullable=False)
+
+    channel = db.Column(db.String(20), nullable=False, default='email')  # email | whatsapp | none
+    subject = db.Column(db.String(255), nullable=True)
+    message = db.Column(db.Text, nullable=True)
+
+    send_status = db.Column(db.String(20), nullable=False, default='pending')  # pending|sent|failed|skipped
+    send_error = db.Column(db.Text, nullable=True)
+    provider_message_id = db.Column(db.String(128), nullable=True)
+
+    triggered_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = db.relationship('User', foreign_keys=[triggered_by])
+
+    def __repr__(self):
+        return f'<BathqubeStatusEvent q={self.quote_id} {self.from_stage}->{self.to_stage} {self.send_status}>'
+
+
+class BathqubeQuoteItem(db.Model):
+    """Line item on a revised Bathqube quote. Discounts = negative-amount rows."""
+    __tablename__ = 'bathqube_quote_items'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('bathqube_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+
+    sort_order = db.Column(db.Integer, default=0, nullable=False)
+    description = db.Column(db.String(500), nullable=False)
+    quantity = db.Column(db.Numeric(10, 2), default=1, nullable=False)
+    rate = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)  # snapshot of qty*rate at save time
+
+    def __repr__(self):
+        return f'<BathqubeQuoteItem q={self.quote_id} "{self.description[:30]}" {self.amount}>'
+

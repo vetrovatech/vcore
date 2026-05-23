@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}{{ quote.estimate_number or quote.id }} - Bathqube Quote{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h3 class="mb-1">
+            <i class="bi bi-droplet-half"></i>
+            {{ quote.estimate_number or ('BQ-' ~ quote.id) }}
+            <span class="text-muted">— {{ quote.customer_name }}</span>
+        </h3>
+        <span class="badge bg-info text-dark">Current stage: {{ stage_labels.get(quote.stage, quote.stage) }}</span>
+    </div>
+    <a href="{{ url_for('bathqube_quotes_list') }}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to list
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-md-7">
+        <!-- ACTIONS panel -->
+        <div class="card mb-3 border-primary">
+            <div class="card-header bg-primary text-white">
+                <strong><i class="bi bi-send"></i> Actions</strong>
+                <span class="small ms-2">Fire any of these any time — no fixed order.</span>
+            </div>
+            <div class="card-body">
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <a href="{{ url_for('bathqube_quote_action', id=quote.id, action='order_confirmation') }}"
+                           class="btn btn-outline-primary w-100 text-start">
+                            <i class="bi bi-bag-check"></i> <strong>Send Order Confirmation</strong>
+                            <div class="small text-muted">"Thank you for shopping" message.</div>
+                        </a>
+                    </div>
+                    <div class="col-md-6">
+                        <a href="{{ url_for('bathqube_quote_action', id=quote.id, action='processing') }}"
+                           class="btn btn-outline-primary w-100 text-start">
+                            <i class="bi bi-gear"></i> <strong>Send Processing Update</strong>
+                            <div class="small text-muted">"Your order is in production."</div>
+                        </a>
+                    </div>
+                    <div class="col-md-12">
+                        <a href="{{ url_for('bathqube_quote_revise', id=quote.id) }}"
+                           class="btn btn-warning w-100 text-start">
+                            <i class="bi bi-pencil-square"></i> <strong>Revise Bill &amp; Send Updated Estimate</strong>
+                            <div class="small">Edit prices, then email the revised quote with PDF attached.</div>
+                        </a>
+                    </div>
+                    <div class="col-md-6">
+                        <a href="{{ url_for('bathqube_quote_action', id=quote.id, action='order_ready') }}"
+                           class="btn btn-outline-success w-100 text-start">
+                            <i class="bi bi-truck"></i> <strong>Send Order Ready</strong>
+                            <div class="small text-muted">Balance payable + QR + bank details.</div>
+                        </a>
+                    </div>
+                    <div class="col-md-6">
+                        <a href="{{ url_for('bathqube_quote_action', id=quote.id, action='thank_you') }}"
+                           class="btn btn-outline-success w-100 text-start">
+                            <i class="bi bi-star"></i> <strong>Send Thank You</strong>
+                            <div class="small text-muted">Review links: Google / Instagram / IndiaMart.</div>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><strong>Customer</strong></div>
+            <div class="card-body">
+                <p class="mb-1"><strong>Name:</strong> {{ quote.customer_name }}</p>
+                <p class="mb-1"><strong>Phone:</strong> {{ quote.phone }}</p>
+                <p class="mb-1"><strong>Email:</strong> {{ quote.email or '— (no email; emails will be skipped)' }}</p>
+                <p class="mb-1"><strong>Pincode:</strong> {{ quote.pincode or '—' }}</p>
+                <p class="mb-0"><strong>Site address:</strong> {{ quote.site_address or '—' }}</p>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><strong>Pricing</strong></div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <tr><td>Subtotal</td><td class="text-end">₹{{ '{:,.2f}'.format(quote.subtotal or 0) }}</td></tr>
+                    <tr><td>CGST</td><td class="text-end">₹{{ '{:,.2f}'.format(quote.cgst or 0) }}</td></tr>
+                    <tr><td>SGST</td><td class="text-end">₹{{ '{:,.2f}'.format(quote.sgst or 0) }}</td></tr>
+                    <tr><th>Original total</th><th class="text-end">₹{{ '{:,.2f}'.format(quote.total or 0) }}</th></tr>
+                    {% if quote.revised_total is not none %}
+                    <tr class="table-warning"><th>Revised total</th><th class="text-end">₹{{ '{:,.2f}'.format(quote.revised_total) }}</th></tr>
+                    {% endif %}
+                    <tr><td>Received</td><td class="text-end">₹{{ '{:,.2f}'.format(quote.amount_received or 0) }}</td></tr>
+                    <tr class="table-light"><th>Balance payable</th><th class="text-end">₹{{ '{:,.2f}'.format(quote.balance_payable) }}</th></tr>
+                </table>
+            </div>
+        </div>
+
+        {% set cfg = quote.config %}
+        {% if cfg %}
+        <div class="card mb-3">
+            <div class="card-header"><strong>Configurator snapshot</strong></div>
+            <div class="card-body">
+                <p class="mb-1"><strong>Type:</strong> {{ cfg.typeLabel or '—' }}</p>
+                <p class="mb-1"><strong>Glass:</strong> {{ cfg.materialLabel or '—' }} ({{ cfg.thicknessLabel or '' }})</p>
+                <p class="mb-1"><strong>Hardware:</strong> {{ cfg.fittingLabel or '—' }} / {{ cfg.hardwareTypeLabel or '—' }}</p>
+                <p class="mb-1"><strong>Rate:</strong> ₹{{ cfg.pricePerSqft or '—' }}/sq.ft &middot; <strong>Qty:</strong> {{ cfg.quantity or 1 }}</p>
+                {% if cfg.glassPanels %}
+                <p class="mb-0"><strong>Panels:</strong>
+                    {% for p in cfg.glassPanels %}{{ p.width }}×{{ p.height }}ft{% if not loop.last %}, {% endif %}{% endfor %}
+                </p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if quote.notes %}
+        <div class="card mb-3">
+            <div class="card-header"><strong>Internal notes</strong></div>
+            <div class="card-body" style="white-space: pre-wrap;">{{ quote.notes }}</div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-md-5">
+        <!-- TIMELINE -->
+        <div class="card mb-3">
+            <div class="card-header"><strong><i class="bi bi-clock-history"></i> Activity timeline</strong></div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush">
+                    {% for ev in quote.events %}
+                    <li class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <strong>{{ stage_labels.get(ev.to_stage, ev.to_stage) }}</strong>
+                                {% if ev.send_status == 'sent' %}
+                                    <span class="badge bg-success">sent</span>
+                                {% elif ev.send_status == 'failed' %}
+                                    <span class="badge bg-danger">failed</span>
+                                {% elif ev.send_status == 'skipped' %}
+                                    <span class="badge bg-secondary">no email</span>
+                                {% endif %}
+                            </div>
+                            <small class="text-muted">{{ ev.created_at.strftime('%d %b · %H:%M') }}</small>
+                        </div>
+                        <div class="small text-muted">
+                            {% if ev.from_stage %}from {{ stage_labels.get(ev.from_stage, ev.from_stage) }} · {% endif %}
+                            via {{ ev.channel }}{% if ev.user %} · by {{ ev.user.username }}{% endif %}
+                        </div>
+                        {% if ev.subject %}
+                        <details class="mt-1">
+                            <summary class="small text-primary" style="cursor:pointer">View sent message</summary>
+                            <div class="small mt-1"><strong>Subject:</strong> {{ ev.subject }}</div>
+                            <pre class="small bg-light p-2 rounded mt-1" style="white-space: pre-wrap; max-height: 220px; overflow-y: auto;">{{ ev.message }}</pre>
+                        </details>
+                        {% endif %}
+                        {% if ev.send_error %}
+                        <div class="small text-danger mt-1">Error: {{ ev.send_error }}</div>
+                        {% endif %}
+                    </li>
+                    {% else %}
+                    <li class="list-group-item text-muted">No actions yet — use the Actions panel.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
