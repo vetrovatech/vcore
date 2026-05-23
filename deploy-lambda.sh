@@ -84,9 +84,19 @@ echo "   ✅ ECR repository ready"
 # ============================================================================
 # Step 3: Build and Push Docker Image
 # ============================================================================
+# IMPORTANT: must use buildx with --provenance=false --sbom=false. Plain
+# `docker build` on modern Docker emits OCI manifests which Lambda rejects
+# with "image manifest, config or layer media type … is not supported".
 echo ""
-echo "🏗️  Building Docker image..."
-docker build -t $ECR_REPO_NAME:$IMAGE_TAG -f Dockerfile .
+echo "🏗️  Building Docker image (linux/amd64, Docker manifest format)..."
+docker buildx build \
+  --platform linux/amd64 \
+  --provenance=false \
+  --sbom=false \
+  --output type=docker \
+  -t $ECR_REPO_NAME:$IMAGE_TAG \
+  -f Dockerfile \
+  .
 
 echo ""
 echo "🔐 Logging in to ECR..."
