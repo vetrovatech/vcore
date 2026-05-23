@@ -56,6 +56,7 @@ Environment variables (set in Lambda — `deploy-lambda.sh` reads them from loca
 - `CRON_SECRET`, `APP_URL`, `SES_SENDER_EMAIL`, `AWS_BUCKET_NAME`
 - `VCORE_INGEST_SECRET`: HMAC secret shared with glassyplatform — see Bathqube webhook section below
 - `BATHQUBE_FROM_EMAIL`: sender for Bathqube quotation stage emails (e.g. `Bathqube <support@bathqube.com>`)
+- `FB_PAGE_ACCESS_TOKEN`, `FB_PAGE_ID`: needed by `/leads/facebook/sync` (Sync Facebook button) and the cron endpoint at `/api/leads/facebook-sync`. Without these, the sync returns `500 FB_PAGE_ACCESS_TOKEN not configured`. **Note:** there is currently NO EventBridge rule invoking this — the only way FB leads enter vcore is via the manual "Sync Facebook" button on `/leads`. If a scheduler is ever wanted, add an EventBridge rule modelled on `vcore-reminder-checker`.
 
 **When adding a new Lambda env var: update `deploy-lambda.sh` in TWO places** —
 the `grep ... .env` block (around line 115) AND both `--environment Variables={…}`
