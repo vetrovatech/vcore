@@ -10,8 +10,8 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+psycopg2://dbmasteruser:myvetropgpwd@ls-bcf74fccc09e57a790a55363aa6f915516415ae9.c7cuq02uskcx.ap-south-1.rds.amazonaws.com:5432/vcore?sslmode=require
-      - SECRET_KEY=vcore-glassy-secret-key-2026-change-in-production
+      # DATABASE_URL and SECRET_KEY come from .env (loaded above).
+      # Do NOT hardcode credentials here — this file is committed to git.
       - ENVIRONMENT=development
     volumes:
       - ./templates:/app/templates

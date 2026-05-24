@@ -11,12 +11,17 @@ from sqlalchemy import create_engine, text
 with open(os.path.join(os.path.dirname(__file__), '.env')) as f:
     env = dict(re.findall(r'^([A-Z_]+)=(.*)$', f.read(), re.M))
 
-MYSQL_URL = env['DATABASE_URL']
-PG_HOST = 'ls-bcf74fccc09e57a790a55363aa6f915516415ae9.c7cuq02uskcx.ap-south-1.rds.amazonaws.com'
-PG_USER = 'dbmasteruser'
-PG_PASS = 'myvetropgpwd'
-PG_ADMIN_URL = f"postgresql+psycopg2://{PG_USER}:{PG_PASS}@{PG_HOST}:5432/postgres?sslmode=require"
-PG_URL       = f"postgresql+psycopg2://{PG_USER}:{PG_PASS}@{PG_HOST}:5432/vcore?sslmode=require"
+# Both URLs come from .env / process env — never hardcode credentials here.
+# Required:
+#   MYSQL_URL          — source legacy DB (set as DATABASE_URL when run)
+#   PG_URL             — target Postgres URL for the `vcore` database
+#   PG_ADMIN_URL       — Postgres URL pointing at the `postgres` admin DB on
+#                        the same host (used to CREATE DATABASE vcore)
+MYSQL_URL    = env.get('MYSQL_URL')    or os.getenv('MYSQL_URL')    or env.get('DATABASE_URL')
+PG_URL       = env.get('PG_URL')       or os.getenv('PG_URL')
+PG_ADMIN_URL = env.get('PG_ADMIN_URL') or os.getenv('PG_ADMIN_URL')
+if not (MYSQL_URL and PG_URL and PG_ADMIN_URL):
+    sys.exit("Set MYSQL_URL, PG_URL, PG_ADMIN_URL in .env before running this migration.")
 
 # Step 1: ensure vcore database exists
 admin = create_engine(PG_ADMIN_URL, isolation_level="AUTOCOMMIT")

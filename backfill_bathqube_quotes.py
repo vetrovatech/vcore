@@ -7,12 +7,13 @@ Idempotent — skips rows whose external_id is already present in vcore.
 Run via docker-compose:
     docker-compose run --rm vcore python backfill_bathqube_quotes.py
 
-The glassy DB URL is read from GLASSY_DATABASE_URL env var; falls back to the
-known shared RDS host used by both apps.
+The glassy DB URL must be set in GLASSY_DATABASE_URL (in .env or process env).
+Never hardcode credentials here — this file is committed to git.
 """
 
 import json
 import os
+import sys
 import psycopg2
 import psycopg2.extras
 
@@ -20,10 +21,9 @@ from app import app, db
 from models import BathqubeQuote
 
 
-GLASSY_DSN = os.getenv(
-    'GLASSY_DATABASE_URL',
-    'postgresql://dbmasteruser:myvetropgpwd@ls-bcf74fccc09e57a790a55363aa6f915516415ae9.c7cuq02uskcx.ap-south-1.rds.amazonaws.com:5432/glassy_platform?sslmode=require',
-)
+GLASSY_DSN = os.getenv('GLASSY_DATABASE_URL')
+if not GLASSY_DSN:
+    sys.exit("Set GLASSY_DATABASE_URL in .env before running this backfill.")
 
 
 def _f(cfg, key, default=0):
