@@ -3751,6 +3751,152 @@ def facebook_cron_sync():
     return jsonify({'success': True, 'new': new_count, 'skipped': skipped_count}), 200
 
 
+# ─── Real-time Facebook Lead Ads webhook ──────────────────────────────────────
+# Meta POSTs here within seconds of a Lead Ads form submission, so leads appear
+# in vcore without waiting for the periodic sync. The flow:
+#   1. Meta verifies the endpoint with a GET (hub.mode=subscribe + verify_token)
+#   2. On every new lead, Meta POSTs a notification with the lead_id only
+#   3. We verify the X-Hub-Signature-256 (HMAC of body using FB_APP_SECRET)
+#   4. We fetch the full lead via Graph API using FB_PAGE_ACCESS_TOKEN
+#   5. Same de-dupe + test-lead filter as the manual sync
+#
+# Setup: see DEPLOYMENT.md / one-time Meta dashboard wiring.
+
+@app.route('/api/leads/facebook-webhook', methods=['GET'])
+def facebook_webhook_verify():
+    """Meta's verification handshake — called once when the webhook is registered.
+
+    Meta sends: GET /api/leads/facebook-webhook?hub.mode=subscribe&hub.verify_token=<our token>&hub.challenge=<random>
+    We must echo back hub.challenge ONLY IF the verify_token matches what we stored.
+    """
+    mode = request.args.get('hub.mode')
+    token = request.args.get('hub.verify_token')
+    challenge = request.args.get('hub.challenge')
+    expected = os.getenv('FB_WEBHOOK_VERIFY_TOKEN', '')
+
+    if mode == 'subscribe' and expected and token == expected:
+        app.logger.info('[FB webhook] verification handshake OK')
+        return challenge or '', 200
+    app.logger.warning('[FB webhook] verification rejected (token mismatch or missing)')
+    return 'forbidden', 403
+
+
+@app.route('/api/leads/facebook-webhook', methods=['POST'])
+def facebook_webhook_receive():
+    """Receive a real-time lead notification from Meta and import the lead."""
+    import hmac as _hmac
+    import hashlib as _hashlib
+    import requests as req_lib
+    from models import Lead
+
+    raw = request.get_data(cache=True)
+
+    # 1. HMAC signature verification (Meta signs every request with FB_APP_SECRET)
+    sig_header = request.headers.get('X-Hub-Signature-256', '')
+    app_secret = os.getenv('FB_APP_SECRET', '')
+    if not app_secret:
+        app.logger.error('[FB webhook] FB_APP_SECRET not configured — refusing to process')
+        return jsonify({'error': 'server misconfigured'}), 500
+    if not sig_header.startswith('sha256='):
+        return jsonify({'error': 'missing signature'}), 401
+    expected_sig = _hmac.new(app_secret.encode(), raw, _hashlib.sha256).hexdigest()
+    if not _hmac.compare_digest(expected_sig, sig_header.split('=', 1)[1]):
+        app.logger.warning('[FB webhook] signature mismatch')
+        return jsonify({'error': 'invalid signature'}), 401
+
+    # 2. Parse payload
+    try:
+        body = json.loads(raw.decode('utf-8'))
+    except Exception:
+        return jsonify({'error': 'invalid json'}), 400
+
+    if body.get('object') != 'page':
+        # Other object types (user, instagram, etc.) — ignore
+        return jsonify({'ok': True, 'ignored': body.get('object')}), 200
+
+    page_token = os.getenv('FB_PAGE_ACCESS_TOKEN', '')
+    if not page_token:
+        app.logger.error('[FB webhook] FB_PAGE_ACCESS_TOKEN not configured')
+        return jsonify({'error': 'server misconfigured'}), 500
+
+    # 3. Iterate notifications. Each `entry` is one page change batch; each
+    # `changes` entry is one field change; we only care about `leadgen`.
+    admin = User.query.filter_by(role='admin').first() or User.query.first()
+    creator_id = admin.id if admin else None
+
+    new_count = 0
+    skipped = 0
+    errors = []
+
+    for entry in body.get('entry', []):
+        for change in entry.get('changes', []):
+            if change.get('field') != 'leadgen':
+                continue
+            value = change.get('value', {}) or {}
+            fb_lead_id = str(value.get('leadgen_id') or '')
+            if not fb_lead_id:
+                continue
+
+            # Dedupe before hitting Graph API
+            if Lead.query.filter_by(facebook_lead_id=fb_lead_id).first():
+                skipped += 1
+                continue
+
+            # Fetch the full lead from Graph API
+            try:
+                resp = req_lib.get(
+                    f'https://graph.facebook.com/v19.0/{fb_lead_id}',
+                    params={'access_token': page_token, 'fields': 'id,created_time,field_data,form_id'},
+                    timeout=10,
+                )
+                lead_data = resp.json()
+            except Exception as e:
+                errors.append(f'fetch {fb_lead_id}: {e}')
+                continue
+            if 'error' in lead_data:
+                errors.append(f'fb error for {fb_lead_id}: {lead_data["error"].get("message")}')
+                continue
+
+            fields = {f['name']: (f['values'][0] if f.get('values') else '')
+                      for f in lead_data.get('field_data', [])}
+
+            # Skip Meta's "Test on Facebook" generated test leads
+            if any('<test lead' in str(v).lower() for v in fields.values()):
+                skipped += 1
+                continue
+
+            name = (fields.get('full_name') or fields.get('name') or
+                    (fields.get('first_name', '') + ' ' + fields.get('last_name', '')).strip() or None)
+            phone = (fields.get('phone_number') or fields.get('phone')
+                     or fields.get('mobile') or fields.get('contact')) or None
+            email = fields.get('email') or None
+            city = fields.get('city') or None
+            state = fields.get('state') or None
+
+            lead = Lead(
+                name=name, contact=phone, email=email, city=city, state=state,
+                notes=f'Webhook · form_id={lead_data.get("form_id", "")}',
+                origin='Facebook', stage='New Lead', lead_type='Enquiry',
+                facebook_lead_id=fb_lead_id, owner_id=None, assigned_to_id=None,
+                created_by=creator_id,
+            )
+            db.session.add(lead)
+            new_count += 1
+
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'db error', 'detail': str(e)}), 500
+
+    app.logger.info(f'[FB webhook] processed: new={new_count} skipped={skipped} errors={len(errors)}')
+    # Meta only checks for HTTP 200 — body is for our own logging
+    return jsonify({
+        'ok': True, 'new': new_count, 'skipped': skipped,
+        'errors': errors if errors else None,
+    }), 200
+
+
 @app.route('/api/leads/indiamart-sync', methods=['GET'])
 def indiamart_cron_sync():
     """Cron endpoint — auto-sync IndiaMart leads every hour"""
@@ -4514,44 +4660,140 @@ def meetings_map():
 import hmac as _hmac
 import hashlib as _hashlib
 
-from models import BathqubeQuote, BathqubeStatusEvent, BathqubeQuoteItem, BATHQUBE_STAGES
+from models import BathqubeQuote, BathqubeStatusEvent, BathqubeQuoteItem, BathqubeQuoteRevision, BATHQUBE_STAGES
 from utils.bathqube_messages import render_stage_message, STAGE_LABELS
 
 
 def _bathqube_seed_items_from_config(quote):
-    """First-time revise: build a starting line item from the configurator snapshot."""
+    """First-time revise: build starting line items from the configurator snapshot.
+
+    Supports two configData shapes:
+      - NEW (schemaVersion=2): cfg['enclosures'] = [{ name, typeLabel, glassPanels[], pricePerSqft, quantity, ... }]
+        → one BathqubeQuoteItem per panel per enclosure.
+      - LEGACY (flat fields at top-level): cfg['glassPanels'] = [...] with single type/material/etc.
+        → wrap as one synthetic enclosure, then same per-panel expansion.
+    """
     cfg = quote.config or {}
-    desc_parts = [cfg.get('typeLabel') or 'Shower Enclosure']
-    detail = []
-    if cfg.get('materialLabel'): detail.append(cfg['materialLabel'])
-    if cfg.get('thicknessLabel'): detail.append(cfg['thicknessLabel'])
-    if cfg.get('fittingLabel'): detail.append(cfg['fittingLabel'])
-    if detail: desc_parts.append(' · '.join(detail))
-    if cfg.get('glassPanels'):
-        panels = ', '.join(f"{p.get('width')}×{p.get('height')}ft" for p in cfg['glassPanels'])
-        desc_parts.append(f"Panels: {panels}")
-    desc = ' — '.join(desc_parts)
+    enclosures = _bathqube_enclosures_from_cfg(cfg)
 
-    qty = float(cfg.get('quantity') or 1)
-    # Use the pre-tax subtotal as the line amount so totals stay consistent
-    amount = float(quote.subtotal or 0)
-    rate = (amount / qty) if qty else amount
+    items = []
+    sort = 0
+    for enc in enclosures:
+        enc_name = enc.get('name') or 'Enclosure'
+        type_label = enc.get('typeLabel') or 'Shower Enclosure'
+        spec_bits = [b for b in (
+            enc.get('materialLabel'),
+            enc.get('thicknessLabel'),
+            enc.get('fittingLabel'),
+        ) if b]
+        spec = ' · '.join(spec_bits)
+        try:
+            price_per_sqft = float(enc.get('pricePerSqft') or 0)
+        except (TypeError, ValueError):
+            price_per_sqft = 0.0
+        try:
+            qty = float(enc.get('quantity') or 1)
+        except (TypeError, ValueError):
+            qty = 1.0
+        panels = enc.get('glassPanels') or []
+        if not panels:
+            # Enclosure with no panels — skip rather than emitting an empty row
+            continue
+        for pidx, p in enumerate(panels, start=1):
+            try:
+                width = float(p.get('width') or 0)
+                height = float(p.get('height') or 0)
+                sqft = float(p.get('sqft') or (width * height))
+            except (TypeError, ValueError):
+                width = height = sqft = 0.0
+            desc = (
+                f"{enc_name} — {type_label}"
+                + (f" ({spec})" if spec else '')
+                + f" · Panel {pidx}: {width}×{height}ft ({sqft:.2f} sq.ft)"
+            )
+            rate = round(sqft * price_per_sqft, 2)
+            amount = round(rate * qty, 2)
+            items.append(BathqubeQuoteItem(
+                sort_order=sort, description=desc[:500],
+                quantity=qty, rate=rate, amount=amount,
+            ))
+            sort += 1
 
-    return [BathqubeQuoteItem(
-        sort_order=0, description=desc, quantity=qty, rate=rate, amount=amount,
-    )]
+    # Fallback: if for any reason we built zero items but a subtotal exists,
+    # emit a single placeholder so the revise UI isn't empty.
+    if not items and float(quote.subtotal or 0) > 0:
+        items.append(BathqubeQuoteItem(
+            sort_order=0,
+            description='Shower Enclosure (auto-imported)',
+            quantity=1.0, rate=float(quote.subtotal), amount=float(quote.subtotal),
+        ))
+    return items
+
+
+def _bathqube_enclosures_from_cfg(cfg):
+    """Return list of enclosure dicts in the NEW shape, normalising legacy data.
+
+    Each returned dict has at least: name, typeLabel, materialLabel,
+    thicknessLabel, fittingLabel, glassPanels (list), pricePerSqft, quantity.
+    """
+    if isinstance(cfg.get('enclosures'), list) and cfg['enclosures']:
+        out = []
+        for idx, raw in enumerate(cfg['enclosures'], start=1):
+            if not isinstance(raw, dict):
+                continue
+            out.append({
+                'name': raw.get('name') or f'Enclosure {idx}',
+                'typeLabel': raw.get('typeLabel') or 'Shower Enclosure',
+                'materialLabel': raw.get('materialLabel') or '',
+                'thicknessLabel': raw.get('thicknessLabel') or '',
+                'fittingLabel': raw.get('fittingLabel') or '',
+                'hardwareTypeLabel': raw.get('hardwareTypeLabel') or '',
+                'glassPanels': raw.get('glassPanels') or [],
+                'pricePerSqft': raw.get('pricePerSqft') or 0,
+                'quantity': raw.get('quantity') or 1,
+                'sqft': raw.get('sqft'),
+                'subtotal': raw.get('subtotal'),
+            })
+        return out
+    # Legacy flat shape — wrap as a single enclosure
+    return [{
+        'name': 'Enclosure 1',
+        'typeLabel': cfg.get('typeLabel') or 'Shower Enclosure',
+        'materialLabel': cfg.get('materialLabel') or '',
+        'thicknessLabel': cfg.get('thicknessLabel') or '',
+        'fittingLabel': cfg.get('fittingLabel') or '',
+        'hardwareTypeLabel': cfg.get('hardwareTypeLabel') or '',
+        'glassPanels': cfg.get('glassPanels') or [],
+        'pricePerSqft': cfg.get('pricePerSqft') or 0,
+        'quantity': cfg.get('quantity') or 1,
+        'sqft': cfg.get('sqft'),
+        'subtotal': cfg.get('subtotal'),
+    }]
 
 
 def _bathqube_recompute_totals(quote):
-    """Sum items → subtotal; apply GST % → CGST + SGST; sum → revised_total."""
+    """Sum items → subtotal; apply discount %; apply GST % → CGST + SGST; sum → revised_total.
+
+    Calculation chain (discount applies BEFORE GST, industry standard):
+        subtotal        = Σ items.amount
+        discount_amount = subtotal × (discount_percent / 100)
+        taxable         = subtotal − discount_amount
+        cgst = sgst     = taxable × (gst_percent / 2 / 100)
+        revised_total   = taxable + cgst + sgst
+    """
     subtotal = sum(float(it.amount or 0) for it in quote.items)
-    pct = float(quote.gst_percentage or 0)
-    cgst = round(subtotal * pct / 2 / 100, 2)
-    sgst = round(subtotal * pct / 2 / 100, 2)
+    discount_pct = float(quote.discount_percent or 0)
+    discount_amt = round(subtotal * discount_pct / 100, 2)
+    taxable = max(0.0, subtotal - discount_amt)
+    gst_pct = float(quote.gst_percentage or 0)
+    cgst = round(taxable * gst_pct / 2 / 100, 2)
+    sgst = round(taxable * gst_pct / 2 / 100, 2)
+
     quote.subtotal = subtotal
+    quote.discount_amount = discount_amt
     quote.cgst = cgst
     quote.sgst = sgst
-    quote.revised_total = round(subtotal + cgst + sgst, 2)
+    quote.revised_total = round(taxable + cgst + sgst, 2)
 
 # Actions ops can fire at any time, in any order. Each maps to a message template
 # in bathqube_messages.py. Keys are URL-safe slugs.
@@ -4733,16 +4975,34 @@ def bathqube_quote_action(id, action):
 @app.route('/quotes/bathqube/<int:id>/revise', methods=['GET', 'POST'])
 @login_required
 def bathqube_quote_revise(id):
-    """Quote-builder style bill revision: line items + GST + auto-totals + email + PDF."""
+    """Sales-person bill revision UI.
+
+    Full control over the bill:
+      - Edit enclosures (type, material, panels, qty, price/sqft) like the web configurator
+      - Add free-form 'extras' line items (installation, trim, etc. — can be negative for manual discounts)
+      - Apply percentage discount on subtotal (BEFORE GST)
+      - GST % and amount received
+      - Auto-recompute totals; preview is live in the browser via JS
+    """
     quote = BathqubeQuote.query.get_or_404(id)
 
-    # First-time revise: seed items from configurator snapshot
+    # First-time revise: snapshot customer's ORIGINAL submission, then seed
+    # editable line items from the configurator data so the sales person
+    # starts with the same line items the customer saw.
     if not quote.has_revision and not quote.items:
+        if quote.original_config_data is None and quote.config_data:
+            quote.original_config_data = quote.config_data
         for item in _bathqube_seed_items_from_config(quote):
             quote.items.append(item)
         db.session.flush()
 
     if request.method == 'POST':
+        # ─── Capture BEFORE state for the revision audit log ─────────────
+        # Done BEFORE any field mutation so we have a clean snapshot of what
+        # the bill looked like prior to this save.
+        prev_subtotal = float(quote.subtotal or 0)
+        prev_total = float(quote.revised_total if quote.revised_total is not None else quote.total or 0)
+
         # Customer fields
         quote.customer_name = request.form.get('customer_name', quote.customer_name).strip()
         quote.phone = request.form.get('phone', quote.phone).strip()
@@ -4751,27 +5011,63 @@ def bathqube_quote_revise(id):
         quote.site_address = (request.form.get('site_address') or '').strip() or None
         quote.notes = (request.form.get('notes') or '').strip() or None
 
-        # GST rate + amount received
+        # GST %, discount %, amount received
         try:
             quote.gst_percentage = float(request.form.get('gst_percentage') or 18)
         except ValueError:
             flash('Invalid GST %', 'warning')
         try:
+            quote.discount_percent = max(0.0, min(100.0, float(request.form.get('discount_percent') or 0)))
+        except ValueError:
+            quote.discount_percent = 0
+        try:
             quote.amount_received = float(request.form.get('amount_received') or 0)
         except ValueError:
             pass
 
-        # Line items: replace wholesale from form arrays
-        descs = request.form.getlist('item_description')
-        qtys = request.form.getlist('item_quantity')
-        rates = request.form.getlist('item_rate')
+        # ─── Enclosures: the structured part of the bill ─────────────────
+        # Frontend serializes the enclosures array into a hidden JSON field.
+        # We persist it to config_data (so the view template + revise page
+        # both render from the same source of truth), then auto-generate
+        # BathqubeQuoteItem rows from it (one item per panel per enclosure).
+        enclosures_json = (request.form.get('enclosures_json') or '').strip()
+        enclosures_list = []
+        if enclosures_json:
+            try:
+                parsed = json.loads(enclosures_json)
+                if isinstance(parsed, list):
+                    enclosures_list = parsed
+            except Exception as e:
+                flash(f'Could not parse enclosures: {e}', 'warning')
 
-        # Drop existing items, rebuild from submitted rows
-        for it in list(quote.items):
-            db.session.delete(it)
+        if enclosures_list:
+            # Update config_data with edited enclosures (preserve other keys)
+            current_cfg = quote.config if isinstance(quote.config, dict) else {}
+            current_cfg['enclosures'] = enclosures_list
+            current_cfg['schemaVersion'] = 2
+            quote.config_data = json.dumps(current_cfg)
+
+        # ─── Drop existing items, regenerate from enclosures + extras ────
+        # Use collection.clear() (cascade='all, delete-orphan' handles DB delete)
+        # instead of db.session.delete() in a loop — the latter removes from DB but
+        # leaves stale objects in quote.items until commit, so the appends below
+        # see old+new and double-count subtotal/snapshot/PDF.
+        quote.items.clear()
         db.session.flush()
 
         sort_order = 0
+
+        # Enclosure-derived items (one per panel) — flagged is_extra=False
+        for enc_item in _bathqube_seed_items_from_config(quote):
+            enc_item.sort_order = sort_order
+            enc_item.is_extra = False
+            quote.items.append(enc_item)
+            sort_order += 1
+
+        # ─── Extra free-form line items (additional charges / manual discounts) ─
+        descs = request.form.getlist('extra_description')
+        qtys = request.form.getlist('extra_quantity')
+        rates = request.form.getlist('extra_rate')
         for d, q_, r in zip(descs, qtys, rates):
             desc = (d or '').strip()
             if not desc:
@@ -4784,12 +5080,47 @@ def bathqube_quote_revise(id):
             quote.items.append(BathqubeQuoteItem(
                 sort_order=sort_order, description=desc[:500],
                 quantity=qty, rate=rate, amount=round(qty * rate, 2),
+                is_extra=True,
             ))
             sort_order += 1
 
-        # Auto-recompute totals from items + GST
+        # Auto-recompute totals (subtotal → discount → GST → revised_total)
         _bathqube_recompute_totals(quote)
         quote.has_revision = True
+
+        # ─── Insert audit row: one BathqubeQuoteRevision per save ────────
+        # Full snapshot of what the bill looks like AFTER this save, plus
+        # the before/after totals so the view page can show "Rev N: ₹X → ₹Y".
+        quote.revision_count = (quote.revision_count or 0) + 1
+        new_subtotal = float(quote.subtotal or 0)
+        new_total = float(quote.revised_total or 0)
+        snapshot = {
+            'customer': {
+                'name': quote.customer_name, 'phone': quote.phone, 'email': quote.email,
+                'pincode': quote.pincode, 'site_address': quote.site_address,
+            },
+            'enclosures': enclosures_list,  # the JSON the sales person just submitted
+            'items': [
+                {'description': it.description, 'quantity': float(it.quantity or 0),
+                 'rate': float(it.rate or 0), 'amount': float(it.amount or 0),
+                 'is_extra': bool(it.is_extra)}
+                for it in quote.items
+            ],
+            'gst_percentage': float(quote.gst_percentage or 0),
+            'discount_percent': float(quote.discount_percent or 0),
+            'discount_amount': float(quote.discount_amount or 0),
+            'amount_received': float(quote.amount_received or 0),
+        }
+        revision = BathqubeQuoteRevision(
+            quote_id=quote.id,
+            revision_number=quote.revision_count,
+            prev_subtotal=prev_subtotal, new_subtotal=new_subtotal,
+            prev_total=prev_total, new_total=new_total,
+            discount_percent=float(quote.discount_percent or 0),
+            snapshot=json.dumps(snapshot),
+            triggered_by=current_user.id if current_user.is_authenticated else None,
+        )
+        db.session.add(revision)
 
         # Email send?
         send = request.form.get('send_email') == 'on'
@@ -4839,8 +5170,47 @@ def bathqube_quote_revise(id):
 
     # GET — render editor
     subject, body = render_stage_message(quote, 'bill_revision')
+
+    # Enclosures: normalised from current config_data (handles legacy flat shape)
+    enclosures = _bathqube_enclosures_from_cfg(quote.config or {})
+    # Extras: line items added by the sales person on top of enclosure-derived rows
+    extras = [it for it in quote.items if it.is_extra]
+
     return render_template('quotes/bathqube_revise.html',
-                           quote=quote, subject=subject, body=body)
+                           quote=quote, subject=subject, body=body,
+                           enclosures=enclosures, extras=extras,
+                           option_lists=BATHQUBE_REVISE_OPTIONS)
+
+
+# Standard configurator options exposed to the revise UI — sales person sees
+# these as dropdown options, plus an "Other (specify)" choice that reveals a
+# free-text input. Keep labels + surcharges in sync with glassyplatform's
+# DEFAULT_* lists in ShowerConfigurator.tsx. Surcharge = ₹/sqft added to base
+# rate when the option is picked. "Other" surcharges default to 0.
+BATHQUBE_REVISE_OPTIONS = {
+    'types': [
+        ('Straight Shower Enclosure', 0),
+        ('Curved Shower Enclosure', 80),
+        ('L-Shaped Glass Enclosure', 80),
+        ('Half Wall Shower Enclosure', 30),
+        ('Walk-In Shower Enclosure', -30),
+        ('Frameless Shower Enclosure', 120),
+        ('Quadrant Shower Enclosure', 60),
+        ('Sliding Door Shower Enclosure', 40),
+    ],
+    'materials': [
+        ('Clear', 0), ('Frosted', 80), ('Fluted', 150), ('Tinted', 100),
+    ],
+    'fittings': [
+        ('Chrome', 0), ('Matte Black', 80), ('Brushed Gold', 150), ('Rose Gold', 200),
+    ],
+    'hardwareTypes': [
+        ('Glossy', 0), ('Matte', 100),
+    ],
+    'thicknesses': [
+        ('8mm', 0), ('10mm', 120), ('12mm', 240),
+    ],
+}
 
 
 # ============================================================================

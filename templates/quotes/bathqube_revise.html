@@ -8,7 +8,7 @@
 
 <form method="POST" action="{{ url_for('bathqube_quote_revise', id=quote.id) }}" id="reviseForm">
 
-    <!-- Customer -->
+    {# ───────────── Customer ───────────── #}
     <div class="card mb-3">
         <div class="card-header"><strong>Customer</strong></div>
         <div class="card-body row g-3">
@@ -35,18 +35,39 @@
         </div>
     </div>
 
-    <!-- Line items -->
-    <div class="card mb-3 border-warning">
-        <div class="card-header bg-warning bg-opacity-25 d-flex justify-content-between align-items-center">
-            <span><strong>Line items</strong>
-                <span class="small text-muted">— add a discount as a row with a negative rate (e.g. <code>-2500</code>).</span>
+    {# ───────────── Enclosures (the structured part) ───────────── #}
+    <div class="card mb-3 border-primary">
+        <div class="card-header bg-primary bg-opacity-10 d-flex justify-content-between align-items-center">
+            <span>
+                <strong><i class="bi bi-box"></i> Enclosures</strong>
+                <span class="small text-muted ms-2" id="encCount">{{ enclosures|length }} enclosure{{ '' if enclosures|length == 1 else 's' }}</span>
             </span>
-            <button type="button" class="btn btn-sm btn-warning" id="addItemBtn">
-                <i class="bi bi-plus-circle"></i> Add item
+            <button type="button" class="btn btn-sm btn-primary" id="addEnclosureBtn">
+                <i class="bi bi-plus-circle"></i> Add enclosure
             </button>
         </div>
         <div class="card-body p-0">
-            <table class="table table-sm align-middle mb-0" id="itemsTable">
+            <div id="enclosuresContainer">
+                {# Server renders an empty container; JS mounts the editor cards on load. #}
+            </div>
+        </div>
+        {# Hidden: JS serializes the enclosures array into this field on submit. #}
+        <input type="hidden" name="enclosures_json" id="enclosuresJson">
+    </div>
+
+    {# ───────────── Additional charges (free-form extras) ───────────── #}
+    <div class="card mb-3 border-warning">
+        <div class="card-header bg-warning bg-opacity-25 d-flex justify-content-between align-items-center">
+            <span>
+                <strong><i class="bi bi-plus-square"></i> Additional charges</strong>
+                <span class="small text-muted ms-2">— installation, trim, etc. Use a negative rate for manual discounts.</span>
+            </span>
+            <button type="button" class="btn btn-sm btn-warning" id="addExtraBtn">
+                <i class="bi bi-plus-circle"></i> Add row
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-sm align-middle mb-0" id="extrasTable">
                 <thead class="table-light">
                     <tr>
                         <th style="width: 55%;">Description</th>
@@ -56,12 +77,12 @@
                         <th style="width: 3%;"></th>
                     </tr>
                 </thead>
-                <tbody id="itemsBody">
-                    {% for it in quote.items %}
-                    <tr class="item-row">
-                        <td><input class="form-control form-control-sm desc" name="item_description" value="{{ it.description }}"></td>
-                        <td><input class="form-control form-control-sm qty" name="item_quantity" type="number" step="0.01" value="{{ it.quantity }}"></td>
-                        <td><input class="form-control form-control-sm rate" name="item_rate" type="number" step="0.01" value="{{ it.rate }}"></td>
+                <tbody id="extrasBody">
+                    {% for it in extras %}
+                    <tr class="extra-row">
+                        <td><input class="form-control form-control-sm desc" name="extra_description" value="{{ it.description }}"></td>
+                        <td><input class="form-control form-control-sm qty" name="extra_quantity" type="number" step="0.01" value="{{ it.quantity }}"></td>
+                        <td><input class="form-control form-control-sm rate" name="extra_rate" type="number" step="0.01" value="{{ it.rate }}"></td>
                         <td class="text-end amount">₹0.00</td>
                         <td><button type="button" class="btn btn-sm btn-link text-danger remove-row"><i class="bi bi-x-lg"></i></button></td>
                     </tr>
@@ -71,51 +92,103 @@
         </div>
     </div>
 
-    <!-- Totals -->
+    {# ───────────── Tax & payment + Totals ───────────── #}
     <div class="row mb-3">
-        <div class="col-md-6">
+        <div class="col-md-5">
             <div class="card">
                 <div class="card-header"><strong>Tax &amp; payment</strong></div>
                 <div class="card-body row g-3">
                     <div class="col-md-6">
                         <label class="form-label">GST %</label>
                         <input class="form-control" name="gst_percentage" id="gstInput"
-                               type="number" step="0.01" min="0" value="{{ quote.gst_percentage or 18 }}">
+                               type="number" step="0.01" min="0" max="100"
+                               value="{{ quote.gst_percentage or 18 }}">
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label">Amount received</label>
+                        <label class="form-label">
+                            Discount %
+                            <span class="text-muted small" title="Applied to subtotal BEFORE GST">ⓘ</span>
+                        </label>
+                        <input class="form-control" name="discount_percent" id="discountInput"
+                               type="number" step="0.01" min="0" max="100"
+                               value="{{ quote.discount_percent or 0 }}">
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label">Amount received from customer</label>
                         <input class="form-control" name="amount_received" id="amountReceivedInput"
                                type="number" step="0.01" value="{{ quote.amount_received or 0 }}">
                     </div>
                 </div>
             </div>
         </div>
-        <div class="col-md-6">
+        <div class="col-md-7">
             <div class="card">
-                <div class="card-header"><strong>Totals</strong> <span class="small text-muted">— auto-computed</span></div>
+                <div class="card-header">
+                    <strong>Live totals</strong>
+                    <span class="small text-muted">— auto-computed as you edit</span>
+                </div>
                 <div class="card-body p-0">
                     <table class="table table-sm mb-0">
-                        <tr><td>Subtotal</td><td class="text-end" id="subtotalCell">₹0.00</td></tr>
-                        <tr><td>CGST</td><td class="text-end" id="cgstCell">₹0.00</td></tr>
-                        <tr><td>SGST</td><td class="text-end" id="sgstCell">₹0.00</td></tr>
-                        <tr class="table-warning"><th>Grand total (revised)</th><th class="text-end" id="grandTotalCell">₹0.00</th></tr>
-                        <tr><td>Balance payable</td><td class="text-end" id="balanceCell">₹0.00</td></tr>
+                        <tr>
+                            <td>Enclosures subtotal</td>
+                            <td class="text-end" id="encSubtotalCell">₹0.00</td>
+                        </tr>
+                        <tr>
+                            <td>Extras subtotal</td>
+                            <td class="text-end" id="extrasSubtotalCell">₹0.00</td>
+                        </tr>
+                        <tr class="border-top">
+                            <td><strong>Subtotal</strong></td>
+                            <td class="text-end" id="subtotalCell"><strong>₹0.00</strong></td>
+                        </tr>
+                        <tr class="text-danger">
+                            <td>Discount (<span id="discountPctDisplay">0</span>%)</td>
+                            <td class="text-end" id="discountAmtCell">−₹0.00</td>
+                        </tr>
+                        <tr>
+                            <td>Taxable</td>
+                            <td class="text-end" id="taxableCell">₹0.00</td>
+                        </tr>
+                        <tr>
+                            <td>CGST (<span id="cgstPctDisplay">9</span>%)</td>
+                            <td class="text-end" id="cgstCell">₹0.00</td>
+                        </tr>
+                        <tr>
+                            <td>SGST (<span id="sgstPctDisplay">9</span>%)</td>
+                            <td class="text-end" id="sgstCell">₹0.00</td>
+                        </tr>
+                        <tr class="table-warning">
+                            <th>GRAND TOTAL</th>
+                            <th class="text-end" id="grandTotalCell">₹0.00</th>
+                        </tr>
+                        <tr>
+                            <td>Less amount received</td>
+                            <td class="text-end" id="receivedCell">₹0.00</td>
+                        </tr>
+                        <tr class="table-light">
+                            <th>Balance payable</th>
+                            <th class="text-end" id="balanceCell">₹0.00</th>
+                        </tr>
                     </table>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Original (for context) -->
+    {# ───────────── For reference: original customer submission ───────────── #}
     <div class="alert alert-light border small mb-3">
-        <strong>For reference — original totals from configurator:</strong>
+        <strong>Reference — customer's original totals:</strong>
         Subtotal ₹{{ '{:,.2f}'.format(quote.subtotal or 0) }} ·
         CGST ₹{{ '{:,.2f}'.format(quote.cgst or 0) }} ·
         SGST ₹{{ '{:,.2f}'.format(quote.sgst or 0) }} ·
         Total <strong>₹{{ '{:,.2f}'.format(quote.total or 0) }}</strong>
+        {% if quote.original_config_data %}
+        · <a href="#" data-bs-toggle="collapse" data-bs-target="#origConfig">Show original config</a>
+        <pre id="origConfig" class="collapse mt-2 small bg-white p-2 border rounded">{{ quote.original_config_data }}</pre>
+        {% endif %}
     </div>
 
-    <!-- Email -->
+    {# ───────────── Email ───────────── #}
     <div class="card mb-3">
         <div class="card-header">
             <strong>Customer email</strong>
@@ -146,7 +219,7 @@
         </div>
     </div>
 
-    <!-- Internal notes -->
+    {# ───────────── Internal notes ───────────── #}
     <div class="card mb-3">
         <div class="card-header"><strong>Internal notes</strong> <span class="small text-muted">(not sent to customer)</span></div>
         <div class="card-body">
@@ -162,65 +235,24 @@
     </div>
 </form>
 
-<template id="itemRowTemplate">
-    <tr class="item-row">
-        <td><input class="form-control form-control-sm desc" name="item_description" placeholder="e.g. Mirror upgrade / Installation / Discount"></td>
-        <td><input class="form-control form-control-sm qty" name="item_quantity" type="number" step="0.01" value="1"></td>
-        <td><input class="form-control form-control-sm rate" name="item_rate" type="number" step="0.01" value="0"></td>
+{# ───────────── Initial state for the JS bootstrap ───────────── #}
+<script type="application/json" id="initialState">
+{
+  "enclosures": {{ enclosures|tojson }},
+  "options": {{ option_lists|tojson }}
+}
+</script>
+
+{# ───────────── Reusable extras-row template ───────────── #}
+<template id="extraRowTemplate">
+    <tr class="extra-row">
+        <td><input class="form-control form-control-sm desc" name="extra_description" placeholder="e.g. Installation / Trim / Promo discount"></td>
+        <td><input class="form-control form-control-sm qty" name="extra_quantity" type="number" step="0.01" value="1"></td>
+        <td><input class="form-control form-control-sm rate" name="extra_rate" type="number" step="0.01" value="0"></td>
         <td class="text-end amount">₹0.00</td>
         <td><button type="button" class="btn btn-sm btn-link text-danger remove-row"><i class="bi bi-x-lg"></i></button></td>
     </tr>
 </template>
 
-<script>
-(function () {
-    const tbody = document.getElementById('itemsBody');
-    const tmpl = document.getElementById('itemRowTemplate');
-    const fmt = (n) => '₹' + (Math.round(n * 100) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-    function recompute() {
-        let subtotal = 0;
-        tbody.querySelectorAll('.item-row').forEach(row => {
-            const q = parseFloat(row.querySelector('.qty').value) || 0;
-            const r = parseFloat(row.querySelector('.rate').value) || 0;
-            const amount = q * r;
-            row.querySelector('.amount').textContent = fmt(amount);
-            subtotal += amount;
-        });
-        const gst = parseFloat(document.getElementById('gstInput').value) || 0;
-        const cgst = subtotal * gst / 2 / 100;
-        const sgst = subtotal * gst / 2 / 100;
-        const grand = subtotal + cgst + sgst;
-        const received = parseFloat(document.getElementById('amountReceivedInput').value) || 0;
-        const balance = Math.max(0, grand - received);
-
-        document.getElementById('subtotalCell').textContent = fmt(subtotal);
-        document.getElementById('cgstCell').textContent = fmt(cgst);
-        document.getElementById('sgstCell').textContent = fmt(sgst);
-        document.getElementById('grandTotalCell').textContent = fmt(grand);
-        document.getElementById('balanceCell').textContent = fmt(balance);
-    }
-
-    function wireRow(row) {
-        row.querySelectorAll('input').forEach(i => i.addEventListener('input', recompute));
-        row.querySelector('.remove-row').addEventListener('click', () => {
-            row.remove();
-            recompute();
-        });
-    }
-
-    document.getElementById('addItemBtn').addEventListener('click', () => {
-        const node = tmpl.content.firstElementChild.cloneNode(true);
-        tbody.appendChild(node);
-        wireRow(node);
-        node.querySelector('.desc').focus();
-    });
-
-    document.getElementById('gstInput').addEventListener('input', recompute);
-    document.getElementById('amountReceivedInput').addEventListener('input', recompute);
-
-    tbody.querySelectorAll('.item-row').forEach(wireRow);
-    recompute();
-})();
-</script>
+<script src="{{ url_for('static', filename='js/bathqube_revise.js') }}" defer></script>
 {% endblock %}

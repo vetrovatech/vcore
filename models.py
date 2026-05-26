@@ -1238,8 +1238,14 @@ class BathqubeQuote(db.Model):
     variant_size = db.Column(db.String(120), nullable=True)
     variant_material = db.Column(db.String(120), nullable=True)
 
-    # Full configurator snapshot (panels, finishes, prices) as JSON string
+    # Full configurator snapshot (panels, finishes, prices) as JSON string.
+    # After the first revise, this holds the sales-person's EDITED version.
     config_data = db.Column(db.Text, nullable=True)
+
+    # Snapshot of the customer's ORIGINAL submission, captured the first time
+    # someone opens the revise screen. Read-only audit trail of "what they
+    # asked for vs what was sold". Null until first revise.
+    original_config_data = db.Column(db.Text, nullable=True)
 
     # Money — copied from configurator, editable in vcore after bill_revision
     subtotal = db.Column(db.Numeric(12, 2), default=0, nullable=False)
@@ -1250,6 +1256,13 @@ class BathqubeQuote(db.Model):
     amount_received = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     gst_percentage = db.Column(db.Numeric(5, 2), default=18, nullable=False)
     has_revision = db.Column(db.Boolean, default=False, nullable=False)
+    # Discount as % of pre-tax subtotal — applied BEFORE GST.
+    discount_percent = db.Column(db.Numeric(5, 2), default=0, nullable=False)
+    discount_amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+
+    # How many times the sales person has saved a revision (0 = customer's original).
+    # Bumped in app.py on every successful save; matches len(revisions).
+    revision_count = db.Column(db.Integer, default=0, nullable=False)
 
     # Lifecycle
     stage = db.Column(db.String(32), nullable=False, default='new', index=True)
@@ -1269,6 +1282,12 @@ class BathqubeQuote(db.Model):
     items = db.relationship('BathqubeQuoteItem', backref='quote', lazy=True,
                             cascade='all, delete-orphan',
                             order_by='BathqubeQuoteItem.sort_order')
+
+    # Audit log: one row per Save in the revise UI. Used by the view page's
+    # "Revision history" card. Customer never sees these — internal only.
+    revisions = db.relationship('BathqubeQuoteRevision', backref='quote', lazy=True,
+                                cascade='all, delete-orphan',
+                                order_by='BathqubeQuoteRevision.revision_number.desc()')
 
     @property
     def balance_payable(self):
@@ -1328,9 +1347,59 @@ class BathqubeQuoteItem(db.Model):
     sort_order = db.Column(db.Integer, default=0, nullable=False)
     description = db.Column(db.String(500), nullable=False)
     quantity = db.Column(db.Numeric(10, 2), default=1, nullable=False)
+    # True for free-form 'extras' added in the revise UI (installation, trim,
+    # manual discounts). False = generated from an enclosure's panel and
+    # regenerated on every save (so don't edit these directly).
+    is_extra = db.Column(db.Boolean, default=False, nullable=False)
     rate = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)  # snapshot of qty*rate at save time
 
     def __repr__(self):
         return f'<BathqubeQuoteItem q={self.quote_id} "{self.description[:30]}" {self.amount}>'
+
+
+class BathqubeQuoteRevision(db.Model):
+    """One row per Save in the revise UI. Internal audit log — customer never sees this.
+
+    Captures before/after totals plus a full JSON snapshot of items + enclosures at
+    the moment of save, so the team can reconstruct what the bill looked like at any
+    point in its history.
+    """
+    __tablename__ = 'bathqube_quote_revisions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('bathqube_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+    revision_number = db.Column(db.Integer, nullable=False)  # 1, 2, 3, ...
+    prev_subtotal = db.Column(db.Numeric(12, 2), nullable=True)
+    new_subtotal = db.Column(db.Numeric(12, 2), nullable=True)
+    prev_total = db.Column(db.Numeric(12, 2), nullable=True)
+    new_total = db.Column(db.Numeric(12, 2), nullable=True)
+    discount_percent = db.Column(db.Numeric(5, 2), nullable=True)
+    snapshot = db.Column(db.Text, nullable=True)  # JSON: {enclosures, items, customer}
+    triggered_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = db.relationship('User', foreign_keys=[triggered_by])
+
+    @property
+    def snapshot_parsed(self):
+        """JSON-parsed snapshot; returns {} if missing/invalid."""
+        if not self.snapshot:
+            return {}
+        try:
+            return json.loads(self.snapshot)
+        except Exception:
+            return {}
+
+    @property
+    def total_delta(self):
+        """new_total - prev_total. Positive = bill went up, negative = went down."""
+        try:
+            return float(self.new_total or 0) - float(self.prev_total or 0)
+        except Exception:
+            return 0
+
+    def __repr__(self):
+        return f'<BathqubeQuoteRevision q={self.quote_id} #{self.revision_number} {self.prev_total}->{self.new_total}>'
 

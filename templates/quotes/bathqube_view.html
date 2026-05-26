@@ -80,6 +80,12 @@
             <div class="card-body">
                 <table class="table table-sm mb-0">
                     <tr><td>Subtotal</td><td class="text-end">₹{{ '{:,.2f}'.format(quote.subtotal or 0) }}</td></tr>
+                    {% if quote.discount_amount and quote.discount_amount > 0 %}
+                    <tr class="text-success">
+                        <td>Discount ({{ '{:g}'.format(quote.discount_percent or 0) }}%)</td>
+                        <td class="text-end">−₹{{ '{:,.2f}'.format(quote.discount_amount) }}</td>
+                    </tr>
+                    {% endif %}
                     <tr><td>CGST</td><td class="text-end">₹{{ '{:,.2f}'.format(quote.cgst or 0) }}</td></tr>
                     <tr><td>SGST</td><td class="text-end">₹{{ '{:,.2f}'.format(quote.sgst or 0) }}</td></tr>
                     <tr><th>Original total</th><th class="text-end">₹{{ '{:,.2f}'.format(quote.total or 0) }}</th></tr>
@@ -92,20 +98,116 @@
             </div>
         </div>
 
+        {# ─── Revision history (internal audit — never shown to customer) ─── #}
+        {% if quote.revisions %}
+        <div class="card mb-3 border-info">
+            <div class="card-header bg-info bg-opacity-10">
+                <strong><i class="bi bi-clock-history"></i> Revision history</strong>
+                <span class="text-muted small ms-2">
+                    {{ quote.revision_count }} revision{{ '' if quote.revision_count == 1 else 's' }}
+                </span>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:6%;">#</th>
+                            <th style="width:20%;">When</th>
+                            <th style="width:18%;">By</th>
+                            <th style="width:20%;">Total change</th>
+                            <th style="width:14%;">Discount</th>
+                            <th style="width:22%;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for rev in quote.revisions %}
+                        <tr>
+                            <td><strong>{{ rev.revision_number }}</strong></td>
+                            <td><small>{{ (rev.created_at | to_ist).strftime('%d %b · %H:%M') }} IST</small></td>
+                            <td><small>{{ rev.user.username if rev.user else '—' }}</small></td>
+                            <td>
+                                <small>
+                                    ₹{{ '{:,.0f}'.format(rev.prev_total or 0) }}
+                                    →
+                                    <strong>₹{{ '{:,.0f}'.format(rev.new_total or 0) }}</strong>
+                                    {% set delta = rev.total_delta %}
+                                    {% if delta > 0 %}
+                                        <span class="badge bg-warning text-dark">+₹{{ '{:,.0f}'.format(delta) }}</span>
+                                    {% elif delta < 0 %}
+                                        <span class="badge bg-success">−₹{{ '{:,.0f}'.format(-delta) }}</span>
+                                    {% endif %}
+                                </small>
+                            </td>
+                            <td><small>{{ '{:g}'.format(rev.discount_percent or 0) }}%</small></td>
+                            <td>
+                                <button type="button" class="btn btn-sm btn-link p-0"
+                                        data-bs-toggle="collapse"
+                                        data-bs-target="#revsnap-{{ rev.id }}">
+                                    <small>view snapshot ▾</small>
+                                </button>
+                            </td>
+                        </tr>
+                        <tr id="revsnap-{{ rev.id }}" class="collapse">
+                            <td colspan="6" class="bg-light">
+                                <pre class="small mb-0" style="max-height:300px; overflow-y:auto;">{{ rev.snapshot }}</pre>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
         {% set cfg = quote.config %}
         {% if cfg %}
+        {# Normalise: build a list of enclosures from either the new shape
+           (cfg.enclosures[]) or the legacy flat shape (top-level fields). #}
+        {% if cfg.enclosures and cfg.enclosures is iterable and (cfg.enclosures|length) > 0 %}
+            {% set enclosures = cfg.enclosures %}
+        {% else %}
+            {% set enclosures = [{
+                'name': 'Enclosure 1',
+                'typeLabel': cfg.typeLabel,
+                'materialLabel': cfg.materialLabel,
+                'thicknessLabel': cfg.thicknessLabel,
+                'fittingLabel': cfg.fittingLabel,
+                'hardwareTypeLabel': cfg.hardwareTypeLabel,
+                'glassPanels': cfg.glassPanels,
+                'pricePerSqft': cfg.pricePerSqft,
+                'quantity': cfg.quantity,
+                'sqft': cfg.sqft,
+                'subtotal': cfg.subtotal,
+            }] %}
+        {% endif %}
         <div class="card mb-3">
-            <div class="card-header"><strong>Configurator snapshot</strong></div>
-            <div class="card-body">
-                <p class="mb-1"><strong>Type:</strong> {{ cfg.typeLabel or '—' }}</p>
-                <p class="mb-1"><strong>Glass:</strong> {{ cfg.materialLabel or '—' }} ({{ cfg.thicknessLabel or '' }})</p>
-                <p class="mb-1"><strong>Hardware:</strong> {{ cfg.fittingLabel or '—' }} / {{ cfg.hardwareTypeLabel or '—' }}</p>
-                <p class="mb-1"><strong>Rate:</strong> ₹{{ cfg.pricePerSqft or '—' }}/sq.ft &middot; <strong>Qty:</strong> {{ cfg.quantity or 1 }}</p>
-                {% if cfg.glassPanels %}
-                <p class="mb-0"><strong>Panels:</strong>
-                    {% for p in cfg.glassPanels %}{{ p.width }}×{{ p.height }}ft{% if not loop.last %}, {% endif %}{% endfor %}
-                </p>
-                {% endif %}
+            <div class="card-header">
+                <strong>Configurator snapshot</strong>
+                <span class="text-muted small ms-2">{{ enclosures|length }} enclosure{{ '' if enclosures|length == 1 else 's' }}</span>
+            </div>
+            <div class="card-body p-0">
+                {% for enc in enclosures %}
+                <div class="p-3{% if not loop.last %} border-bottom{% endif %}">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <span class="badge bg-primary me-2">#{{ loop.index }}</span>
+                            <strong>{{ enc.name or ('Enclosure ' ~ loop.index) }}</strong>
+                            <span class="text-muted small ms-1">— {{ enc.typeLabel or '—' }}</span>
+                        </div>
+                        {% if enc.subtotal is not none %}
+                        <span class="text-end small"><strong>₹{{ '{:,.0f}'.format(enc.subtotal or 0) }}</strong></span>
+                        {% endif %}
+                    </div>
+                    <p class="mb-1 small"><strong>Glass:</strong> {{ enc.materialLabel or '—' }} ({{ enc.thicknessLabel or '' }})</p>
+                    <p class="mb-1 small"><strong>Hardware:</strong> {{ enc.fittingLabel or '—' }} / {{ enc.hardwareTypeLabel or '—' }}</p>
+                    <p class="mb-1 small"><strong>Rate:</strong> ₹{{ enc.pricePerSqft or '—' }}/sq.ft &middot; <strong>Qty:</strong> {{ enc.quantity or 1 }}</p>
+                    {% if enc.glassPanels %}
+                    <p class="mb-0 small"><strong>Panels ({{ enc.glassPanels|length }}):</strong>
+                        {% for p in enc.glassPanels %}{{ p.width }}×{{ p.height }}ft{% if not loop.last %}, {% endif %}{% endfor %}
+                    </p>
+                    {% endif %}
+                </div>
+                {% endfor %}
             </div>
         </div>
         {% endif %}
@@ -137,7 +239,7 @@
                                     <span class="badge bg-secondary">no email</span>
                                 {% endif %}
                             </div>
-                            <small class="text-muted">{{ ev.created_at.strftime('%d %b · %H:%M') }}</small>
+                            <small class="text-muted">{{ (ev.created_at | to_ist).strftime('%d %b · %H:%M') }} IST</small>
                         </div>
                         <div class="small text-muted">
                             {% if ev.from_stage %}from {{ stage_labels.get(ev.from_stage, ev.from_stage) }} · {% endif %}
