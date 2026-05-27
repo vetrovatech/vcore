@@ -46,6 +46,13 @@
                             <div class="small">Edit prices, then email the revised quote with PDF attached.</div>
                         </a>
                     </div>
+                    <div class="col-md-12">
+                        <a href="{{ url_for('bathqube_quote_pdf', id=quote.id) }}"
+                           class="btn btn-outline-primary w-100 text-start" target="_blank">
+                            <i class="bi bi-file-earmark-pdf"></i> <strong>Download PDF (my copy)</strong>
+                            <div class="small text-muted">Save the current quotation PDF to your own computer.</div>
+                        </a>
+                    </div>
                     <div class="col-md-6">
                         <a href="{{ url_for('bathqube_quote_action', id=quote.id, action='order_ready') }}"
                            class="btn btn-outline-success w-100 text-start">

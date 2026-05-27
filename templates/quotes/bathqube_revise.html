@@ -231,6 +231,11 @@
         <button type="submit" class="btn btn-warning">
             <i class="bi bi-save"></i> Save &amp; send revised estimate
         </button>
+        <a href="{{ url_for('bathqube_quote_pdf', id=quote.id) }}"
+           class="btn btn-outline-primary" target="_blank"
+           title="Download the current PDF to your own computer (saves before sending)">
+            <i class="bi bi-file-earmark-pdf"></i> Download PDF (my copy)
+        </a>
         <a href="{{ url_for('bathqube_quote_view', id=quote.id) }}" class="btn btn-secondary">Cancel</a>
     </div>
 </form>

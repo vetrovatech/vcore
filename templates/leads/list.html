@@ -218,6 +218,25 @@
     .sync-spinner { display: none; }
     .syncing .sync-spinner { display: inline-block; }
     .syncing .sync-text { display: none; }
+
+    /* Bulk-action bar */
+    .bulk-bar {
+        display: none;
+        align-items: center;
+        gap: 0.75rem;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 0.5rem;
+        padding: 0.6rem 1rem;
+        margin-bottom: 0.75rem;
+    }
+    .bulk-bar.show { display: flex; }
+    .bulk-bar .bulk-count {
+        font-weight: 600;
+        color: #1e40af;
+        font-size: 0.85rem;
+    }
+    .bulk-bar .form-select { max-width: 240px; font-size: 0.85rem; }
 </style>
 {% endblock %}
 
@@ -375,6 +394,24 @@
     </form>
 </div>
 
+{% if current_user.is_admin() %}
+<!-- Bulk Action Bar -->
+<div class="bulk-bar" id="bulkBar">
+    <span class="bulk-count"><i class="bi bi-check2-square"></i> <span id="bulkCount">0</span> selected</span>
+    <select class="form-select form-select-sm" id="bulkAssignUser">
+        <option value="">— Assign to BD —</option>
+        {% for u in users %}
+        <option value="{{ u.id }}">{{ u.username }}</option>
+        {% endfor %}
+    </select>
+    <button type="button" class="btn btn-primary btn-sm" id="bulkAssignBtn">
+        <span class="bulk-assign-text"><i class="bi bi-person-check-fill"></i> Assign</span>
+        <span class="bulk-assign-spinner" style="display:none;"><span class="spinner-border spinner-border-sm"></span> Assigning...</span>
+    </button>
+    <button type="button" class="btn btn-link btn-sm text-muted" id="bulkClearBtn">Clear</button>
+</div>
+{% endif %}
+
 <!-- Leads Table -->
 <div class="card">
     <div class="card-body p-0">
@@ -398,7 +435,7 @@
                     {% set avatar_bg = ['#6366f1','#8b5cf6','#ec4899','#f59e0b','#10b981','#3b82f6','#ef4444'] %}
                     {% for lead in leads %}
                     <tr {% if lead.is_untouched %}class="untouched-row"{% endif %}>
-                        <td><input type="checkbox" class="form-check-input lead-check"></td>
+                        <td><input type="checkbox" class="form-check-input lead-check" data-lead-id="{{ lead.id }}"></td>
 
                         <!-- Name + Stage + Type -->
                         <td>
@@ -745,6 +782,66 @@
 <script>
     document.getElementById('selectAll').addEventListener('change', function () {
         document.querySelectorAll('.lead-check').forEach(cb => cb.checked = this.checked);
+        updateBulkBar();
+    });
+
+    // Bulk-assign UI
+    const bulkBar = document.getElementById('bulkBar');
+    const bulkCount = document.getElementById('bulkCount');
+    function getSelectedLeadIds() {
+        return Array.from(document.querySelectorAll('.lead-check:checked'))
+            .map(cb => cb.dataset.leadId)
+            .filter(Boolean);
+    }
+    function updateBulkBar() {
+        if (!bulkBar) return;
+        const ids = getSelectedLeadIds();
+        bulkCount.textContent = ids.length;
+        bulkBar.classList.toggle('show', ids.length > 0);
+    }
+    document.querySelectorAll('.lead-check').forEach(cb => {
+        cb.addEventListener('change', updateBulkBar);
+    });
+    document.getElementById('bulkClearBtn')?.addEventListener('click', function () {
+        document.querySelectorAll('.lead-check').forEach(cb => cb.checked = false);
+        document.getElementById('selectAll').checked = false;
+        updateBulkBar();
+    });
+    document.getElementById('bulkAssignBtn')?.addEventListener('click', function () {
+        const ids = getSelectedLeadIds();
+        const userId = document.getElementById('bulkAssignUser').value;
+        if (ids.length === 0) { alert('Select at least one lead.'); return; }
+        if (!userId) { alert('Pick a user to assign to.'); return; }
+        const userName = document.getElementById('bulkAssignUser').selectedOptions[0].text;
+        if (!confirm(`Assign ${ids.length} lead(s) to ${userName}?`)) return;
+
+        const btn = this;
+        btn.disabled = true;
+        btn.querySelector('.bulk-assign-text').style.display = 'none';
+        btn.querySelector('.bulk-assign-spinner').style.display = 'inline-block';
+
+        const fd = new FormData();
+        ids.forEach(id => fd.append('lead_ids', id));
+        fd.append('user_id', userId);
+
+        fetch('{{ url_for("leads_bulk_assign") }}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('❌ ' + (data.error || 'Failed to assign.'));
+                    btn.disabled = false;
+                    btn.querySelector('.bulk-assign-text').style.display = 'inline-block';
+                    btn.querySelector('.bulk-assign-spinner').style.display = 'none';
+                }
+            })
+            .catch(() => {
+                alert('Network error. Please try again.');
+                btn.disabled = false;
+                btn.querySelector('.bulk-assign-text').style.display = 'inline-block';
+                btn.querySelector('.bulk-assign-spinner').style.display = 'none';
+            });
     });
 
     document.getElementById('syncForm').addEventListener('submit', function () {

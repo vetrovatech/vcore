@@ -63,34 +63,12 @@ def _build_processing(q):
 
 def _build_bill_revision(q):
     subject = f"Revised quote for your {BRAND} order — {q.estimate_number or ''}".strip(' —')
-    revised = q.revised_total if q.revised_total is not None else q.total
-    delta = float(revised or 0) - float(q.total or 0)
-    if delta < 0:
-        delta_line = f"That's a reduction of {_fmt_money(abs(delta))} from the original."
-    elif delta > 0:
-        delta_line = f"That's an increase of {_fmt_money(delta)} from the original."
-    else:
-        delta_line = "Totals are unchanged; sharing the updated breakdown."
-
-    items_block = ""
-    if q.items:
-        lines = []
-        for it in q.items:
-            qty = float(it.quantity or 0)
-            rate = float(it.rate or 0)
-            amt = float(it.amount or 0)
-            lines.append(f"  • {it.description} — {qty:g} × {_fmt_money(rate)} = {_fmt_money(amt)}")
-        items_block = "Revised line items:\n" + "\n".join(lines) + "\n\n"
-
+    salutation = f"Hello {q.customer_name}" if q.customer_name else "Hello Sir/Madam"
     body = (
-        f"Hi {q.customer_name},\n\n"
-        f"As per the latest interaction with the team, sharing the revised prices and quote.\n\n"
-        f"{items_block}"
-        f"  Original total: {_fmt_money(q.total)}\n"
-        f"  Revised total:  {_fmt_money(revised)}\n"
-        f"  {delta_line}\n\n"
-        f"The detailed revised estimate is attached as a PDF for your records.\n\n"
-        f"Kindly check and revert in case further changes are required.\n\n"
+        f"{salutation},\n\n"
+        f"As discussed with the team, this is my offer for you.\n\n"
+        f"Please find the attached quotation for your Enclosure.\n\n"
+        f"Kindly review and revert in case any changes are required.\n\n"
         f"— Team {BRAND}"
     )
     return subject, body

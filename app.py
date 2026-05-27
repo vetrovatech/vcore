@@ -3207,6 +3207,63 @@ def lead_delete(id):
     return redirect(url_for('leads_list'))
 
 
+@app.route('/leads/bulk-assign', methods=['POST'])
+@login_required
+def leads_bulk_assign():
+    """Bulk-assign multiple leads to a single user (sets both owner and assigned_to). Admin only."""
+    if not current_user.is_admin():
+        return jsonify({'success': False, 'error': 'Access denied.'}), 403
+
+    from models import Lead, User, LeadHistory
+
+    lead_ids = request.form.getlist('lead_ids')
+    user_id_raw = request.form.get('user_id')
+
+    if not lead_ids:
+        return jsonify({'success': False, 'error': 'No leads selected.'}), 400
+    if not user_id_raw:
+        return jsonify({'success': False, 'error': 'No user selected.'}), 400
+
+    try:
+        lead_ids = [int(x) for x in lead_ids]
+        new_user_id = int(user_id_raw)
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid ids.'}), 400
+
+    new_user = User.query.get(new_user_id)
+    if not new_user or not new_user.is_active:
+        return jsonify({'success': False, 'error': 'User not found or inactive.'}), 400
+
+    leads = Lead.query.filter(Lead.id.in_(lead_ids)).all()
+    updated = 0
+    for lead in leads:
+        changed = False
+
+        if lead.owner_id != new_user_id:
+            old_owner = User.query.get(lead.owner_id).username if lead.owner_id else 'Unassigned'
+            db.session.add(LeadHistory(
+                lead_id=lead.id, user_id=current_user.id, action='field_change',
+                description=f'Owner changed from <strong>{old_owner}</strong> to <strong>{new_user.username}</strong> (bulk assign)'
+            ))
+            lead.owner_id = new_user_id
+            changed = True
+
+        if lead.assigned_to_id != new_user_id:
+            old_assignee = User.query.get(lead.assigned_to_id).username if lead.assigned_to_id else 'Unassigned'
+            db.session.add(LeadHistory(
+                lead_id=lead.id, user_id=current_user.id, action='field_change',
+                description=f'Assigned To changed from <strong>{old_assignee}</strong> to <strong>{new_user.username}</strong> (bulk assign)'
+            ))
+            lead.assigned_to_id = new_user_id
+            changed = True
+
+        if changed:
+            updated += 1
+
+    db.session.commit()
+    return jsonify({'success': True, 'updated': updated, 'total': len(leads)})
+
+
 # ============================================================================
 # INDIAMART INTEGRATION
 # ============================================================================
@@ -3400,6 +3457,21 @@ def _determine_lead_type(c):
     return 'Enquiry'
 
 
+def _parse_fb_created_time(s):
+    """Parse Facebook Graph API created_time (e.g. '2026-05-26T11:32:14+0000') to naive UTC datetime."""
+    if not s:
+        return None
+    from datetime import timezone
+    try:
+        dt = datetime.strptime(s, '%Y-%m-%dT%H:%M:%S%z')
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    except Exception:
+        try:
+            return datetime.strptime(s[:19], '%Y-%m-%dT%H:%M:%S')
+        except Exception:
+            return None
+
+
 def _do_indiamart_sync(owner_id, created_by_id):
     """Core sync logic. Returns (new_count, skipped_count, error_msg)"""
     from models import IndiamartToken, Lead
@@ -3476,6 +3548,7 @@ def _do_indiamart_sync(owner_id, created_by_id):
                 except Exception:
                     return None
 
+            im_added = _parse_im_date(c.get('contacts_add_date'))
             lead = Lead(
                 name=c.get('contacts_name') or None,
                 contact=c.get('contacts_mobile1') or None,
@@ -3491,7 +3564,7 @@ def _do_indiamart_sync(owner_id, created_by_id):
                 is_starred=bool(c.get('is_starred_lead')),
                 last_message=c.get('last_message') or None,
                 unread_count=int(c.get('unread_message_cnt') or 0),
-                indiamart_added_date=_parse_im_date(c.get('contacts_add_date')),
+                indiamart_added_date=im_added,
                 indiamart_last_contact=_parse_im_date(c.get('last_contact_date')),
                 indiamart_notes=c.get('notes_v2') or None,
                 indiamart_labels=', '.join(c.get('label_name') or []) or None,
@@ -3502,6 +3575,7 @@ def _do_indiamart_sync(owner_id, created_by_id):
                 indiamart_id=im_id,
                 owner_id=owner_id,
                 created_by=created_by_id,
+                created_at=im_added or datetime.utcnow(),
             )
             db.session.add(lead)
             new_count += 1
@@ -3690,6 +3764,7 @@ def _do_facebook_sync(created_by_id):
                 # Build notes from form name + any extra fields
                 notes = f'Ad Form: {form_name}' if form_name else None
 
+                fb_created = _parse_fb_created_time(lead_entry.get('created_time'))
                 lead = Lead(
                     name=name,
                     contact=phone,
@@ -3704,6 +3779,7 @@ def _do_facebook_sync(created_by_id):
                     owner_id=None,
                     assigned_to_id=None,
                     created_by=created_by_id,
+                    created_at=fb_created or datetime.utcnow(),
                 )
                 db.session.add(lead)
                 new_count += 1
@@ -3873,12 +3949,19 @@ def facebook_webhook_receive():
             city = fields.get('city') or None
             state = fields.get('state') or None
 
+            fb_created = _parse_fb_created_time(lead_data.get('created_time'))
+            if fb_created is None:
+                # Webhook also delivers a Unix timestamp on `value.created_time`
+                ts = value.get('created_time')
+                if isinstance(ts, (int, float)):
+                    fb_created = datetime.utcfromtimestamp(ts)
             lead = Lead(
                 name=name, contact=phone, email=email, city=city, state=state,
                 notes=f'Webhook · form_id={lead_data.get("form_id", "")}',
                 origin='Facebook', stage='New Lead', lead_type='Enquiry',
                 facebook_lead_id=fb_lead_id, owner_id=None, assigned_to_id=None,
                 created_by=creator_id,
+                created_at=fb_created or datetime.utcnow(),
             )
             db.session.add(lead)
             new_count += 1
@@ -4970,6 +5053,25 @@ def bathqube_quote_action(id, action):
                            quote=quote, action=action,
                            action_label=STAGE_LABELS[action],
                            subject=subject, body=body)
+
+
+@app.route('/quotes/bathqube/<int:id>/pdf', methods=['GET'])
+@login_required
+def bathqube_quote_pdf(id):
+    """Download the current Bathqube quote as a PDF (for sales person to keep a local copy)."""
+    from utils.bathqube_pdf import generate_bathqube_pdf
+    from flask import send_file
+    from io import BytesIO
+
+    quote = BathqubeQuote.query.get_or_404(id)
+    pdf_bytes = generate_bathqube_pdf(quote)
+    filename = f"{quote.estimate_number or ('BQ-' + str(quote.id))}.pdf"
+    return send_file(
+        BytesIO(pdf_bytes),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename,
+    )
 
 
 @app.route('/quotes/bathqube/<int:id>/revise', methods=['GET', 'POST'])

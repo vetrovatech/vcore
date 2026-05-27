@@ -755,7 +755,20 @@ function addB2CItem(data) {
     const particular  = data ? data.particular          : '';
     const rate        = data ? (data.rate_sqper || '')  : '';
     const total       = data ? (data.total      || '')  : '';
-    const displaySize = data ? (data.chargeable_width || data.unit_square || '') : '';
+    // Pick the row's unit from saved data when reloading; otherwise from current mode.
+    const initialUnit = (data && data.unit === 'pcs')
+        ? 'pcs'
+        : (data && data.unit === 'sqft')
+            ? 'sqft'
+            : (b2cRateMode === 'qty' ? 'pcs' : 'sqft');
+    // For qty rows, restore the saved quantity into the Size input;
+    // for sqft rows, restore the chargeable width (or computed unit_square as fallback).
+    const displaySize = data
+        ? (initialUnit === 'pcs'
+            ? (data.quantity || '')
+            : (data.chargeable_width || data.unit_square || ''))
+        : '';
+    const initialQty  = (data && initialUnit === 'pcs') ? (data.quantity || 1) : 1;
     const sizePh      = b2cRateMode === 'qty' ? 'e.g. 5' : 'e.g. 115';
     const existingKey = data ? (data.image_s3_key || '') : '';
     const existingUrl = data ? (data.image_presigned_url || '') : '';
@@ -768,7 +781,7 @@ function addB2CItem(data) {
                       rows="2" placeholder="Product description" required
                       style="resize:vertical; min-height:2.2rem;">${particular}</textarea>
             <input type="hidden" name="items[${idx}][is_group]"  value="false">
-            <input type="hidden" name="items[${idx}][quantity]"  value="1">
+            <input type="hidden" name="items[${idx}][quantity]"  value="${initialQty}">
         </td>
         <td class="text-center align-middle">
             <label class="btn btn-outline-secondary btn-sm py-1 px-2 mb-1 d-block" style="font-size:0.75rem;cursor:pointer;" title="Upload product image">
@@ -785,9 +798,9 @@ function addB2CItem(data) {
             <input type="number" step="0.01" class="form-control form-control-sm b2c-size"
                    value="${displaySize}" placeholder="${sizePh}"
                    oninput="calculateB2CItemTotal(this)">
-            <input type="hidden" class="b2c-cw" name="items[${idx}][chargeable_width]"  value="${displaySize}">
-            <input type="hidden" class="b2c-ch" name="items[${idx}][chargeable_height]" value="${displaySize ? '1' : ''}">
-            <input type="hidden" class="b2c-unit" name="items[${idx}][unit]" value="sqft">
+            <input type="hidden" class="b2c-cw" name="items[${idx}][chargeable_width]"  value="${initialUnit === 'pcs' ? '' : displaySize}">
+            <input type="hidden" class="b2c-ch" name="items[${idx}][chargeable_height]" value="${initialUnit === 'pcs' ? '' : (displaySize ? '1' : '')}">
+            <input type="hidden" class="b2c-unit" name="items[${idx}][unit]" value="${initialUnit}">
         </td>
         <td>
             <input type="number" step="0.01" class="form-control form-control-sm b2c-rate"
