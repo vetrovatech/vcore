@@ -4054,7 +4054,7 @@ def _next_pi_serial():
 @app.route('/tally')
 @login_required
 def tally_index():
-    from models import Quote, PurchaseInvoice, Supplier, User as UserModel
+    from models import Quote, PurchaseInvoice, Supplier, User as UserModel, BathqubeQuote
 
     date_from       = request.args.get('date_from', '')
     date_to         = request.args.get('date_to', '')
@@ -4063,6 +4063,7 @@ def tally_index():
     supplier_id     = request.args.get('supplier_id', '')
     delivery_status = request.args.get('delivery_status', '')
 
+    # ── Regular Quote rows (status='Accepted') ────────────────────────────────
     q = Quote.query.filter(Quote.status == 'Accepted')
     if date_from:
         q = q.filter(Quote.quote_date >= date_from)
@@ -4077,25 +4078,59 @@ def tally_index():
 
     quotes = q.order_by(Quote.quote_date.desc()).all()
 
-    rows = []
-    for quote in quotes:
-        pis = PurchaseInvoice.query.filter_by(quote_id=quote.id).all()
+    def _row_from(quote, pis, source, sort_date):
+        """Build a uniform tally row dict for either source. The template only
+        reads normalised keys, not the underlying type — so bathqube and
+        regular quotes render with the same column structure."""
+        sale_value = float(getattr(quote, 'total', 0) or 0)
+        # Bathqube quotes use revised_total when set; fall back to total.
+        if source == 'bathqube' and getattr(quote, 'revised_total', None) is not None:
+            sale_value = float(quote.revised_total)
+        pi_amount   = sum(float(pi.invoice_amount or 0) for pi in pis)
+        pi_paid     = sum(float(pi.amount_paid    or 0) for pi in pis)
+        misc        = float(quote.misc_purchases or 0)
+        total_cost  = pi_amount + misc
+        profit      = sale_value - total_cost
+        cash_recv   = float(quote.cash_received   or 0)
+        online_recv = float(quote.amount_received or 0)
+        total_recv  = cash_recv + online_recv
 
-        if supplier_id and not any(str(pi.supplier_id) == supplier_id for pi in pis):
-            continue
+        # Per-source display fields. Regular Quote has quote_number, quote_date,
+        # creator, customer_city, customer_phone, client_payment_status. Bathqube
+        # uses different field names — normalise them here.
+        if source == 'bathqube':
+            display = {
+                'display_number':         quote.estimate_number or f'BQ-{quote.id}',
+                'display_date':           quote.created_at.date(),
+                'creator_name':           '—',                   # bathqube has no salesperson
+                'creator_initials':       'BQ',
+                'customer_name':          quote.customer_name,
+                'customer_city':          quote.pincode or '',
+                'customer_phone':         quote.phone,
+                'client_payment_status':  ('Paid' if total_recv >= sale_value > 0
+                                            else 'Partial' if total_recv > 0
+                                            else 'Unpaid'),
+                'view_url':               url_for('bathqube_quote_view', id=quote.id),
+                'tally_update_url':       url_for('bathqube_quote_tally_update', id=quote.id),
+            }
+        else:
+            display = {
+                'display_number':         quote.quote_number,
+                'display_date':           quote.quote_date,
+                'creator_name':           quote.creator.username if quote.creator else '—',
+                'creator_initials':       (quote.creator.username[:2].upper() if quote.creator else '?'),
+                'customer_name':          quote.customer_name,
+                'customer_city':          getattr(quote, 'customer_city', '') or '',
+                'customer_phone':         getattr(quote, 'customer_phone', '') or '',
+                'client_payment_status':  quote.client_payment_status,
+                'view_url':               url_for('quote_view', id=quote.id),
+                'tally_update_url':       url_for('quote_tally_update', id=quote.id),
+            }
 
-        sale_value    = float(quote.total or 0)
-        pi_amount     = sum(float(pi.invoice_amount or 0) for pi in pis)
-        pi_paid       = sum(float(pi.amount_paid    or 0) for pi in pis)
-        misc          = float(quote.misc_purchases or 0)
-        total_cost    = pi_amount + misc
-        profit        = sale_value - total_cost
-        cash_recv     = float(quote.cash_received   or 0)
-        online_recv   = float(quote.amount_received or 0)
-        total_recv    = cash_recv + online_recv
-
-        rows.append({
+        return {
             'quote':             quote,
+            'source':            source,                       # 'regular' | 'bathqube'
+            'sort_date':         sort_date,
             'purchase_invoices': pis,
             'sale_amount':       sale_value,
             'pi_amount':         pi_amount,
@@ -4109,7 +4144,40 @@ def tally_index():
             'online_received':   online_recv,
             'amount_received':   total_recv,
             'client_balance':    sale_value - total_recv,
-        })
+            'delivery_status':   quote.delivery_status,
+            **display,
+        }
+
+    rows = []
+    for quote in quotes:
+        pis = PurchaseInvoice.query.filter_by(quote_id=quote.id).all()
+        if supplier_id and not any(str(pi.supplier_id) == supplier_id for pi in pis):
+            continue
+        rows.append(_row_from(quote, pis, 'regular', quote.quote_date))
+
+    # ── Bathqube quote rows (stage='closed_won') ──────────────────────────────
+    bq = BathqubeQuote.query.filter(BathqubeQuote.stage == 'closed_won')
+    if date_from:
+        bq = bq.filter(BathqubeQuote.created_at >= date_from)
+    if date_to:
+        # add a day so end-of-day is inclusive
+        bq = bq.filter(BathqubeQuote.created_at <= date_to + ' 23:59:59')
+    if client_name:
+        bq = bq.filter(BathqubeQuote.customer_name.ilike(f'%{client_name}%'))
+    if delivery_status:
+        bq = bq.filter(BathqubeQuote.delivery_status == delivery_status)
+    # salesman_id intentionally not applied to bathqube — these come from the
+    # public configurator, no created_by salesperson.
+
+    bquotes = bq.order_by(BathqubeQuote.created_at.desc()).all()
+    for quote in bquotes:
+        pis = PurchaseInvoice.query.filter_by(bathqube_quote_id=quote.id).all()
+        if supplier_id and not any(str(pi.supplier_id) == supplier_id for pi in pis):
+            continue
+        rows.append(_row_from(quote, pis, 'bathqube', quote.created_at.date()))
+
+    # Sort the combined list by date desc so newest are on top regardless of source.
+    rows.sort(key=lambda r: r['sort_date'], reverse=True)
 
     totals = {
         'sales':             sum(r['sale_amount']     for r in rows),
@@ -4159,6 +4227,52 @@ def quote_tally_update(id):
     return redirect(url_for('quote_view', id=id))
 
 
+@app.route('/quotes/bathqube/<int:id>/delete', methods=['POST'])
+@login_required
+@admin_required
+def bathqube_quote_delete(id):
+    """Admin-only delete. Cascade-deletes items/events/revisions automatically
+    (cascade on the relationship). Blocks with a clear message if there are
+    linked PurchaseInvoices — those are financial records and shouldn't be
+    silently destroyed with the quote."""
+    quote = BathqubeQuote.query.get_or_404(id)
+
+    # Refuse if PIs are linked — admin must detach/delete those first.
+    pi_count = quote.purchase_invoices.count()
+    if pi_count:
+        flash(f'Cannot delete: {pi_count} purchase invoice(s) still linked to this quote. '
+              f'Delete or unlink them first.', 'warning')
+        return redirect(url_for('bathqube_quote_view', id=id))
+
+    label = quote.estimate_number or f'BQ-{quote.id}'
+    db.session.delete(quote)
+    db.session.commit()
+    flash(f'Bathqube quote {label} deleted.', 'success')
+    return redirect(url_for('bathqube_quotes_list'))
+
+
+@app.route('/quotes/bathqube/<int:id>/tally-update', methods=['POST'])
+@login_required
+def bathqube_quote_tally_update(id):
+    """Mirror of quote_tally_update for bathqube quotes — same form fields,
+    same semantics, just a different table."""
+    quote = BathqubeQuote.query.get_or_404(id)
+    quote.delivery_status = request.form.get('delivery_status', quote.delivery_status)
+    online_recv = request.form.get('amount_received', '').strip()
+    cash_recv   = request.form.get('cash_received',   '').strip()
+    misc        = request.form.get('misc_purchases',  '').strip()
+    if online_recv:
+        quote.amount_received = float(online_recv)
+    if cash_recv:
+        quote.cash_received = float(cash_recv)
+    if misc:
+        quote.misc_purchases = float(misc)
+    db.session.commit()
+    flash('Tally info updated.', 'success')
+    # Tally update is usually triggered from the Tally page, so return there.
+    return redirect(url_for('tally_index'))
+
+
 @app.route('/purchase-invoices')
 @login_required
 def purchase_invoices_list():
@@ -4199,10 +4313,14 @@ def purchase_invoice_new():
     from models import Quote
     suppliers      = Supplier.query.filter_by(is_active=True).order_by(Supplier.name).all()
     accepted_quotes = Quote.query.filter_by(status='Accepted').order_by(Quote.quote_date.desc()).all()
+    closed_won_bathqube = BathqubeQuote.query.filter_by(stage='closed_won').order_by(BathqubeQuote.created_at.desc()).all()
 
     if request.method == 'POST':
         supplier_id    = request.form.get('supplier_id', '').strip()
-        quote_id       = request.form.get('quote_id', '').strip()
+        # linked_quote is "regular:<id>" or "bathqube:<id>". Old "quote_id"
+        # field is kept for backwards-compat with any external callers.
+        linked_quote   = request.form.get('linked_quote', '').strip()
+        legacy_quote_id = request.form.get('quote_id', '').strip()
         bill_number    = request.form.get('bill_number', '').strip()
         invoice_type   = request.form.get('invoice_type', 'GST')
         invoice_amount = request.form.get('invoice_amount', '').strip()
@@ -4210,10 +4328,21 @@ def purchase_invoice_new():
         notes          = request.form.get('notes', '').strip()
         bill_image     = request.files.get('bill_image')
 
+        # Resolve linked quote into (quote_id, bathqube_quote_id)
+        quote_id_val = None
+        bathqube_quote_id_val = None
+        if linked_quote:
+            if linked_quote.startswith('bathqube:'):
+                bathqube_quote_id_val = int(linked_quote.split(':', 1)[1])
+            elif linked_quote.startswith('regular:'):
+                quote_id_val = int(linked_quote.split(':', 1)[1])
+        elif legacy_quote_id:
+            quote_id_val = int(legacy_quote_id)
+
         errors = []
         if not supplier_id:
             errors.append('Vendor is required.')
-        if not quote_id:
+        if quote_id_val is None and bathqube_quote_id_val is None:
             errors.append('Linked Quotation is required.')
         if not bill_number:
             errors.append('Bill Number is required.')
@@ -4224,7 +4353,8 @@ def purchase_invoice_new():
             for e in errors:
                 flash(e, 'danger')
             return render_template('purchase_invoices/form.html',
-                                   suppliers=suppliers, accepted_quotes=accepted_quotes, invoice=None)
+                                   suppliers=suppliers, accepted_quotes=accepted_quotes,
+                                   closed_won_bathqube=closed_won_bathqube, invoice=None)
 
         bill_image_url = None
         try:
@@ -4247,16 +4377,17 @@ def purchase_invoice_new():
             flash(f'Image upload failed: {e}', 'warning')
 
         invoice = PurchaseInvoice(
-            serial_number  = _next_pi_serial(),
-            supplier_id    = int(supplier_id),
-            quote_id       = int(quote_id),
-            bill_number    = bill_number,
-            bill_image_url = bill_image_url,
-            invoice_type   = invoice_type,
-            invoice_amount = float(invoice_amount) if invoice_amount else None,
-            amount_paid    = float(amount_paid) if amount_paid else 0.0,
-            notes          = notes or None,
-            created_by     = current_user.id,
+            serial_number     = _next_pi_serial(),
+            supplier_id       = int(supplier_id),
+            quote_id          = quote_id_val,
+            bathqube_quote_id = bathqube_quote_id_val,
+            bill_number       = bill_number,
+            bill_image_url    = bill_image_url,
+            invoice_type      = invoice_type,
+            invoice_amount    = float(invoice_amount) if invoice_amount else None,
+            amount_paid       = float(amount_paid) if amount_paid else 0.0,
+            notes             = notes or None,
+            created_by        = current_user.id,
         )
         db.session.add(invoice)
         db.session.commit()
@@ -4264,7 +4395,8 @@ def purchase_invoice_new():
         return redirect(url_for('purchase_invoices_list'))
 
     return render_template('purchase_invoices/form.html',
-                           suppliers=suppliers, accepted_quotes=accepted_quotes, invoice=None)
+                           suppliers=suppliers, accepted_quotes=accepted_quotes,
+                           closed_won_bathqube=closed_won_bathqube, invoice=None)
 
 
 @app.route('/purchase-invoices/<int:id>')
@@ -4878,9 +5010,12 @@ def _bathqube_recompute_totals(quote):
     quote.sgst = sgst
     quote.revised_total = round(taxable + cgst + sgst, 2)
 
-# Actions ops can fire at any time, in any order. Each maps to a message template
-# in bathqube_messages.py. Keys are URL-safe slugs.
-BATHQUBE_ACTIONS = ('order_confirmation', 'processing', 'order_ready', 'thank_you')
+# Email-sending stages — go through bathqube_quote_action (subject/body editor + send).
+# Revise has its own dedicated /revise editor (richer UI with item editing).
+BATHQUBE_ACTIONS = ('awaiting_payment',)
+
+# No-email stage transitions — single-click move via bathqube_quote_set_stage.
+BATHQUBE_STAGE_TRANSITIONS = ('in_pipeline', 'closed_won', 'junk', 'rejected')
 
 
 def _bathqube_verify_signature(raw_body: bytes, header_sig: str) -> bool:
@@ -4953,8 +5088,10 @@ def bathqube_ingest():
 @app.route('/quotes/bathqube')
 @login_required
 def bathqube_quotes_list():
+    from models import BATHQUBE_ACTIVE_STAGES
     search = (request.args.get('search') or '').strip()
     stage = request.args.get('stage') or ''
+    include_archived = request.args.get('archived') == '1'
     q = BathqubeQuote.query
     if search:
         like = f'%{search}%'
@@ -4965,10 +5102,15 @@ def bathqube_quotes_list():
             | (BathqubeQuote.email.ilike(like))
         )
     if stage:
+        # Explicit stage filter wins over the archived/active default.
         q = q.filter_by(stage=stage)
+    elif not include_archived:
+        # Default view: hide junk + rejected.
+        q = q.filter(BathqubeQuote.stage.in_(BATHQUBE_ACTIVE_STAGES))
     quotes = q.order_by(BathqubeQuote.created_at.desc()).all()
     return render_template('quotes/bathqube_list.html',
                            quotes=quotes, search=search, stage=stage,
+                           include_archived=include_archived,
                            stage_labels=STAGE_LABELS, stages=BATHQUBE_STAGES)
 
 
@@ -5017,7 +5159,42 @@ def bathqube_quote_view(id):
     quote = BathqubeQuote.query.get_or_404(id)
     return render_template('quotes/bathqube_view.html',
                            quote=quote, stage_labels=STAGE_LABELS,
-                           actions=BATHQUBE_ACTIONS)
+                           actions=BATHQUBE_ACTIONS,
+                           stage_transitions=BATHQUBE_STAGE_TRANSITIONS)
+
+
+@app.route('/quotes/bathqube/<int:id>/set-stage/<stage>', methods=['POST'])
+@login_required
+def bathqube_quote_set_stage(id, stage):
+    """No-email stage transition. For pipeline markers (in_pipeline, awaiting_payment,
+    closed_won) and dispositions (junk, rejected). Logs an audit event but doesn't
+    touch email."""
+    if stage not in BATHQUBE_STAGE_TRANSITIONS:
+        flash('Unknown stage.', 'warning')
+        return redirect(url_for('bathqube_quote_view', id=id))
+
+    quote = BathqubeQuote.query.get_or_404(id)
+    from_stage = quote.stage
+    if from_stage == stage:
+        flash(f'Already in {STAGE_LABELS.get(stage, stage)}.', 'info')
+        return redirect(url_for('bathqube_quote_view', id=quote.id))
+
+    quote.stage = stage
+    db.session.add(BathqubeStatusEvent(
+        quote_id=quote.id, from_stage=from_stage, to_stage=stage,
+        channel='internal', subject=None, message=None,
+        triggered_by=current_user.id, send_status='skipped',
+        send_error='no email — internal pipeline transition',
+    ))
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Could not save: {e}', 'danger')
+        return redirect(url_for('bathqube_quote_view', id=quote.id))
+
+    flash(f'Moved to {STAGE_LABELS.get(stage, stage)}.', 'success')
+    return redirect(url_for('bathqube_quote_view', id=quote.id))
 
 
 @app.route('/quotes/bathqube/<int:id>/action/<action>', methods=['GET', 'POST'])
@@ -5249,7 +5426,7 @@ def bathqube_quote_revise(id):
                 attachments = None
                 flash(f'PDF generation failed, sending without attachment: {e}', 'warning')
             event = _bathqube_send_and_log(
-                quote, action='bill_revision',
+                quote, action='revision',
                 subject=subject, message=message, attachments=attachments,
             )
 
@@ -5271,7 +5448,7 @@ def bathqube_quote_revise(id):
         return redirect(url_for('bathqube_quote_view', id=quote.id))
 
     # GET — render editor
-    subject, body = render_stage_message(quote, 'bill_revision')
+    subject, body = render_stage_message(quote, 'revision')
 
     # Enclosures: normalised from current config_data (handles legacy flat shape)
     enclosures = _bathqube_enclosures_from_cfg(quote.config or {})

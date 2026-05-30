@@ -994,6 +994,9 @@ class PurchaseInvoice(db.Model):
     supplier_id = db.Column(db.Integer, db.ForeignKey('suppliers.id'), nullable=False, index=True)
     project_id  = db.Column(db.Integer, db.ForeignKey('projects.id'),  nullable=True,  index=True)  # legacy, nullable
     quote_id    = db.Column(db.Integer, db.ForeignKey('quotes.id'),    nullable=True,  index=True)
+    # Allow a PI to link to either a regular Quote OR a BathqubeQuote.
+    # Exactly one of (quote_id, bathqube_quote_id) should be set in practice.
+    bathqube_quote_id = db.Column(db.Integer, db.ForeignKey('bathqube_quotes.id'), nullable=True, index=True)
 
     # Bill details
     bill_number    = db.Column(db.String(100), nullable=False)
@@ -1012,6 +1015,7 @@ class PurchaseInvoice(db.Model):
     supplier = db.relationship('Supplier', backref=db.backref('purchase_invoices', lazy='dynamic'))
     project  = db.relationship('Project',  backref=db.backref('purchase_invoices', lazy='dynamic'))
     creator  = db.relationship('User',     foreign_keys=[created_by])
+    bathqube_quote = db.relationship('BathqubeQuote', backref=db.backref('purchase_invoices', lazy='dynamic'))
 
     @property
     def vendor_payment_status(self):
@@ -1207,13 +1211,30 @@ class Reminder(db.Model):
 # ============================================================================
 
 BATHQUBE_STAGES = (
-    'new',                   # webhook just landed, not yet acknowledged
-    'order_confirmation',    # (a) Thank you for shopping
-    'processing',            # (b) — message TBD
-    'bill_revision',         # (c) Revised prices shared
-    'order_ready',           # (d) Ready for dispatch, balance payable
-    'thank_you',             # (e) Final thank-you + review links
+    'quote_generated',       # default — quote just landed via webhook
+    'in_pipeline',           # actively working with the customer
+    'revision',              # bill revised + revised PDF emailed to customer
+    'awaiting_payment',      # order ready / waiting for the customer to pay
+    'closed_won',            # deal closed successfully
+    'junk',                  # disposition — not a real lead
+    'rejected',              # disposition — lost / declined
 )
+
+# Stages that are "active" (shown by default in the list view). Junk + rejected
+# are disposition states that get filtered out unless the user explicitly opts in.
+BATHQUBE_ACTIVE_STAGES = ('quote_generated', 'in_pipeline', 'revision', 'awaiting_payment', 'closed_won')
+
+# Legacy → new stage map for the one-shot data migration. Keep this around in
+# case anyone needs to re-run the migration against new data that may have
+# slipped in with an old stage value.
+BATHQUBE_LEGACY_STAGE_MAP = {
+    'new':                'quote_generated',
+    'order_confirmation': 'in_pipeline',
+    'processing':         'in_pipeline',
+    'bill_revision':      'revision',
+    'order_ready':        'awaiting_payment',
+    'thank_you':          'closed_won',
+}
 
 
 class BathqubeQuote(db.Model):
@@ -1254,6 +1275,11 @@ class BathqubeQuote(db.Model):
     total = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     revised_total = db.Column(db.Numeric(12, 2), nullable=True)
     amount_received = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    # Tally-only fields (parallel to Quote — same semantics, same dashboard).
+    # Populated/edited from /tally once stage is 'closed_won'.
+    cash_received    = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    misc_purchases   = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    delivery_status  = db.Column(db.String(20), default='Pending', nullable=False)
     gst_percentage = db.Column(db.Numeric(5, 2), default=18, nullable=False)
     has_revision = db.Column(db.Boolean, default=False, nullable=False)
     # Discount as % of pre-tax subtotal — applied BEFORE GST.
@@ -1265,7 +1291,7 @@ class BathqubeQuote(db.Model):
     revision_count = db.Column(db.Integer, default=0, nullable=False)
 
     # Lifecycle
-    stage = db.Column(db.String(32), nullable=False, default='new', index=True)
+    stage = db.Column(db.String(32), nullable=False, default='quote_generated', index=True)
     notes = db.Column(db.Text, nullable=True)
 
     # Timestamps

@@ -20,9 +20,14 @@ BRAND = "Bathqube"
 # ---- TODO: replace these constants with real values before going live ----
 BANK_DETAILS_TEXT = os.getenv(
     'BATHQUBE_BANK_DETAILS',
-    "Account Name: Bathqube\nBank: TBD\nA/C: TBD\nIFSC: TBD",
+    "Account Name: Vetrova Tech Services Private Limited\n"
+    "Bank Name: IDFC First Bank\n"
+    "Account Number: 10249972220\n"
+    "IFSC Code: IDFB0080158\n"
+    "Account Type: Current\n"
+    "UPI ID: 8550011196@ybl",
 )
-PAYMENT_QR_URL = os.getenv('BATHQUBE_QR_URL', 'https://bathqube.com/pay/qr.png')
+PAYMENT_QR_URL = os.getenv('BATHQUBE_QR_URL', 'https://bathqube.com/upi-qr.jpeg')
 GOOGLE_REVIEW_URL = os.getenv('BATHQUBE_GOOGLE_URL', 'https://g.page/bathqube/review')
 INSTAGRAM_URL = os.getenv('BATHQUBE_INSTAGRAM_URL', 'https://instagram.com/bathqube')
 INDIAMART_URL = os.getenv('BATHQUBE_INDIAMART_URL', 'https://indiamart.com/bathqube')
@@ -103,6 +108,11 @@ def _build_thank_you(q):
 
 
 _BUILDERS = {
+    # Active email-sending stages in the new pipeline.
+    'revision':           _build_bill_revision,       # via dedicated /revise editor
+    'awaiting_payment':   _build_order_ready,         # balance + QR + bank details
+    # Legacy aliases preserved so historical events that reference old stage
+    # names can still render their template if anyone re-opens them.
     'order_confirmation': _build_order_confirmation,
     'processing':         _build_processing,
     'bill_revision':      _build_bill_revision,
@@ -111,6 +121,15 @@ _BUILDERS = {
 }
 
 STAGE_LABELS = {
+    'quote_generated':    'Quote Generated',
+    'in_pipeline':        'In Pipeline',
+    'revision':           'Revision',
+    'awaiting_payment':   'Awaiting Payment',
+    'closed_won':         'Closed Won',
+    'junk':               'Junk',
+    'rejected':           'Rejected',
+    # Legacy labels kept so historical bathqube_status_events with old stage
+    # codes still render a readable label until they're migrated.
     'new':                'New',
     'order_confirmation': 'Order Confirmation',
     'processing':         'Processing',
@@ -129,12 +148,13 @@ def render_stage_message(quote, stage):
 
 
 def next_stage(current):
-    """Return the next stage in the lifecycle, or None if at the end."""
-    order = ['new', 'order_confirmation', 'processing', 'bill_revision', 'order_ready', 'thank_you']
+    """Return the next stage in the active pipeline, or None if at the end.
+    Junk and rejected are disposition states with no successor."""
+    order = ['quote_generated', 'in_pipeline', 'revision', 'awaiting_payment', 'closed_won']
     try:
         i = order.index(current)
     except ValueError:
-        return 'order_confirmation'
+        return 'in_pipeline'
     if i + 1 >= len(order):
         return None
     return order[i + 1]

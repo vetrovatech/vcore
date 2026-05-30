@@ -10,40 +10,39 @@
         </h3>
         <span class="badge bg-info text-dark">Current stage: {{ stage_labels.get(quote.stage, quote.stage) }}</span>
     </div>
-    <a href="{{ url_for('bathqube_quotes_list') }}" class="btn btn-sm btn-outline-secondary">
-        <i class="bi bi-arrow-left"></i> Back to list
-    </a>
+    <div class="d-flex gap-2">
+        {% if current_user.is_admin() %}
+        <form method="POST" action="{{ url_for('bathqube_quote_delete', id=quote.id) }}"
+              onsubmit="return confirm('Delete quote {{ quote.estimate_number or ('BQ-' ~ quote.id) }} ({{ quote.customer_name }})?\n\nThis permanently removes the quote, all revisions, all line items, and the audit trail. Cannot be undone.');">
+            <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete this quote (admin only)">
+                <i class="bi bi-trash"></i> Delete
+            </button>
+        </form>
+        {% endif %}
+        <a href="{{ url_for('bathqube_quotes_list') }}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to list
+        </a>
+    </div>
 </div>
 
 <div class="row">
     <div class="col-md-7">
         <!-- ACTIONS panel -->
         <div class="card mb-3 border-primary">
-            <div class="card-header bg-primary text-white">
-                <strong><i class="bi bi-send"></i> Actions</strong>
-                <span class="small ms-2">Fire any of these any time — no fixed order.</span>
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <div>
+                    <strong><i class="bi bi-send"></i> Actions</strong>
+                    <span class="small ms-2">Current stage: <strong>{{ stage_labels.get(quote.stage, quote.stage) }}</strong></span>
+                </div>
             </div>
             <div class="card-body">
                 <div class="row g-2">
-                    <div class="col-md-6">
-                        <a href="{{ url_for('bathqube_quote_action', id=quote.id, action='order_confirmation') }}"
-                           class="btn btn-outline-primary w-100 text-start">
-                            <i class="bi bi-bag-check"></i> <strong>Send Order Confirmation</strong>
-                            <div class="small text-muted">"Thank you for shopping" message.</div>
-                        </a>
-                    </div>
-                    <div class="col-md-6">
-                        <a href="{{ url_for('bathqube_quote_action', id=quote.id, action='processing') }}"
-                           class="btn btn-outline-primary w-100 text-start">
-                            <i class="bi bi-gear"></i> <strong>Send Processing Update</strong>
-                            <div class="small text-muted">"Your order is in production."</div>
-                        </a>
-                    </div>
+                    <!-- Revise (only stage transition that sends a customer email) -->
                     <div class="col-md-12">
                         <a href="{{ url_for('bathqube_quote_revise', id=quote.id) }}"
                            class="btn btn-warning w-100 text-start">
                             <i class="bi bi-pencil-square"></i> <strong>Revise Bill &amp; Send Updated Estimate</strong>
-                            <div class="small">Edit prices, then email the revised quote with PDF attached.</div>
+                            <div class="small">Edit prices, then email the revised quote with PDF attached. Moves quote to <strong>Revision</strong>.</div>
                         </a>
                     </div>
                     <div class="col-md-12">
@@ -53,19 +52,72 @@
                             <div class="small text-muted">Save the current quotation PDF to your own computer.</div>
                         </a>
                     </div>
+
+                    <!-- Pipeline stage transitions — no customer email -->
                     <div class="col-md-6">
-                        <a href="{{ url_for('bathqube_quote_action', id=quote.id, action='order_ready') }}"
-                           class="btn btn-outline-success w-100 text-start">
-                            <i class="bi bi-truck"></i> <strong>Send Order Ready</strong>
-                            <div class="small text-muted">Balance payable + QR + bank details.</div>
-                        </a>
+                        <form method="POST" action="{{ url_for('bathqube_quote_set_stage', id=quote.id, stage='in_pipeline') }}">
+                            <button type="submit" class="btn btn-outline-primary w-100 text-start"
+                                    {% if quote.stage == 'in_pipeline' %}disabled{% endif %}>
+                                <i class="bi bi-arrow-right-circle"></i> <strong>Move to In Pipeline</strong>
+                                <div class="small text-muted">Actively working with this customer.</div>
+                            </button>
+                        </form>
                     </div>
                     <div class="col-md-6">
-                        <a href="{{ url_for('bathqube_quote_action', id=quote.id, action='thank_you') }}"
-                           class="btn btn-outline-success w-100 text-start">
-                            <i class="bi bi-star"></i> <strong>Send Thank You</strong>
-                            <div class="small text-muted">Review links: Google / Instagram / IndiaMart.</div>
+                        <a href="{{ url_for('bathqube_quote_action', id=quote.id, action='awaiting_payment') }}"
+                           class="btn btn-outline-success w-100 text-start
+                                  {% if quote.stage == 'awaiting_payment' %}disabled{% endif %}">
+                            <i class="bi bi-cash-coin"></i> <strong>Move to Awaiting Payment</strong>
+                            <div class="small text-muted">Emails the balance + QR + bank details to customer.</div>
                         </a>
+                    </div>
+                    <div class="col-md-12">
+                        <form method="POST" action="{{ url_for('bathqube_quote_set_stage', id=quote.id, stage='closed_won') }}">
+                            <button type="submit" class="btn btn-success w-100 text-start"
+                                    {% if quote.stage == 'closed_won' %}disabled{% endif %}>
+                                <i class="bi bi-trophy"></i> <strong>Mark Closed Won</strong>
+                                <div class="small">Deal closed successfully. Quote appears in Tally for purchase tracking.</div>
+                            </button>
+                        </form>
+                    </div>
+                    {% if quote.stage == 'closed_won' %}
+                    <div class="col-md-12">
+                        <a href="{{ url_for('tally_index') }}" class="btn btn-outline-dark w-100 text-start">
+                            <i class="bi bi-calculator"></i> <strong>View in Tally</strong>
+                            <div class="small text-muted">Track delivery, supplier costs, payments, and profit.</div>
+                        </a>
+                    </div>
+                    {% endif %}
+
+                    <!-- Dispositions — collapsible -->
+                    <div class="col-md-12 mt-2">
+                        <a class="small text-muted" data-bs-toggle="collapse" href="#dispositionActions" role="button">
+                            <i class="bi bi-three-dots"></i> More actions (Junk / Rejected)
+                        </a>
+                        <div class="collapse mt-2" id="dispositionActions">
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <form method="POST" action="{{ url_for('bathqube_quote_set_stage', id=quote.id, stage='junk') }}"
+                                          onsubmit="return confirm('Mark this quote as Junk?');">
+                                        <button type="submit" class="btn btn-outline-secondary w-100 text-start"
+                                                {% if quote.stage == 'junk' %}disabled{% endif %}>
+                                            <i class="bi bi-trash"></i> <strong>Mark Junk</strong>
+                                            <div class="small text-muted">Hidden from default list view.</div>
+                                        </button>
+                                    </form>
+                                </div>
+                                <div class="col-md-6">
+                                    <form method="POST" action="{{ url_for('bathqube_quote_set_stage', id=quote.id, stage='rejected') }}"
+                                          onsubmit="return confirm('Mark this quote as Rejected?');">
+                                        <button type="submit" class="btn btn-outline-danger w-100 text-start"
+                                                {% if quote.stage == 'rejected' %}disabled{% endif %}>
+                                            <i class="bi bi-x-circle"></i> <strong>Mark Rejected</strong>
+                                            <div class="small text-muted">Lost / declined. Hidden by default.</div>
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

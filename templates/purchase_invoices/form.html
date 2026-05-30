@@ -76,21 +76,36 @@
                     </div>
                 </div>
 
-                <!-- Linked Quotation (replaces Project) -->
+                <!-- Linked Quotation (regular Accepted OR bathqube Closed Won) -->
                 <div class="col-md-6">
                     <label class="form-label">Linked Quotation <span class="required-star">*</span></label>
-                    <select name="quote_id" class="form-select" required>
-                        <option value="">— Select Accepted Quotation —</option>
-                        {% for q in accepted_quotes %}
-                        <option value="{{ q.id }}"
-                            {% if invoice and invoice.quote_id == q.id %}selected{% endif %}>
-                            {{ q.quote_number }} — {{ q.customer_name }}
-                            {% if q.customer_city %}({{ q.customer_city }}){% endif %}
-                            · ₹{{ "{:,.0f}".format(q.total) }}
-                        </option>
-                        {% endfor %}
+                    <select name="linked_quote" class="form-select" required>
+                        <option value="">— Select Quotation —</option>
+                        {% if accepted_quotes %}
+                        <optgroup label="Regular quotes (Accepted)">
+                            {% for q in accepted_quotes %}
+                            <option value="regular:{{ q.id }}"
+                                {% if invoice and invoice.quote_id == q.id %}selected{% endif %}>
+                                {{ q.quote_number }} — {{ q.customer_name }}
+                                {% if q.customer_city %}({{ q.customer_city }}){% endif %}
+                                · ₹{{ "{:,.0f}".format(q.total) }}
+                            </option>
+                            {% endfor %}
+                        </optgroup>
+                        {% endif %}
+                        {% if closed_won_bathqube %}
+                        <optgroup label="Bathqube quotes (Closed Won)">
+                            {% for q in closed_won_bathqube %}
+                            <option value="bathqube:{{ q.id }}"
+                                {% if invoice and invoice.bathqube_quote_id == q.id %}selected{% endif %}>
+                                {{ q.estimate_number or ('BQ-' ~ q.id) }} — {{ q.customer_name }}
+                                · ₹{{ "{:,.0f}".format(q.revised_total or q.total) }}
+                            </option>
+                            {% endfor %}
+                        </optgroup>
+                        {% endif %}
                     </select>
-                    <div class="form-text">Only Accepted quotations are shown.</div>
+                    <div class="form-text">Accepted regular quotes + Closed Won bathqube quotes are shown.</div>
                 </div>
 
                 <!-- Bill Number -->

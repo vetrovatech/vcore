@@ -89,6 +89,17 @@
                         </a>
                     </span>
                 </div>
+                {% elif invoice.bathqube_quote %}
+                <div class="detail-row">
+                    <span class="detail-label">Linked Quotation</span>
+                    <span class="detail-value">
+                        <a href="{{ url_for('bathqube_quote_view', id=invoice.bathqube_quote.id) }}" target="_blank">
+                            {{ invoice.bathqube_quote.estimate_number or ('BQ-' ~ invoice.bathqube_quote.id) }}
+                            — {{ invoice.bathqube_quote.customer_name }}
+                            <span class="badge bg-info text-dark ms-1" style="font-size:0.6rem;">Bathqube</span>
+                        </a>
+                    </span>
+                </div>
                 {% elif invoice.project %}
                 <div class="detail-row">
                     <span class="detail-label">Project</span>

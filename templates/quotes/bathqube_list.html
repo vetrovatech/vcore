@@ -22,11 +22,20 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-5">
+            <div class="col-md-5 d-flex align-items-center gap-2 flex-wrap">
                 <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
                 <a href="{{ url_for('bathqube_quotes_list') }}" class="btn btn-secondary">
                     <i class="bi bi-x-circle"></i> Clear
                 </a>
+                <div class="form-check ms-2">
+                    <input class="form-check-input" type="checkbox" id="archivedToggle"
+                           name="archived" value="1"
+                           {% if include_archived %}checked{% endif %}
+                           onchange="this.form.submit()">
+                    <label class="form-check-label small text-muted" for="archivedToggle">
+                        Include Junk &amp; Rejected
+                    </label>
+                </div>
             </div>
         </form>
     </div>
@@ -57,10 +66,19 @@
                         <td>{{ q.phone }}</td>
                         <td>₹{{ '{:,.0f}'.format(q.revised_total or q.total or 0) }}</td>
                         <td><span class="badge bg-info text-dark">{{ stage_labels.get(q.stage, q.stage) }}</span></td>
-                        <td>
+                        <td class="d-flex gap-1">
                             <a href="{{ url_for('bathqube_quote_view', id=q.id) }}" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-eye"></i> View
                             </a>
+                            {% if current_user.is_admin() %}
+                            <form method="POST" action="{{ url_for('bathqube_quote_delete', id=q.id) }}"
+                                  onsubmit="return confirm('Delete quote {{ q.estimate_number or ('BQ-' ~ q.id) }} ({{ q.customer_name }})? This cannot be undone.');"
+                                  style="display:inline;">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete (admin only)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}

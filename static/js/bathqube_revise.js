@@ -198,11 +198,11 @@
       <div class="col-1 text-muted small">Panel ${idx + 1}</div>
       <div class="col-3">
         <label class="form-label small mb-0">Width (ft)</label>
-        <input class="form-control form-control-sm field-panel-width" type="number" min="0.5" step="0.5" value="${panel.width}">
+        <input class="form-control form-control-sm field-panel-width" type="number" min="0.5" step="any" value="${panel.width}">
       </div>
       <div class="col-3">
         <label class="form-label small mb-0">Height (ft)</label>
-        <input class="form-control form-control-sm field-panel-height" type="number" min="0.5" step="0.5" value="${panel.height}">
+        <input class="form-control form-control-sm field-panel-height" type="number" min="0.5" step="any" value="${panel.height}">
       </div>
       <div class="col-3 text-end small">
         <span class="text-muted">Sqft:</span> <strong class="panel-sqft">${sqft.toFixed(2)}</strong>
