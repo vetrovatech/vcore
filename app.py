@@ -5058,7 +5058,10 @@ def bathqube_ingest():
     quote = BathqubeQuote.query.filter_by(external_id=external_id).first()
     is_new = quote is None
     if is_new:
-        quote = BathqubeQuote(external_id=external_id, stage='order_confirmation')
+        # New ingest from the bathspace configurator webhook lands at the
+        # top of the sales pipeline. Sales then moves it through In Pipeline
+        # → Revision → Awaiting Payment → Closed Won (or Junk / Rejected).
+        quote = BathqubeQuote(external_id=external_id, stage='quote_generated')
         db.session.add(quote)
 
     quote.estimate_number = data.get('estimateNumber') or quote.estimate_number
