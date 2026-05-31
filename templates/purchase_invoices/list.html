@@ -120,7 +120,7 @@
                 <button type="submit" class="btn btn-primary btn-sm flex-fill">
                     <i class="bi bi-funnel"></i> Filter
                 </button>
-                <a href="{{ url_for('purchase_invoices_list') }}" class="btn btn-outline-secondary btn-sm">
+                <a href="{{ url_for('purchase_invoices_list') }}" class="btn btn-outline-secondary btn-sm js-clear-filters">
                     <i class="bi bi-x"></i>
                 </a>
             </div>
@@ -212,4 +212,9 @@
     </div>
 
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/list_filter_persistence.js') }}"></script>
+<script>ListFilterPersist.init({ key: 'purchase_invoices_filter_params' });</script>
 {% endblock %}

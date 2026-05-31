@@ -3210,10 +3210,8 @@ def lead_delete(id):
 @app.route('/leads/bulk-assign', methods=['POST'])
 @login_required
 def leads_bulk_assign():
-    """Bulk-assign multiple leads to a single user (sets both owner and assigned_to). Admin only."""
-    if not current_user.is_admin():
-        return jsonify({'success': False, 'error': 'Access denied.'}), 403
-
+    """Bulk-assign multiple leads to a single user (sets both owner and assigned_to).
+    Available to any logged-in user (was admin-only until 2026-05-31)."""
     from models import Lead, User, LeadHistory
 
     lead_ids = request.form.getlist('lead_ids')

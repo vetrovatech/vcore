@@ -62,7 +62,7 @@
             </div>
             <div class="col-md-2 d-flex gap-2">
                 <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
-                <a href="{{ url_for('meetings_list') }}" class="btn btn-outline-secondary btn-sm">Clear</a>
+                <a href="{{ url_for('meetings_list') }}" class="btn btn-outline-secondary btn-sm js-clear-filters">Clear</a>
             </div>
         </form>
     </div>
@@ -144,4 +144,9 @@
     <p class="mt-3">No meetings found. <a href="{{ url_for('meeting_new') }}">Create one</a>.</p>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/list_filter_persistence.js') }}"></script>
+<script>ListFilterPersist.init({ key: 'meetings_filter_params' });</script>
 {% endblock %}

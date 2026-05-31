@@ -44,7 +44,7 @@
                 <button type="submit" class="btn btn-primary me-2">
                     <i class="bi bi-funnel"></i> Filter
                 </button>
-                <a href="{{ url_for('projects_list') }}" class="btn btn-outline-secondary">
+                <a href="{{ url_for('projects_list') }}" class="btn btn-outline-secondary js-clear-filters">
                     <i class="bi bi-x-circle"></i> Clear
                 </a>
             </div>
@@ -154,4 +154,9 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/list_filter_persistence.js') }}"></script>
+<script>ListFilterPersist.init({ key: 'projects_filter_params' });</script>
 {% endblock %}

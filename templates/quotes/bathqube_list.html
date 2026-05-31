@@ -24,7 +24,7 @@
             </div>
             <div class="col-md-5 d-flex align-items-center gap-2 flex-wrap">
                 <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
-                <a href="{{ url_for('bathqube_quotes_list') }}" class="btn btn-secondary">
+                <a href="{{ url_for('bathqube_quotes_list') }}" class="btn btn-secondary js-clear-filters">
                     <i class="bi bi-x-circle"></i> Clear
                 </a>
                 <div class="form-check ms-2">
@@ -90,4 +90,9 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/list_filter_persistence.js') }}"></script>
+<script>ListFilterPersist.init({ key: 'bathqube_quotes_filter_params' });</script>
 {% endblock %}

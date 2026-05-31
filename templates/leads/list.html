@@ -219,6 +219,37 @@
     .syncing .sync-spinner { display: inline-block; }
     .syncing .sync-text { display: none; }
 
+    /* Loading overlay — shown while the filter form is auto-submitting */
+    .filter-loading-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+        backdrop-filter: blur(2px);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+    }
+    .filter-loading-overlay.show { display: flex; }
+    .filter-loading-card {
+        background: #fff;
+        padding: 22px 32px;
+        border-radius: 12px;
+        box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 0.95rem;
+        font-weight: 500;
+        color: #1e293b;
+    }
+    .filter-loading-card .spinner-border {
+        width: 1.2rem;
+        height: 1.2rem;
+        border-width: 0.2em;
+        color: #2563eb;
+    }
+
     /* Bulk-action bar */
     .bulk-bar {
         display: none;
@@ -241,6 +272,14 @@
 {% endblock %}
 
 {% block content %}
+
+<!-- Loading overlay — appears while the filter form is auto-submitting -->
+<div class="filter-loading-overlay" id="filterLoadingOverlay">
+    <div class="filter-loading-card">
+        <span class="spinner-border" role="status" aria-hidden="true"></span>
+        <span>Filtering leads…</span>
+    </div>
+</div>
 <!-- Header -->
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
@@ -385,7 +424,7 @@
             <div class="col-auto d-flex gap-2">
                 <button type="submit" class="btn btn-primary btn-sm">Filter</button>
                 {% if search_query or stage_filter or state_filter or origin_filter or owner_filter or updated_from or updated_to or created_from or created_to or request.args.get('lead_type') or request.args.get('untouched') %}
-                <a href="{{ url_for('leads_list') }}" class="btn btn-outline-secondary btn-sm">
+                <a href="{{ url_for('leads_list') }}" class="btn btn-outline-secondary btn-sm js-clear-filters">
                     <i class="bi bi-x-circle"></i> Clear
                 </a>
                 {% endif %}
@@ -394,7 +433,7 @@
     </form>
 </div>
 
-{% if current_user.is_admin() %}
+{# Bulk-assign bar — visible to ALL logged-in users (was admin-only until 2026-05-31). #}
 <!-- Bulk Action Bar -->
 <div class="bulk-bar" id="bulkBar">
     <span class="bulk-count"><i class="bi bi-check2-square"></i> <span id="bulkCount">0</span> selected</span>
@@ -410,7 +449,6 @@
     </button>
     <button type="button" class="btn btn-link btn-sm text-muted" id="bulkClearBtn">Clear</button>
 </div>
-{% endif %}
 
 <!-- Leads Table -->
 <div class="card">
@@ -779,6 +817,30 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/list_filter_persistence.js') }}"></script>
+<script>
+    ListFilterPersist.init({ key: 'leadfy_filter_params' });
+
+    // Auto-submit the filter form whenever a dropdown changes. The user no
+    // longer has to click "Filter" after picking a value. Shows a loading
+    // overlay first so it's obvious something's happening. Targets the GET
+    // form that lives inside .filter-card so the bulk-assign dropdown
+    // (which is in a different form) is not affected.
+    const filterLoadingOverlay = document.getElementById('filterLoadingOverlay');
+    document.querySelectorAll('.filter-card form select').forEach(function (sel) {
+        sel.addEventListener('change', function () {
+            if (filterLoadingOverlay) filterLoadingOverlay.classList.add('show');
+            this.form.submit();
+        });
+    });
+    // Also show the overlay if the user manually clicks Filter / Search.
+    const filterForm = document.querySelector('.filter-card form');
+    if (filterForm && filterLoadingOverlay) {
+        filterForm.addEventListener('submit', function () {
+            filterLoadingOverlay.classList.add('show');
+        });
+    }
+</script>
 <script>
     document.getElementById('selectAll').addEventListener('change', function () {
         document.querySelectorAll('.lead-check').forEach(cb => cb.checked = this.checked);
@@ -883,25 +945,8 @@
         });
     });
 
-    // Persist filter state across lead view/back navigation
-    const FILTER_KEY = 'leadfy_filter_params';
-    const currentParams = window.location.search;
-
-    // If the page was loaded with no filters (bare /leads), check if we have a saved filter
-    if (!currentParams || currentParams === '?') {
-        const saved = sessionStorage.getItem(FILTER_KEY);
-        if (saved && saved !== '?') {
-            window.location.replace(window.location.pathname + saved);
-        }
-    } else {
-        // Save current filter state whenever filters are active
-        sessionStorage.setItem(FILTER_KEY, currentParams);
-    }
-
-    // Clear saved filter when user explicitly clears filters
-    document.querySelector('a[href="{{ url_for("leads_list") }}"]')?.addEventListener('click', function () {
-        sessionStorage.removeItem(FILTER_KEY);
-    });
+    // Filter persistence — see static/js/list_filter_persistence.js
+    // (handled below via the shared helper, attached to .js-clear-filters)
 
     let currentNoteLeadId = null;
 
