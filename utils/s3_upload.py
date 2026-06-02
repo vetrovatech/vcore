@@ -144,6 +144,51 @@ class S3Uploader:
             print(f"Unexpected error: {e}")
             return None
     
+    def upload_bathqube_attachment(self, file, quote_id, stage):
+        """Upload an ops attachment for a Bathqube work order.
+
+        Unlike upload_product_image, this does NOT watermark — these are
+        internal ops files (measurement photos, fabrication docs,
+        installation photos, signed handover sheets) and preserving the
+        original is important.
+
+        Returns the public S3 URL or None on failure.
+        """
+        try:
+            original_filename = secure_filename(file.filename or '') or 'file'
+            ext = ''
+            if '.' in original_filename:
+                ext = '.' + original_filename.rsplit('.', 1)[1].lower()
+
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            stage_safe = (stage or 'unknown').replace('/', '_')
+            s3_key = f"bathqube-attachments/{quote_id}/{stage_safe}/{timestamp}{ext}"
+
+            # Best-effort content-type guess. Default to octet-stream so the
+            # browser at least doesn't try to render binary as text.
+            content_type = 'application/octet-stream'
+            ct_map = {
+                '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                '.png': 'image/png',  '.gif':  'image/gif',
+                '.webp': 'image/webp','.pdf':  'application/pdf',
+                '.heic': 'image/heic',
+            }
+            content_type = ct_map.get(ext, content_type)
+
+            self.s3_client.upload_fileobj(
+                file,
+                self.bucket_name,
+                s3_key,
+                ExtraArgs={'ContentType': content_type},
+            )
+            return f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{s3_key}"
+        except ClientError as e:
+            print(f"Error uploading bathqube attachment: {e}")
+            return None
+        except Exception as e:
+            print(f"Unexpected error uploading bathqube attachment: {e}")
+            return None
+
     def delete_image(self, s3_url):
         """
         Delete an image from S3

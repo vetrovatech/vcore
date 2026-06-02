@@ -41,6 +41,28 @@ def _fmt_money(v):
         return f"₹{v}"
 
 
+def _dimensions_block(q):
+    """Build a "Dimensions submitted:" multi-line block in the customer's
+    original unit. Returns '' for legacy quotes (no dimensionUnit) so the
+    historical email body stays exactly as it was before this feature.
+
+    Used at the bottom of customer-facing emails where the customer wants
+    to see the panel sizes echoed back in the unit they typed in.
+    """
+    from utils.bathqube_dimensions import get_dimension_unit, format_enclosures_email
+    cfg = q.config if q else None
+    unit = get_dimension_unit(cfg)
+    if not unit:
+        return ''
+    enclosures = (cfg or {}).get('enclosures') or []
+    if not enclosures:
+        return ''
+    block = format_enclosures_email(enclosures, unit)
+    if not block:
+        return ''
+    return f"\n\nDimensions submitted ({unit}):\n{block}"
+
+
 def _build_order_confirmation(q):
     subject = f"Thank you for your order — {q.estimate_number or ''}".strip(' —')
     body = (
@@ -48,7 +70,8 @@ def _build_order_confirmation(q):
         f"Thank you for shopping with {BRAND}!\n\n"
         f"We have received your order ({q.estimate_number}) for {_fmt_money(q.total)}. "
         f"Our team will reach out shortly with the next steps.\n\n"
-        f"For any questions, WhatsApp us at {SUPPORT_PHONE}.\n\n"
+        f"For any questions, WhatsApp us at {SUPPORT_PHONE}."
+        f"{_dimensions_block(q)}\n\n"
         f"— Team {BRAND}"
     )
     return subject, body
@@ -73,7 +96,8 @@ def _build_bill_revision(q):
         f"{salutation},\n\n"
         f"As discussed with the team, this is my offer for you.\n\n"
         f"Please find the attached quotation for your Enclosure.\n\n"
-        f"Kindly review and revert in case any changes are required.\n\n"
+        f"Kindly review and revert in case any changes are required."
+        f"{_dimensions_block(q)}\n\n"
         f"— Team {BRAND}"
     )
     return subject, body
@@ -128,6 +152,15 @@ STAGE_LABELS = {
     'closed_won':         'Closed Won',
     'junk':               'Junk',
     'rejected':           'Rejected',
+    # Ops/fulfillment stages — driven by the ops team in /bathqube/ops.
+    'measurement_scheduled':  'Measurement Scheduled',
+    'measurement_done':       'Measurement Done',
+    'customer_signoff':       'Customer Sign-off',
+    'in_fabrication':         'In Fabrication',
+    'ready_to_dispatch':      'Ready to Dispatch',
+    'installation_scheduled': 'Installation Scheduled',
+    'installed':              'Installed',
+    'handover_complete':      'Handover Complete',
     # Legacy labels kept so historical bathqube_status_events with old stage
     # codes still render a readable label until they're migrated.
     'new':                'New',

@@ -80,6 +80,19 @@ def to_ist_filter(utc_dt):
     return utc_dt + timedelta(hours=5, minutes=30)
 
 
+@app.template_filter('panel_display')
+def panel_display_filter(panel, unit):
+    """Render one panel dict for the in-vcore view (always inches).
+    `unit` is the dimensionUnit on the parent quote's configData, or None
+    for legacy quotes (renders as feet with no conversion)."""
+    from utils.bathqube_dimensions import format_panel_display
+    if unit is None:
+        # Legacy: customer typed in feet, keep the historical "x ft" form
+        # so old quotes look identical to how they did before this feature.
+        return f"{panel.get('width')}x{panel.get('height')}ft"
+    return format_panel_display(panel.get('width'), panel.get('height'), unit)
+
+
 # Lambda-specific: Dispose connections before each request
 @app.before_request
 def before_request():
@@ -4873,7 +4886,11 @@ def meetings_map():
 import hmac as _hmac
 import hashlib as _hashlib
 
-from models import BathqubeQuote, BathqubeStatusEvent, BathqubeQuoteItem, BathqubeQuoteRevision, BATHQUBE_STAGES
+from models import (
+    BathqubeQuote, BathqubeStatusEvent, BathqubeQuoteItem, BathqubeQuoteRevision,
+    BathqubeWorkOrder, BathqubeStageAttachment,
+    BATHQUBE_STAGES, BATHQUBE_OPS_STAGES, BATHQUBE_OPS_ACTIVE_STAGES,
+)
 from utils.bathqube_messages import render_stage_message, STAGE_LABELS
 
 
@@ -5491,6 +5508,248 @@ BATHQUBE_REVISE_OPTIONS = {
         ('8mm', 0), ('10mm', 120), ('12mm', 240),
     ],
 }
+
+
+# ============================================================================
+# BATHQUBE OPS / FULFILLMENT
+# ----------------------------------------------------------------------------
+# Post-sale flow. After a quote hits closed_won the ops team picks it up here
+# and drives it through site measurement → fabrication → installation →
+# handover. All routes mounted under /quotes/bathqube/ops/* — separate from
+# the sales-facing /quotes/bathqube/* views so each team sees only their work.
+#
+# Reuses BathqubeStatusEvent for the audit log and the same single `stage`
+# column on bathqube_quotes (just extended with BATHQUBE_OPS_STAGES). Ops-
+# specific data (assignee, scheduling, notes) lives on bathqube_work_orders;
+# files/photos on bathqube_stage_attachments.
+# ============================================================================
+
+def _get_or_create_work_order(quote):
+    """Return the BathqubeWorkOrder for a quote, creating an empty one on
+    first access. Caller is responsible for db.session.commit()."""
+    if quote.work_order:
+        return quote.work_order
+    wo = BathqubeWorkOrder(quote_id=quote.id)
+    db.session.add(wo)
+    db.session.flush()
+    return wo
+
+
+def _parse_form_datetime(s):
+    """HTML <input type=datetime-local> submits "YYYY-MM-DDTHH:MM". Be lenient."""
+    s = (s or '').strip()
+    if not s:
+        return None
+    for fmt in ('%Y-%m-%dT%H:%M', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d %H:%M:%S'):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_form_date(s):
+    s = (s or '').strip()
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
+@app.route('/quotes/bathqube/ops')
+@login_required
+def bathqube_ops_list():
+    """Ops fulfillment list. Default view shows orders that need ops action:
+    closed_won (just handed over by sales) through installed. handover_complete
+    is filtered out unless the user opts in via ?handed_over=1."""
+    search = (request.args.get('search') or '').strip()
+    stage = (request.args.get('stage') or '').strip()
+    assignee_id = (request.args.get('assignee') or '').strip()
+    include_handed_over = request.args.get('handed_over') == '1'
+
+    q = BathqubeQuote.query
+    if search:
+        like = f'%{search}%'
+        q = q.filter(
+            (BathqubeQuote.customer_name.ilike(like))
+            | (BathqubeQuote.phone.ilike(like))
+            | (BathqubeQuote.estimate_number.ilike(like))
+        )
+
+    if stage and stage in (BATHQUBE_OPS_STAGES + ('closed_won',)):
+        q = q.filter_by(stage=stage)
+    elif include_handed_over:
+        q = q.filter(BathqubeQuote.stage.in_(('closed_won',) + BATHQUBE_OPS_STAGES))
+    else:
+        q = q.filter(BathqubeQuote.stage.in_(BATHQUBE_OPS_ACTIVE_STAGES))
+
+    if assignee_id:
+        try:
+            aid = int(assignee_id)
+            q = q.join(BathqubeWorkOrder, BathqubeQuote.id == BathqubeWorkOrder.quote_id) \
+                 .filter(BathqubeWorkOrder.ops_assignee_id == aid)
+        except ValueError:
+            pass
+
+    quotes = q.order_by(BathqubeQuote.updated_at.desc()).all()
+    users = User.query.filter_by(is_active=True).order_by(User.username).all()
+
+    return render_template('quotes/bathqube_ops_list.html',
+                           quotes=quotes, search=search, stage=stage,
+                           assignee_id=assignee_id,
+                           include_handed_over=include_handed_over,
+                           users=users,
+                           stage_labels=STAGE_LABELS,
+                           ops_stages=BATHQUBE_OPS_STAGES,
+                           ops_active_stages=BATHQUBE_OPS_ACTIVE_STAGES)
+
+
+@app.route('/quotes/bathqube/ops/<int:id>')
+@login_required
+def bathqube_ops_view(id):
+    """Work-order detail page — stage timeline, assignee + scheduling form,
+    attachment gallery grouped by stage."""
+    quote = BathqubeQuote.query.get_or_404(id)
+    wo = _get_or_create_work_order(quote)
+    # Persist lazy creation so subsequent loads don't keep flushing.
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    attachments_by_stage = {}
+    for att in quote.stage_attachments:
+        attachments_by_stage.setdefault(att.stage, []).append(att)
+
+    users = User.query.filter_by(is_active=True).order_by(User.username).all()
+
+    return render_template('quotes/bathqube_ops_view.html',
+                           quote=quote, work_order=wo,
+                           attachments_by_stage=attachments_by_stage,
+                           users=users,
+                           stage_labels=STAGE_LABELS,
+                           ops_stages=BATHQUBE_OPS_STAGES,
+                           events=quote.events)
+
+
+@app.route('/quotes/bathqube/ops/<int:id>/stage/<stage>', methods=['POST'])
+@login_required
+def bathqube_ops_set_stage(id, stage):
+    """Move a quote through the ops pipeline. Logs a BathqubeStatusEvent
+    audit row for every transition. Customer messaging is wired up in
+    Stage 4 (utils/bathqube_messages.py)."""
+    if stage not in BATHQUBE_OPS_STAGES:
+        flash('Unknown ops stage.', 'warning')
+        return redirect(url_for('bathqube_ops_view', id=id))
+
+    quote = BathqubeQuote.query.get_or_404(id)
+    from_stage = quote.stage
+    if from_stage == stage:
+        flash(f'Already in {STAGE_LABELS.get(stage, stage)}.', 'info')
+        return redirect(url_for('bathqube_ops_view', id=quote.id))
+
+    # First ops transition — make sure the work order exists.
+    _get_or_create_work_order(quote)
+
+    quote.stage = stage
+    db.session.add(BathqubeStatusEvent(
+        quote_id=quote.id, from_stage=from_stage, to_stage=stage,
+        channel='internal', subject=None, message=None,
+        triggered_by=current_user.id, send_status='skipped',
+        send_error='ops stage transition — customer messaging wired up in Stage 4',
+    ))
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Could not save: {e}', 'danger')
+        return redirect(url_for('bathqube_ops_view', id=quote.id))
+
+    flash(f'Moved to {STAGE_LABELS.get(stage, stage)}.', 'success')
+    return redirect(url_for('bathqube_ops_view', id=quote.id))
+
+
+@app.route('/quotes/bathqube/ops/<int:id>/details', methods=['POST'])
+@login_required
+def bathqube_ops_update_details(id):
+    """Save the work-order detail form: assignee, scheduling dates, ops notes."""
+    quote = BathqubeQuote.query.get_or_404(id)
+    wo = _get_or_create_work_order(quote)
+
+    assignee_raw = (request.form.get('ops_assignee_id') or '').strip()
+    if assignee_raw == '':
+        wo.ops_assignee_id = None
+    else:
+        try:
+            wo.ops_assignee_id = int(assignee_raw)
+        except ValueError:
+            flash('Invalid assignee.', 'warning')
+            return redirect(url_for('bathqube_ops_view', id=id))
+
+    wo.measurement_scheduled_at  = _parse_form_datetime(request.form.get('measurement_scheduled_at'))
+    wo.installation_scheduled_at = _parse_form_datetime(request.form.get('installation_scheduled_at'))
+    wo.delivery_eta              = _parse_form_date(request.form.get('delivery_eta'))
+    notes = (request.form.get('ops_notes') or '').strip()
+    wo.ops_notes = notes or None
+
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Could not save: {e}', 'danger')
+        return redirect(url_for('bathqube_ops_view', id=id))
+
+    flash('Ops details updated.', 'success')
+    return redirect(url_for('bathqube_ops_view', id=id))
+
+
+@app.route('/quotes/bathqube/ops/<int:id>/upload', methods=['POST'])
+@login_required
+def bathqube_ops_upload(id):
+    """Attach a photo/document to a specific ops stage of the quote.
+    Uploads to S3 (no watermark — these are internal ops files)."""
+    quote = BathqubeQuote.query.get_or_404(id)
+
+    file = request.files.get('file')
+    if not file or not file.filename:
+        flash('No file selected.', 'warning')
+        return redirect(url_for('bathqube_ops_view', id=id))
+
+    stage = (request.form.get('stage') or quote.stage).strip()
+    if stage not in (BATHQUBE_OPS_STAGES + ('closed_won',)):
+        flash(f'Cannot attach to non-ops stage "{stage}".', 'warning')
+        return redirect(url_for('bathqube_ops_view', id=id))
+
+    kind = (request.form.get('kind') or 'photo').strip()
+    if kind not in ('photo', 'document', 'signature'):
+        kind = 'photo'
+    caption = (request.form.get('caption') or '').strip() or None
+
+    try:
+        url = S3Uploader().upload_bathqube_attachment(file, quote_id=quote.id, stage=stage)
+    except Exception as e:
+        flash(f'Upload failed: {e}', 'danger')
+        return redirect(url_for('bathqube_ops_view', id=id))
+
+    if not url:
+        flash('Upload failed (S3 returned no URL).', 'danger')
+        return redirect(url_for('bathqube_ops_view', id=id))
+
+    db.session.add(BathqubeStageAttachment(
+        quote_id=quote.id, stage=stage, kind=kind,
+        file_url=url, caption=caption, uploaded_by=current_user.id,
+    ))
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Could not save attachment record: {e}', 'danger')
+        return redirect(url_for('bathqube_ops_view', id=id))
+
+    flash('File attached.', 'success')
+    return redirect(url_for('bathqube_ops_view', id=id))
 
 
 # ============================================================================

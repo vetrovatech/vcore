@@ -1224,6 +1224,32 @@ BATHQUBE_STAGES = (
 # are disposition states that get filtered out unless the user explicitly opts in.
 BATHQUBE_ACTIVE_STAGES = ('quote_generated', 'in_pipeline', 'revision', 'awaiting_payment', 'closed_won')
 
+# Ops/fulfillment stages — run AFTER closed_won. Sales hands the order off to
+# the ops team who drives the order through manufacturing + installation.
+# These are stored in the same bathqube_quotes.stage column as the sales
+# stages — kept separate here so the sales list view and the ops list view
+# can each show only their own slice.
+BATHQUBE_OPS_STAGES = (
+    'measurement_scheduled',   # site visit booked
+    'measurement_done',        # dimensions captured + photos uploaded
+    'customer_signoff',        # customer confirmed dimensions via WhatsApp
+    'in_fabrication',          # glass cutting + toughening
+    'ready_to_dispatch',       # boxed + hardware bundled
+    'installation_scheduled',  # installer + date locked
+    'installed',               # installer signed off on site
+    'handover_complete',       # final invoice + warranty card sent
+)
+
+# Ops stages that the ops list shows by default. handover_complete is the
+# terminal state — filtered out unless the user opts in (mirrors how junk +
+# rejected are handled on the sales list).
+BATHQUBE_OPS_ACTIVE_STAGES = (
+    'closed_won',  # included so freshly-won orders surface for ops to pick up
+    'measurement_scheduled', 'measurement_done', 'customer_signoff',
+    'in_fabrication', 'ready_to_dispatch',
+    'installation_scheduled', 'installed',
+)
+
 # Legacy → new stage map for the one-shot data migration. Keep this around in
 # case anyone needs to re-run the migration against new data that may have
 # slipped in with an old stage value.
@@ -1428,4 +1454,79 @@ class BathqubeQuoteRevision(db.Model):
 
     def __repr__(self):
         return f'<BathqubeQuoteRevision q={self.quote_id} #{self.revision_number} {self.prev_total}->{self.new_total}>'
+
+
+class BathqubeWorkOrder(db.Model):
+    """Ops-side fulfillment record for a Bathqube quote.
+
+    Created lazily the first time a quote transitions out of closed_won into
+    an ops stage (or when an ops user opens it for the first time). One row
+    per quote — see the uselist=False backref on BathqubeQuote.
+
+    Holds the data the ops team needs but the sales-side quote does not:
+    the ops owner, scheduling dates, and free-form ops notes. Stage itself
+    stays on BathqubeQuote so the audit log via BathqubeStatusEvent is
+    unified.
+
+    Single ops_assignee_id today (one person handles measurement +
+    fabrication + installation). When the team splits roles, add
+    measurement_assignee_id / installer_assignee_id columns and migrate.
+    """
+    __tablename__ = 'bathqube_work_orders'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('bathqube_quotes.id', ondelete='CASCADE'),
+                         unique=True, nullable=False, index=True)
+
+    ops_assignee_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    # Structured scheduling fields. Cheap to add now, expensive to retro-fit
+    # once ops is using free-text notes for the same thing.
+    measurement_scheduled_at  = db.Column(db.DateTime, nullable=True)
+    installation_scheduled_at = db.Column(db.DateTime, nullable=True)
+    delivery_eta              = db.Column(db.Date, nullable=True)
+
+    ops_notes = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    quote = db.relationship('BathqubeQuote', backref=db.backref('work_order', uselist=False,
+                                                                cascade='all, delete-orphan'))
+    ops_assignee = db.relationship('User', foreign_keys=[ops_assignee_id])
+
+    def __repr__(self):
+        return f'<BathqubeWorkOrder q={self.quote_id}>'
+
+
+class BathqubeStageAttachment(db.Model):
+    """File/photo uploaded against a specific ops stage of a Bathqube quote.
+
+    Multiple per stage. Used for: measurement photos, signed dimension
+    sheets, fabrication-vendor POs, installation before/after shots,
+    customer handover signature.
+    """
+    __tablename__ = 'bathqube_stage_attachments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('bathqube_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+    # Which stage this attachment belongs to — string, not FK, since stages
+    # are an enum-ish constant rather than a table.
+    stage = db.Column(db.String(32), nullable=False, index=True)
+    kind  = db.Column(db.String(20), nullable=False, default='photo')  # photo | document | signature
+
+    file_url = db.Column(db.Text, nullable=False)
+    caption  = db.Column(db.String(255), nullable=True)
+
+    uploaded_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at  = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    quote    = db.relationship('BathqubeQuote', backref=db.backref('stage_attachments', lazy=True,
+                                                                   cascade='all, delete-orphan',
+                                                                   order_by='BathqubeStageAttachment.created_at.desc()'))
+    uploader = db.relationship('User', foreign_keys=[uploaded_by])
+
+    def __repr__(self):
+        return f'<BathqubeStageAttachment q={self.quote_id} stage={self.stage} kind={self.kind}>'
 

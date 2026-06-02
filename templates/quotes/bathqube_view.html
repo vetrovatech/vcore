@@ -89,6 +89,16 @@
                     </div>
                     {% endif %}
 
+                    {% set ops_stages_list = ['closed_won', 'measurement_scheduled', 'measurement_done', 'customer_signoff', 'in_fabrication', 'ready_to_dispatch', 'installation_scheduled', 'installed', 'handover_complete'] %}
+                    {% if quote.stage in ops_stages_list %}
+                    <div class="col-md-12">
+                        <a href="{{ url_for('bathqube_ops_view', id=quote.id) }}" class="btn btn-outline-primary w-100 text-start">
+                            <i class="bi bi-tools"></i> <strong>Open Ops Work Order</strong>
+                            <div class="small text-muted">Site measurement, fabrication, installation, handover — ops team workspace.</div>
+                        </a>
+                    </div>
+                    {% endif %}
+
                     <!-- Dispositions — collapsible -->
                     <div class="col-md-12 mt-2">
                         <a class="small text-muted" data-bs-toggle="collapse" href="#dispositionActions" role="button">
@@ -220,6 +230,10 @@
 
         {% set cfg = quote.config %}
         {% if cfg %}
+        {# Dimension unit the customer chose on the configurator. None on
+           pre-feature quotes — the panel_display filter falls back to "ft"
+           rendering for those so historical quotes look untouched. #}
+        {% set dim_unit = cfg.dimensionUnit if cfg.dimensionUnit in ['mm','cm','in','m'] else None %}
         {# Normalise: build a list of enclosures from either the new shape
            (cfg.enclosures[]) or the legacy flat shape (top-level fields). #}
         {% if cfg.enclosures and cfg.enclosures is iterable and (cfg.enclosures|length) > 0 %}
@@ -262,7 +276,8 @@
                     <p class="mb-1 small"><strong>Rate:</strong> ₹{{ enc.pricePerSqft or '—' }}/sq.ft &middot; <strong>Qty:</strong> {{ enc.quantity or 1 }}</p>
                     {% if enc.glassPanels %}
                     <p class="mb-0 small"><strong>Panels ({{ enc.glassPanels|length }}):</strong>
-                        {% for p in enc.glassPanels %}{{ p.width }}×{{ p.height }}ft{% if not loop.last %}, {% endif %}{% endfor %}
+                        {% for p in enc.glassPanels %}{{ p|panel_display(dim_unit) }}{% if not loop.last %}, {% endif %}{% endfor %}
+                        {% if dim_unit %}<span class="text-muted ms-2">(customer submitted in {{ dim_unit }})</span>{% endif %}
                     </p>
                     {% endif %}
                 </div>

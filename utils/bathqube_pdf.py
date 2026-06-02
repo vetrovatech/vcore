@@ -96,6 +96,25 @@ def generate_bathqube_pdf(quote):
     ]))
     story.append(t)
 
+    # Dimensions submitted — only for quotes that have a dimensionUnit on
+    # configData (post-feature). Legacy quotes skip this block so existing
+    # PDFs reissued for old quotes look unchanged. Always in the customer's
+    # original unit (NOT inches) so the PDF mirrors what they typed.
+    from utils.bathqube_dimensions import get_dimension_unit, format_enclosures_email
+    dim_unit = get_dimension_unit(cfg)
+    if dim_unit:
+        enclosures_for_dims = cfg.get('enclosures') or []
+        if enclosures_for_dims:
+            story.append(Paragraph(f"DIMENSIONS SUBMITTED ({dim_unit})", h_section))
+            dims_text = format_enclosures_email(enclosures_for_dims, dim_unit)
+            # Render line-by-line so each panel sits on its own row.
+            dims_body = ParagraphStyle('dimsbody', parent=body, fontSize=9, leading=12)
+            for line in dims_text.split('\n'):
+                # Replace leading spaces with non-breaking spaces so Paragraph
+                # preserves the indent on the "Panel N:" rows.
+                rendered = line.replace('   ', '&nbsp;&nbsp;&nbsp;')
+                story.append(Paragraph(rendered or '&nbsp;', dims_body))
+
     # Line items
     story.append(Paragraph("ITEMS", h_section))
     items = list(quote.items) if quote.items else []

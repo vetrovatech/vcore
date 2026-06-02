@@ -274,9 +274,15 @@
                                     </a>
                                 </li>
                                 <li>
-                                    <a class="nav-link py-1 {% if request.endpoint and request.endpoint.startswith('bathqube_') %}active{% endif %}"
+                                    <a class="nav-link py-1 {% if request.endpoint and request.endpoint.startswith('bathqube_') and 'ops' not in request.endpoint %}active{% endif %}"
                                        href="{{ url_for('bathqube_quotes_list') }}">
                                         <i class="bi bi-droplet-half"></i> Bathqube Quotation
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="nav-link py-1 {% if request.endpoint and request.endpoint.startswith('bathqube_ops_') %}active{% endif %}"
+                                       href="{{ url_for('bathqube_ops_list') }}">
+                                        <i class="bi bi-tools"></i> Bathqube Ops
                                     </a>
                                 </li>
                             </ul>

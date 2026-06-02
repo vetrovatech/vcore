@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}{{ quote.estimate_number or quote.id }} - Ops Work Order{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h3 class="mb-1">
+            <i class="bi bi-tools"></i>
+            {{ quote.estimate_number or ('BQ-' ~ quote.id) }}
+            <span class="text-muted">— {{ quote.customer_name }}</span>
+        </h3>
+        <span class="badge bg-info text-dark">Current stage: {{ stage_labels.get(quote.stage, quote.stage) }}</span>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('bathqube_quote_view', id=quote.id) }}" class="btn btn-sm btn-outline-info">
+            <i class="bi bi-file-text"></i> Sales view
+        </a>
+        <a href="{{ url_for('bathqube_ops_list') }}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to ops list
+        </a>
+    </div>
+</div>
+
+{# ─── Stage pipeline pills — visual at-a-glance progress ─── #}
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="d-flex flex-wrap gap-1 align-items-center">
+            {% set all_stages = ['closed_won'] + ops_stages|list %}
+            {% set current_idx = all_stages.index(quote.stage) if quote.stage in all_stages else -1 %}
+            {% for s in all_stages %}
+                {% set is_current = (s == quote.stage) %}
+                {% set is_past = (loop.index0 < current_idx) %}
+                <span class="badge {% if is_current %}bg-primary{% elif is_past %}bg-success{% else %}bg-light text-muted border{% endif %}"
+                      style="font-weight:normal;">
+                    {% if is_past %}<i class="bi bi-check"></i> {% endif %}{{ stage_labels.get(s, s) }}
+                </span>
+                {% if not loop.last %}<i class="bi bi-chevron-right text-muted small"></i>{% endif %}
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-7">
+        {# ─── Stage transition buttons ─── #}
+        <div class="card mb-3 border-primary">
+            <div class="card-header bg-primary text-white">
+                <strong><i class="bi bi-arrow-right-circle"></i> Move to stage</strong>
+            </div>
+            <div class="card-body">
+                <div class="row g-2">
+                    {% for s in ops_stages %}
+                    <div class="col-md-6">
+                        <form method="POST" action="{{ url_for('bathqube_ops_set_stage', id=quote.id, stage=s) }}">
+                            <button type="submit" class="btn btn-outline-primary w-100 text-start"
+                                    {% if quote.stage == s %}disabled{% endif %}>
+                                <i class="bi bi-arrow-right"></i> <strong>{{ stage_labels.get(s, s) }}</strong>
+                            </button>
+                        </form>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        {# ─── Per-stage attachments ─── #}
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong><i class="bi bi-paperclip"></i> Attachments</strong>
+                <span class="text-muted small">{{ quote.stage_attachments|length }} file(s)</span>
+            </div>
+            <div class="card-body p-0">
+                {% set ordered_stages = ['closed_won'] + ops_stages|list %}
+                {% set has_any = false %}
+                {% for s in ordered_stages %}
+                    {% set atts = attachments_by_stage.get(s, []) %}
+                    {% if atts %}
+                        {% set has_any = true %}
+                        <div class="p-3 {% if not loop.last %}border-bottom{% endif %}">
+                            <div class="small text-muted mb-2">
+                                <strong>{{ stage_labels.get(s, s) }}</strong> · {{ atts|length }} file(s)
+                            </div>
+                            <div class="row g-2">
+                                {% for att in atts %}
+                                <div class="col-md-4 col-6">
+                                    <a href="{{ att.file_url }}" target="_blank" class="d-block border rounded p-2 text-decoration-none">
+                                        {% if att.kind == 'photo' %}
+                                            <img src="{{ att.file_url }}" alt="" class="img-fluid rounded mb-1"
+                                                 style="max-height:140px; object-fit:cover; width:100%;">
+                                        {% else %}
+                                            <div class="text-center py-3">
+                                                <i class="bi {% if att.kind == 'signature' %}bi-pen{% else %}bi-file-earmark-text{% endif %} display-6 text-muted"></i>
+                                            </div>
+                                        {% endif %}
+                                        {% if att.caption %}
+                                            <div class="small text-dark text-truncate" title="{{ att.caption }}">{{ att.caption }}</div>
+                                        {% endif %}
+                                        <div class="small text-muted">
+                                            <span class="badge bg-light text-muted">{{ att.kind }}</span>
+                                            {{ (att.created_at | to_ist).strftime('%d %b · %H:%M') }}
+                                            {% if att.uploader %} · {{ att.uploader.username }}{% endif %}
+                                        </div>
+                                    </a>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+                {% if not has_any %}
+                <p class="text-muted text-center my-3 mb-3">No files yet — use the upload form below.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {# ─── Upload form ─── #}
+        <div class="card mb-3">
+            <div class="card-header"><strong><i class="bi bi-upload"></i> Upload file</strong></div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('bathqube_ops_upload', id=quote.id) }}" enctype="multipart/form-data" class="row g-2">
+                    <div class="col-md-5">
+                        <label class="form-label small">File</label>
+                        <input type="file" name="file" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small">Attach to stage</label>
+                        <select name="stage" class="form-select">
+                            <option value="{{ quote.stage }}">{{ stage_labels.get(quote.stage, quote.stage) }} (current)</option>
+                            {% for s in ['closed_won'] + ops_stages|list %}
+                                {% if s != quote.stage %}
+                                    <option value="{{ s }}">{{ stage_labels.get(s, s) }}</option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Kind</label>
+                        <select name="kind" class="form-select">
+                            <option value="photo">Photo</option>
+                            <option value="document">Document</option>
+                            <option value="signature">Signature</option>
+                        </select>
+                    </div>
+                    <div class="col-md-9">
+                        <label class="form-label small">Caption (optional)</label>
+                        <input type="text" name="caption" class="form-control" placeholder="e.g. North wall, measurement 4'×7'">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-upload"></i> Upload
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-5">
+        {# ─── Ops details form ─── #}
+        <div class="card mb-3 border-primary">
+            <div class="card-header bg-primary text-white">
+                <strong><i class="bi bi-clipboard-check"></i> Work order details</strong>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('bathqube_ops_update_details', id=quote.id) }}">
+                    <div class="mb-3">
+                        <label class="form-label small">Assigned to</label>
+                        <select name="ops_assignee_id" class="form-select">
+                            <option value="">— unassigned —</option>
+                            {% for u in users %}
+                                <option value="{{ u.id }}"
+                                        {% if work_order.ops_assignee_id == u.id %}selected{% endif %}>
+                                    {{ u.username }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Measurement scheduled</label>
+                        <input type="datetime-local" name="measurement_scheduled_at" class="form-control"
+                               value="{{ work_order.measurement_scheduled_at.strftime('%Y-%m-%dT%H:%M') if work_order.measurement_scheduled_at else '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Installation scheduled</label>
+                        <input type="datetime-local" name="installation_scheduled_at" class="form-control"
+                               value="{{ work_order.installation_scheduled_at.strftime('%Y-%m-%dT%H:%M') if work_order.installation_scheduled_at else '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Delivery ETA (date)</label>
+                        <input type="date" name="delivery_eta" class="form-control"
+                               value="{{ work_order.delivery_eta.strftime('%Y-%m-%d') if work_order.delivery_eta else '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Ops notes</label>
+                        <textarea name="ops_notes" rows="4" class="form-control"
+                                  placeholder="Internal notes — measurements, vendor coordination, customer asks, etc.">{{ work_order.ops_notes or '' }}</textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-save"></i> Save details
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        {# ─── Customer info (read-only) ─── #}
+        <div class="card mb-3">
+            <div class="card-header"><strong>Customer</strong></div>
+            <div class="card-body">
+                <p class="mb-1"><strong>Name:</strong> {{ quote.customer_name }}</p>
+                <p class="mb-1"><strong>Phone:</strong>
+                    <a href="https://wa.me/{{ quote.phone|replace('+','')|replace(' ','') }}" target="_blank">{{ quote.phone }}</a>
+                </p>
+                <p class="mb-1"><strong>Email:</strong> {{ quote.email or '—' }}</p>
+                <p class="mb-1"><strong>Pincode:</strong> {{ quote.pincode or '—' }}</p>
+                <p class="mb-0"><strong>Site:</strong> {{ quote.site_address or '—' }}</p>
+            </div>
+        </div>
+
+        {# ─── Activity timeline ─── #}
+        <div class="card mb-3">
+            <div class="card-header"><strong><i class="bi bi-clock-history"></i> Activity timeline</strong></div>
+            <div class="card-body p-0" style="max-height:420px; overflow-y:auto;">
+                <ul class="list-group list-group-flush">
+                    {% for ev in events %}
+                    <li class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <strong>{{ stage_labels.get(ev.to_stage, ev.to_stage) }}</strong>
+                                {% if ev.send_status == 'sent' %}
+                                    <span class="badge bg-success">sent</span>
+                                {% elif ev.send_status == 'failed' %}
+                                    <span class="badge bg-danger">failed</span>
+                                {% endif %}
+                            </div>
+                            <small class="text-muted">{{ (ev.created_at | to_ist).strftime('%d %b · %H:%M') }} IST</small>
+                        </div>
+                        <div class="small text-muted">
+                            {% if ev.from_stage %}from {{ stage_labels.get(ev.from_stage, ev.from_stage) }} · {% endif %}
+                            via {{ ev.channel }}{% if ev.user %} · by {{ ev.user.username }}{% endif %}
+                        </div>
+                    </li>
+                    {% else %}
+                    <li class="list-group-item text-muted">No activity yet.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
