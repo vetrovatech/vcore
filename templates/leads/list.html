@@ -293,6 +293,13 @@
             <i class="bi bi-exclamation-circle-fill"></i> {{ untouched|length }} untouched
         </span>
         {% endif %}
+        {# Agent Log — owner-wise stage-activity matrix (KAN-52). Manager-or-
+           admin only since it surfaces peer activity. #}
+        {% if current_user.is_manager_or_admin() %}
+        <a href="{{ url_for('leads_agent_log') }}" class="btn btn-outline-primary btn-sm" title="Owner-wise stage activity matrix">
+            <i class="bi bi-activity"></i> Agent Log
+        </a>
+        {% endif %}
         {% if current_user.is_admin() %}
             {% if indiamart_token %}
                 {% if indiamart_token.is_valid() %}
@@ -372,7 +379,7 @@
                 <div class="filter-label">Stage</div>
                 <select class="form-select" name="stage">
                     <option value="">All Stages</option>
-                    {% for s in ['New Lead','Contacted','Not Connected','Qualified','PI Shared','Closed Won','Closed Lost','Junk'] %}
+                    {% for s in stage_options_all %}
                     <option value="{{ s }}" {% if stage_filter == s %}selected{% endif %}>{{ s }}</option>
                     {% endfor %}
                 </select>
@@ -433,10 +440,27 @@
     </form>
 </div>
 
-{# Bulk-assign bar — visible to ALL logged-in users (was admin-only until 2026-05-31). #}
+{# Bulk-assign bar — visible to ALL logged-in users (was admin-only until 2026-05-31).
+   `selectAllMatchingBanner` appears once the page master checkbox is ticked
+   and the total matching the current filter is larger than the visible page
+   (Gmail-style). Clicking it switches the assign POST from `lead_ids[]` to
+   `select_all_matching=1` + the filter querystring, so the server re-runs
+   the filter and assigns every match — no pagination limit. #}
 <!-- Bulk Action Bar -->
-<div class="bulk-bar" id="bulkBar">
+<div class="bulk-bar" id="bulkBar"
+     data-page-count="{{ leads|length }}"
+     data-total-count="{{ pagination.total }}">
     <span class="bulk-count"><i class="bi bi-check2-square"></i> <span id="bulkCount">0</span> selected</span>
+    <span id="selectAllMatchingBanner" style="display:none; font-size:0.82rem;">
+        All <strong>{{ leads|length }}</strong> on this page are selected.
+        <a href="#" id="selectAllMatchingLink" style="font-weight:700; text-decoration:underline;">
+            Select all <span id="selectAllMatchingTotal">{{ pagination.total }}</span> leads matching this filter
+        </a>
+    </span>
+    <span id="selectAllMatchingActive" style="display:none; font-size:0.82rem; font-weight:600;">
+        All <strong id="selectAllMatchingActiveCount">{{ pagination.total }}</strong> leads matching the filter selected.
+        <a href="#" id="selectAllMatchingClear" style="font-weight:700; text-decoration:underline;">Clear selection</a>
+    </span>
     <select class="form-select form-select-sm" id="bulkAssignUser">
         <option value="">— Assign to BD —</option>
         {% for u in users %}
@@ -541,7 +565,12 @@
                                 <a href="tel:{{ lead.contact }}" class="btn-call" title="Call">
                                     <i class="bi bi-telephone-fill"></i>
                                 </a>
-                                <a href="https://wa.me/91{{ lead.contact | replace(' ','') | replace('-','') }}"
+                                {# Same WhatsApp URL normalisation as
+                                   templates/leads/view.html — see the
+                                   comment there. #}
+                                {%- set _wa_raw = lead.contact | replace(' ','') | replace('-','') | replace('(','') | replace(')','') | replace('.','') | replace('+','') -%}
+                                {%- set _wa_num = _wa_raw if _wa_raw | length >= 11 else '91' ~ _wa_raw -%}
+                                <a href="https://wa.me/{{ _wa_num }}"
                                    target="_blank" class="btn-wa" title="WhatsApp">
                                     <i class="bi bi-whatsapp"></i>
                                 </a>
@@ -667,15 +696,15 @@
                     <div class="row g-3">
                         <div class="col-6">
                             <label class="form-label fw-semibold">Stage</label>
-                            <select class="form-select" name="stage">
-                                {% for s in ['New Lead','Contacted','Not Connected','Qualified','PI Shared','Closed Won','Closed Lost','Junk'] %}
-                                <option value="{{ s }}" {% if s == 'New Lead' %}selected{% endif %}>{{ s }}</option>
+                            <select class="form-select" name="stage" id="quick-lead-stage">
+                                {% for s in stage_options_default %}
+                                <option value="{{ s }}" {% if loop.first %}selected{% endif %}>{{ s }}</option>
                                 {% endfor %}
                             </select>
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold">Origin</label>
-                            <input type="text" class="form-control" name="origin" placeholder="e.g. Facebook">
+                            <input type="text" class="form-control" name="origin" id="quick-lead-origin" placeholder="e.g. Facebook">
                         </div>
                     </div>
                 </div>
@@ -761,7 +790,7 @@
 {% if pagination.pages > 1 %}
 <div class="d-flex align-items-center justify-content-between mt-3 px-1">
     <small class="text-muted">
-        Showing <strong>{{ (pagination.page - 1) * 15 + 1 }}–{{ [(pagination.page * 15), pagination.total] | min }}</strong>
+        Showing <strong>{{ (pagination.page - 1) * per_page + 1 }}–{{ [(pagination.page * per_page), pagination.total] | min }}</strong>
         of <strong>{{ pagination.total }}</strong> leads
     </small>
     <nav>
@@ -842,54 +871,183 @@
     }
 </script>
 <script>
-    document.getElementById('selectAll').addEventListener('change', function () {
-        document.querySelectorAll('.lead-check').forEach(cb => cb.checked = this.checked);
-        updateBulkBar();
-    });
-
-    // Bulk-assign UI
+    // Bulk-assign UI — supports two modes:
+    //   1) Per-row checkbox selection. Selected IDs are persisted in
+    //      sessionStorage so they survive pagination — pick 15 on page 1,
+    //      go to page 2, pick 10 more, hit Assign → all 25 get assigned.
+    //      Re-checking on revisit is automatic: any visible row whose ID is
+    //      in the stored set is re-ticked on page load.
+    //   2) "Select all N matching this filter" — Gmail-style banner that
+    //      appears when the page master checkbox is ticked and there are
+    //      more matching leads than fit on the current page. In that mode
+    //      the assign POST sends select_all_matching=1 + the filter params,
+    //      and the server re-runs the same SQL filter to assign every match.
     const bulkBar = document.getElementById('bulkBar');
     const bulkCount = document.getElementById('bulkCount');
-    function getSelectedLeadIds() {
-        return Array.from(document.querySelectorAll('.lead-check:checked'))
-            .map(cb => cb.dataset.leadId)
-            .filter(Boolean);
+    const pageCount = parseInt(bulkBar?.dataset.pageCount || '0', 10);
+    const totalCount = parseInt(bulkBar?.dataset.totalCount || '0', 10);
+    const banner = document.getElementById('selectAllMatchingBanner');
+    const bannerLink = document.getElementById('selectAllMatchingLink');
+    const bannerActive = document.getElementById('selectAllMatchingActive');
+    const bannerActiveCount = document.getElementById('selectAllMatchingActiveCount');
+    const bannerClear = document.getElementById('selectAllMatchingClear');
+
+    // Persistent cross-page selection. Stored in sessionStorage (lives for
+    // the browser tab only — closing the tab clears it, no stale state
+    // across login sessions).
+    const STORAGE_KEY = 'leadfy_bulk_selected_ids';
+    let selectedSet;
+    try {
+        selectedSet = new Set(JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '[]'));
+    } catch (e) {
+        selectedSet = new Set();
+    }
+    function persist() {
+        try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(selectedSet))); }
+        catch (e) { /* sessionStorage may be unavailable in private mode — silently degrade */ }
+    }
+    function clearPersisted() {
+        selectedSet.clear();
+        try { sessionStorage.removeItem(STORAGE_KEY); } catch (e) {}
+    }
+
+    // When true, the next Assign click ignores the per-row set and tells the
+    // server to assign every row matching the current filter.
+    let selectAllMatching = false;
+
+    // Rehydrate checkbox state from sessionStorage on page load.
+    document.querySelectorAll('.lead-check').forEach(cb => {
+        if (cb.dataset.leadId && selectedSet.has(cb.dataset.leadId)) {
+            cb.checked = true;
+        }
+    });
+
+    function syncMasterCheckbox() {
+        const master = document.getElementById('selectAll');
+        if (!master) return;
+        const visible = Array.from(document.querySelectorAll('.lead-check'));
+        master.checked = visible.length > 0 && visible.every(cb => cb.checked);
     }
     function updateBulkBar() {
         if (!bulkBar) return;
-        const ids = getSelectedLeadIds();
-        bulkCount.textContent = ids.length;
-        bulkBar.classList.toggle('show', ids.length > 0);
+
+        if (selectAllMatching) {
+            bulkBar.classList.add('show');
+            bulkCount.parentElement.style.display = 'none';
+            if (banner) banner.style.display = 'none';
+            if (bannerActive) {
+                bannerActive.style.display = 'inline';
+                bannerActiveCount.textContent = totalCount;
+            }
+            return;
+        }
+
+        bulkCount.parentElement.style.display = '';
+        if (bannerActive) bannerActive.style.display = 'none';
+        // Show the total persisted count, not just what's checked on this page.
+        bulkCount.textContent = selectedSet.size;
+        bulkBar.classList.toggle('show', selectedSet.size > 0);
+
+        // Show "Select all N matching" link only when the entire visible
+        // page is checked AND there are more matching rows than on the page.
+        const visible = Array.from(document.querySelectorAll('.lead-check'));
+        const allOnPageSelected = visible.length > 0 && visible.every(cb => cb.checked);
+        if (banner) {
+            banner.style.display = (allOnPageSelected && totalCount > pageCount) ? 'inline' : 'none';
+        }
+        syncMasterCheckbox();
     }
-    document.querySelectorAll('.lead-check').forEach(cb => {
-        cb.addEventListener('change', updateBulkBar);
+
+    document.getElementById('selectAll').addEventListener('change', function () {
+        const checked = this.checked;
+        document.querySelectorAll('.lead-check').forEach(cb => {
+            cb.checked = checked;
+            if (!cb.dataset.leadId) return;
+            if (checked) selectedSet.add(cb.dataset.leadId);
+            else selectedSet.delete(cb.dataset.leadId);
+        });
+        persist();
+        if (!checked) selectAllMatching = false;
+        updateBulkBar();
     });
-    document.getElementById('bulkClearBtn')?.addEventListener('click', function () {
+    document.querySelectorAll('.lead-check').forEach(cb => {
+        cb.addEventListener('change', function () {
+            // Any per-row change drops the select-all-matching state.
+            selectAllMatching = false;
+            if (cb.dataset.leadId) {
+                if (cb.checked) selectedSet.add(cb.dataset.leadId);
+                else selectedSet.delete(cb.dataset.leadId);
+                persist();
+            }
+            updateBulkBar();
+        });
+    });
+    bannerLink?.addEventListener('click', function (e) {
+        e.preventDefault();
+        selectAllMatching = true;
+        updateBulkBar();
+    });
+    bannerClear?.addEventListener('click', function (e) {
+        e.preventDefault();
+        selectAllMatching = false;
+        clearPersisted();
         document.querySelectorAll('.lead-check').forEach(cb => cb.checked = false);
         document.getElementById('selectAll').checked = false;
         updateBulkBar();
     });
+    document.getElementById('bulkClearBtn')?.addEventListener('click', function () {
+        // "Clear" wipes the entire cross-page selection, not just this page.
+        selectAllMatching = false;
+        clearPersisted();
+        document.querySelectorAll('.lead-check').forEach(cb => cb.checked = false);
+        document.getElementById('selectAll').checked = false;
+        updateBulkBar();
+    });
+    // Run once on load so the bulk bar reflects any persisted picks even
+    // before the user touches anything on this page.
+    updateBulkBar();
+
     document.getElementById('bulkAssignBtn')?.addEventListener('click', function () {
-        const ids = getSelectedLeadIds();
         const userId = document.getElementById('bulkAssignUser').value;
-        if (ids.length === 0) { alert('Select at least one lead.'); return; }
         if (!userId) { alert('Pick a user to assign to.'); return; }
         const userName = document.getElementById('bulkAssignUser').selectedOptions[0].text;
-        if (!confirm(`Assign ${ids.length} lead(s) to ${userName}?`)) return;
+
+        const fd = new FormData();
+        fd.append('user_id', userId);
+
+        let confirmCount;
+        if (selectAllMatching) {
+            confirmCount = totalCount;
+            fd.append('select_all_matching', '1');
+            // Mirror the current filter (URL querystring) into the POST body
+            // so the server applies the exact same filter.
+            const params = new URLSearchParams(window.location.search);
+            ['search','stage','state','origin','owner','lead_type','untouched',
+             'updated_from','updated_to','created_from','created_to'].forEach(k => {
+                const v = params.get(k);
+                if (v) fd.append(k, v);
+            });
+        } else {
+            // Pull from the persisted cross-page set, NOT just visible checkboxes.
+            const ids = Array.from(selectedSet);
+            if (ids.length === 0) { alert('Select at least one lead.'); return; }
+            confirmCount = ids.length;
+            ids.forEach(id => fd.append('lead_ids', id));
+        }
+
+        if (!confirm(`Assign ${confirmCount} lead(s) to ${userName}?`)) return;
 
         const btn = this;
         btn.disabled = true;
         btn.querySelector('.bulk-assign-text').style.display = 'none';
         btn.querySelector('.bulk-assign-spinner').style.display = 'inline-block';
 
-        const fd = new FormData();
-        ids.forEach(id => fd.append('lead_ids', id));
-        fd.append('user_id', userId);
-
         fetch('{{ url_for("leads_bulk_assign") }}', { method: 'POST', body: fd })
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
+                    // Wipe the persisted set so the reloaded page starts clean.
+                    clearPersisted();
                     location.reload();
                 } else {
                     alert('❌ ' + (data.error || 'Failed to assign.'));
@@ -971,5 +1129,31 @@
                 }
             });
     }
+
+    // Origin-aware stage swap in the "Add Lead" quick-create modal.
+    // Mirrors form.html — typing "Facebook" switches the stage list.
+    (function () {
+        const STAGES_BY_ORIGIN = {
+            'facebook': {{ stage_options_facebook|tojson }},
+        };
+        const STAGES_DEFAULT = {{ stage_options_default|tojson }};
+        const originInput = document.getElementById('quick-lead-origin');
+        const stageSelect = document.getElementById('quick-lead-stage');
+        if (!originInput || !stageSelect) return;
+        function repopulate() {
+            const key = (originInput.value || '').trim().toLowerCase();
+            const stages = STAGES_BY_ORIGIN[key] || STAGES_DEFAULT;
+            const current = stageSelect.value;
+            stageSelect.innerHTML = '';
+            stages.forEach(function (s, i) {
+                const opt = document.createElement('option');
+                opt.value = s; opt.textContent = s;
+                if (s === current || (!current && i === 0)) opt.selected = true;
+                stageSelect.appendChild(opt);
+            });
+        }
+        originInput.addEventListener('change', repopulate);
+        originInput.addEventListener('blur', repopulate);
+    })();
 </script>
 {% endblock %}

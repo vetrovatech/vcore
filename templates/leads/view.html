@@ -187,7 +187,19 @@
             <a href="tel:{{ lead.contact }}" class="action-btn btn-call">
                 <i class="bi bi-telephone-fill"></i> {{ lead.contact }}
             </a>
-            <a href="https://wa.me/91{{ lead.contact | replace(' ','') | replace('-','') }}"
+            {# Normalise the WhatsApp URL across the formats that show up in
+               leads — Facebook leads come in as '+919876543210' (12 digits +
+               country code), IndiaMart leads as bare 10-digit. wa.me wants
+               digits only, no '+'. Strategy:
+                 1. Strip spaces, dashes, parens, dots, '+'
+                 2. If 10 digits → prepend '91' (Indian number, country code
+                    missing — the original behaviour for IndiaMart leads).
+                 3. If 11+ digits → use as-is (already has country code).
+               Bug before this fix: Facebook leads ended up at
+               wa.me/91+919876543210 → wa.me 404. #}
+            {%- set _wa_raw = lead.contact | replace(' ','') | replace('-','') | replace('(','') | replace(')','') | replace('.','') | replace('+','') -%}
+            {%- set _wa_num = _wa_raw if _wa_raw | length >= 11 else '91' ~ _wa_raw -%}
+            <a href="https://wa.me/{{ _wa_num }}"
                target="_blank" class="action-btn btn-wa">
                 <i class="bi bi-whatsapp"></i> WhatsApp
             </a>
@@ -206,7 +218,7 @@
     <!-- Quick Stage Change -->
     <div class="mt-3 pt-3 border-top d-flex align-items-center gap-2 flex-wrap">
         <span style="font-size:0.73rem;color:#94a3b8;font-weight:700;letter-spacing:0.5px;">MOVE TO:</span>
-        {% for s in ['New Lead','Contacted','Not Connected','Qualified','PI Shared','Closed Won','Closed Lost','Junk'] %}
+        {% for s in lead.stage_options() %}
         {% if s != lead.stage %}
         <form method="POST" action="{{ url_for('lead_edit', id=lead.id) }}" style="display:inline;">
             <input type="hidden" name="stage" value="{{ s }}">
@@ -217,6 +229,11 @@
             <input type="hidden" name="state" value="{{ lead.state or '' }}">
             <input type="hidden" name="origin" value="{{ lead.origin or '' }}">
             <input type="hidden" name="owner_id" value="{{ lead.owner_id or '' }}">
+            {# IMPORTANT: include assigned_to_id too, or lead_edit will wipe the
+               assignment (the handler treats a missing field as Unassigned).
+               Bug fixed 2026-06-08 after rohits's / Abhay's MOVE TO clicks
+               silently unassigned 38+ leads. #}
+            <input type="hidden" name="assigned_to_id" value="{{ lead.assigned_to_id or '' }}">
             <button type="submit" class="btn btn-sm {% if s == 'Junk' %}btn-outline-dark{% else %}btn-outline-secondary{% endif %} stage-selector">{{ s }}</button>
         </form>
         {% endif %}
@@ -381,7 +398,7 @@
             <div class="note-box mb-2">{{ lead.notes }}</div>
             {% endif %}
             <textarea class="form-control" id="noteInput" rows="3"
-                placeholder="Add a note..." style="font-size:0.84rem;">{{ lead.notes or '' }}</textarea>
+                placeholder="Add a note..." style="font-size:0.84rem;"></textarea>
             <button class="btn btn-warning btn-sm mt-2" onclick="saveNote()">
                 <i class="bi bi-save"></i> Save Note
             </button>
@@ -432,12 +449,13 @@
 {% block extra_js %}
 <script>
 function saveNote() {
-    const note = document.getElementById('noteInput').value;
+    const input = document.getElementById('noteInput');
+    const note = input.value;
     const fd = new FormData();
     fd.append('notes', note);
     fetch('{{ url_for("lead_save_note", id=lead.id) }}', { method:'POST', body:fd })
         .then(r => r.json())
-        .then(d => { if (d.success) location.reload(); });
+        .then(d => { if (d.success) { input.value = ''; location.reload(); } });
 }
 
 function setCustomerType(type) {

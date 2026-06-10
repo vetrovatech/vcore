@@ -2980,12 +2980,218 @@ def leads_webhook():
         return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
+def _build_leads_query(args, *, restrict_to_current_user=True):
+    """Apply Leadfy list filters from a dict-like `args` (request.args or
+    request.form) and return the SQLAlchemy query.
+
+    Shared by `leads_list` (paginated render) and `leads_bulk_assign`
+    (select-all-matching mode). Keep filter logic in one place so the
+    bulk-assign endpoint can re-run the exact same filter the user is
+    looking at without re-implementing it.
+
+    `restrict_to_current_user` enforces the same access rule as the list
+    page — non-managers can only act on leads assigned to them.
+    """
+    from models import Lead
+    from datetime import datetime
+
+    query = Lead.query
+
+    if restrict_to_current_user and not current_user.is_manager_or_admin():
+        query = query.filter(Lead.assigned_to_id == current_user.id)
+
+    search_query = (args.get('search') or '').strip()
+    if search_query:
+        query = query.filter(
+            (Lead.name.ilike(f'%{search_query}%')) |
+            (Lead.contact.ilike(f'%{search_query}%')) |
+            (Lead.company.ilike(f'%{search_query}%'))
+        )
+    if args.get('stage'):
+        query = query.filter(Lead.stage == args.get('stage'))
+    if args.get('state'):
+        query = query.filter(Lead.state.ilike(f"%{args.get('state')}%"))
+    if args.get('origin'):
+        query = query.filter(Lead.origin == args.get('origin'))
+    if args.get('lead_type'):
+        query = query.filter(Lead.lead_type == args.get('lead_type'))
+    untouched = args.get('untouched', '')
+    if untouched == '1':
+        query = query.filter(Lead.is_untouched == True)  # noqa: E712
+    elif untouched == '0':
+        query = query.filter(Lead.is_untouched == False)  # noqa: E712
+    if args.get('owner'):
+        try:
+            query = query.filter(Lead.owner_id == int(args.get('owner')))
+        except ValueError:
+            pass
+
+    for key, op in (
+        ('updated_from', lambda v: Lead.updated_at >= datetime.strptime(v, '%Y-%m-%d')),
+        ('updated_to',   lambda v: Lead.updated_at <= datetime.strptime(v + ' 23:59:59', '%Y-%m-%d %H:%M:%S')),
+        ('created_from', lambda v: Lead.created_at >= datetime.strptime(v, '%Y-%m-%d')),
+        ('created_to',   lambda v: Lead.created_at <= datetime.strptime(v + ' 23:59:59', '%Y-%m-%d %H:%M:%S')),
+    ):
+        v = (args.get(key) or '').strip()
+        if v:
+            try:
+                query = query.filter(op(v))
+            except ValueError:
+                pass
+
+    return query
+
+
+@app.route('/leads/agent-log')
+@login_required
+def leads_agent_log():
+    """Owner-wise stage-activity matrix for the Leadfy admin (KAN-52).
+
+    Renders a single page with:
+      • A date-range picker (Today / Yesterday / This Week / This Month /
+        Last Month / Custom).
+      • A matrix table: rows = lead stages, columns = lead owners, cells =
+        number of *stage-change events* recorded in `lead_history` for that
+        owner's leads in the chosen range. Click a cell to drill into the
+        same filtered slice on /leads.
+
+    Why "activity" and not "snapshot": the ticket title is "stage activity",
+    so a cell answers "how many leads did Ansar move INTO 'PI Shared'
+    yesterday?" instead of "how many of Ansar's leads are currently in 'PI
+    Shared'?". The two differ when leads later move out of the stage or
+    when ownership transfers. LeadHistory rows with action='stage_change'
+    are the canonical activity source.
+
+    Implementation note: the target stage of each event is currently
+    embedded in `LeadHistory.description` like
+    "Stage changed from <strong>X</strong> to <strong>Y</strong>". We
+    extract it with a Postgres `substring(... from '...')` regex at query
+    time so this ships without a schema migration. If query latency ever
+    becomes an issue, add a `target_stage` column and backfill — the
+    template-side rendering wouldn't need to change.
+
+    Manager-or-admin only — same gate as bulk-assign. Regular agents would
+    leak peer activity which isn't appropriate.
+    """
+    if not current_user.is_manager_or_admin():
+        flash('Access denied.', 'danger')
+        return redirect(url_for('leads_list'))
+
+    from models import Lead, LeadHistory, User as UserModel, LEAD_STAGES_ALL, LEAD_STAGE_BADGE_CLASSES
+    from sqlalchemy import func, literal_column
+    from datetime import datetime, timedelta
+
+    preset = (request.args.get('preset') or 'today').strip()
+    date_from_str = (request.args.get('date_from') or '').strip()
+    date_to_str = (request.args.get('date_to') or '').strip()
+
+    # Resolve the date range. `start` is inclusive, `end` is exclusive (so a
+    # "today" range covers [00:00 today, 00:00 tomorrow)). Times are UTC
+    # because LeadHistory.created_at stores naive UTC via datetime.utcnow.
+    now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if preset == 'yesterday':
+        end = today_start
+        start = end - timedelta(days=1)
+    elif preset == 'week':
+        # Monday 00:00 → tomorrow 00:00 (covers today)
+        start = (today_start - timedelta(days=now.weekday()))
+        end = today_start + timedelta(days=1)
+    elif preset == 'month':
+        start = today_start.replace(day=1)
+        end = today_start + timedelta(days=1)
+    elif preset == 'last_month':
+        # Last day of previous month at 23:59 → 1st of current month at 00:00.
+        first_of_this_month = today_start.replace(day=1)
+        last_month_last_day = first_of_this_month - timedelta(days=1)
+        start = last_month_last_day.replace(day=1)
+        end = first_of_this_month
+    elif preset == 'custom' and date_from_str and date_to_str:
+        try:
+            start = datetime.strptime(date_from_str, '%Y-%m-%d')
+            end = datetime.strptime(date_to_str, '%Y-%m-%d') + timedelta(days=1)
+        except ValueError:
+            # Bad input → fall through to today
+            preset = 'today'
+            start = today_start
+            end = today_start + timedelta(days=1)
+    else:
+        # default 'today'
+        preset = 'today'
+        start = today_start
+        end = today_start + timedelta(days=1)
+
+    # Postgres-native regex extraction of the target stage from the existing
+    # HTML description format. The captured group is the new stage name.
+    # literal_column (not text()) so the expression is a ColumnClause and
+    # carries the .label() / GROUP-BY semantics SQLAlchemy needs.
+    target_stage_expr = literal_column(
+        "substring(lead_history.description from 'to <strong>([^<]+)</strong>')"
+    ).label('target_stage')
+
+    grouped = (db.session.query(
+                    Lead.owner_id.label('owner_id'),
+                    target_stage_expr,
+                    func.count(LeadHistory.id).label('cnt'),
+                )
+                .join(Lead, LeadHistory.lead_id == Lead.id)
+                .filter(LeadHistory.action == 'stage_change')
+                .filter(LeadHistory.created_at >= start)
+                .filter(LeadHistory.created_at < end)
+                .group_by(Lead.owner_id, target_stage_expr)
+                .all())
+
+    # Build matrix[owner_id][stage_name] = count. Drop NULL owner rows
+    # (leads with no assigned owner — would render as a "no owner" column
+    # which adds noise; admins can find these via the existing list filter
+    # if they care).
+    matrix = {}
+    for r in grouped:
+        if r.owner_id is None or not r.target_stage:
+            continue
+        matrix.setdefault(r.owner_id, {})[r.target_stage] = int(r.cnt)
+
+    # All active users become columns even if they have 0 events in this
+    # range — this makes "who hasn't done anything this week?" obvious at a
+    # glance. Sort alphabetically per the ticket.
+    owners = (UserModel.query
+                .filter(UserModel.is_active == True)  # noqa: E712
+                .order_by(UserModel.username)
+                .all())
+
+    # All defined stages become rows (LEAD_STAGES_ALL is the union of the
+    # default + Facebook funnels — keeps the matrix stable as we add new
+    # funnels). Render in the order they appear in LEAD_STAGES_ALL so the
+    # familiar progression reads top→bottom.
+    stages = list(LEAD_STAGES_ALL)
+
+    # Totals row + column + grand total.
+    stage_totals = {s: sum(matrix.get(o.id, {}).get(s, 0) for o in owners) for s in stages}
+    owner_totals = {o.id: sum(matrix.get(o.id, {}).get(s, 0) for s in stages) for o in owners}
+    grand_total = sum(owner_totals.values())
+
+    return render_template('leads/agent_log.html',
+                           owners=owners,
+                           stages=stages,
+                           matrix=matrix,
+                           stage_totals=stage_totals,
+                           owner_totals=owner_totals,
+                           grand_total=grand_total,
+                           preset=preset,
+                           # Display the inclusive end-of-range — what the
+                           # user typed / what the preset label says — not
+                           # the exclusive `end` we use internally.
+                           date_from=start.strftime('%Y-%m-%d'),
+                           date_to=(end - timedelta(days=1)).strftime('%Y-%m-%d'),
+                           badge_class_for=LEAD_STAGE_BADGE_CLASSES)
+
+
 @app.route('/leads')
 @login_required
 def leads_list():
     """List all leads with search and filter"""
     from models import Lead, User
-    from datetime import datetime
 
     search_query = request.args.get('search', '')
     stage_filter = request.args.get('stage', '')
@@ -2996,65 +3202,23 @@ def leads_list():
     updated_to = request.args.get('updated_to', '')
     created_from = request.args.get('created_from', '')
     created_to = request.args.get('created_to', '')
-
-    query = Lead.query
-
-    # Non-admin/manager users only see leads assigned to them
-    if not current_user.is_manager_or_admin():
-        query = query.filter(Lead.assigned_to_id == current_user.id)
-
     lead_type_filter = request.args.get('lead_type', '')
-    untouched_filter = request.args.get('untouched', '')
 
-    if search_query:
-        query = query.filter(
-            (Lead.name.ilike(f'%{search_query}%')) |
-            (Lead.contact.ilike(f'%{search_query}%')) |
-            (Lead.company.ilike(f'%{search_query}%'))
-        )
-    if stage_filter:
-        query = query.filter(Lead.stage == stage_filter)
-    if state_filter:
-        query = query.filter(Lead.state.ilike(f'%{state_filter}%'))
-    if origin_filter:
-        query = query.filter(Lead.origin == origin_filter)
-    if lead_type_filter:
-        query = query.filter(Lead.lead_type == lead_type_filter)
-    if untouched_filter == '1':
-        query = query.filter(Lead.is_untouched == True)
-    elif untouched_filter == '0':
-        query = query.filter(Lead.is_untouched == False)
-    if owner_filter:
-        try:
-            query = query.filter(Lead.owner_id == int(owner_filter))
-        except ValueError:
-            pass
+    query = _build_leads_query(request.args)
 
-    if updated_from:
-        try:
-            query = query.filter(Lead.updated_at >= datetime.strptime(updated_from, '%Y-%m-%d'))
-        except ValueError:
-            pass
-    if updated_to:
-        try:
-            query = query.filter(Lead.updated_at <= datetime.strptime(updated_to + ' 23:59:59', '%Y-%m-%d %H:%M:%S'))
-        except ValueError:
-            pass
-    if created_from:
-        try:
-            query = query.filter(Lead.created_at >= datetime.strptime(created_from, '%Y-%m-%d'))
-        except ValueError:
-            pass
-    if created_to:
-        try:
-            query = query.filter(Lead.created_at <= datetime.strptime(created_to + ' 23:59:59', '%Y-%m-%d %H:%M:%S'))
-        except ValueError:
-            pass
-
-    PER_PAGE = 15
+    # Page size — defaults to 15 but caller can pass ?per_page=… up to 500
+    # so a manager who wants to select-all a long filter result can crank
+    # the page up if they don't want to use the "select all matching" banner.
+    DEFAULT_PER_PAGE = 15
+    PER_PAGE_MAX = 500
+    try:
+        per_page = int(request.args.get('per_page', DEFAULT_PER_PAGE))
+    except ValueError:
+        per_page = DEFAULT_PER_PAGE
+    per_page = max(1, min(per_page, PER_PAGE_MAX))
     page = request.args.get('page', 1, type=int)
 
-    pagination = query.order_by(Lead.created_at.desc()).paginate(page=page, per_page=PER_PAGE, error_out=False)
+    pagination = query.order_by(Lead.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
     leads = pagination.items
     total_leads = Lead.query.count()
     users = User.query.filter_by(is_active=True).order_by(User.username).all()
@@ -3065,7 +3229,7 @@ def leads_list():
     states = db.session.query(Lead.state).filter(Lead.state.isnot(None)).distinct().order_by(Lead.state).all()
     states = [s[0] for s in states]
 
-    from models import IndiamartToken
+    from models import IndiamartToken, LEAD_STAGES_ALL, LEAD_STAGES_DEFAULT, LEAD_STAGES_FACEBOOK
     indiamart_token = IndiamartToken.query.first()
     fb_token_set = bool(os.getenv('FB_PAGE_ACCESS_TOKEN', ''))
 
@@ -3087,14 +3251,18 @@ def leads_list():
                            created_from=created_from,
                            created_to=created_to,
                            indiamart_token=indiamart_token,
-                           fb_token_set=fb_token_set)
+                           fb_token_set=fb_token_set,
+                           stage_options_all=LEAD_STAGES_ALL,
+                           stage_options_default=LEAD_STAGES_DEFAULT,
+                           stage_options_facebook=LEAD_STAGES_FACEBOOK,
+                           per_page=per_page)
 
 
 @app.route('/leads/new', methods=['GET', 'POST'])
 @login_required
 def lead_new():
     """Create a new lead"""
-    from models import Lead, User
+    from models import Lead, User, default_stage_for_origin, stages_for_origin
 
     if request.method == 'POST':
         name = request.form.get('name', '').strip() or None
@@ -3102,8 +3270,8 @@ def lead_new():
         contact = request.form.get('contact', '').strip() or None
         city = request.form.get('city', '').strip() or None
         state = request.form.get('state', '').strip() or None
-        stage = request.form.get('stage', 'New Lead')
         origin = request.form.get('origin', '').strip() or None
+        stage = request.form.get('stage') or default_stage_for_origin(origin)
 
         lead = Lead(
             name=name,
@@ -3121,7 +3289,10 @@ def lead_new():
         return redirect(url_for('leads_list'))
 
     users = User.query.filter_by(is_active=True).order_by(User.username).all()
-    return render_template('leads/form.html', lead=None, users=users, action='new')
+    return render_template(
+        'leads/form.html', lead=None, users=users, action='new',
+        stage_options=stages_for_origin(None),
+    )
 
 
 @app.route('/leads/<int:id>')
@@ -3141,6 +3312,7 @@ def lead_edit(id):
     """Edit an existing lead"""
     from models import Lead, User, LeadHistory
 
+    from models import stages_for_origin
     lead = Lead.query.get_or_404(id)
 
     if request.method == 'POST':
@@ -3155,29 +3327,43 @@ def lead_edit(id):
             lead.stage = new_stage
             lead.is_untouched = False
 
-        # Track owner change
-        owner_id = request.form.get('owner_id') or None
-        new_owner_id = int(owner_id) if owner_id else None
-        if new_owner_id != lead.owner_id:
-            old_owner = User.query.get(lead.owner_id).username if lead.owner_id else 'Unassigned'
-            new_owner = User.query.get(new_owner_id).username if new_owner_id else 'Unassigned'
-            changes.append(LeadHistory(lead_id=lead.id, user_id=current_user.id,
-                action='field_change',
-                description=f'Owner changed from <strong>{old_owner}</strong> to <strong>{new_owner}</strong>'))
-            lead.owner_id = new_owner_id
+        # Track owner change — ONLY if the field is actually present in the
+        # form. Partial-form submitters (e.g. the MOVE TO quick-change buttons
+        # on the lead detail page) used to wipe whatever they didn't include,
+        # because `request.form.get(...) or None` returns None for both
+        # "missing field" and "empty field". A missing field means
+        # "don't touch", an empty field means "clear it". Guarding with
+        # `'owner_id' in request.form` distinguishes the two cleanly.
+        if 'owner_id' in request.form:
+            owner_id = request.form.get('owner_id') or None
+            new_owner_id = int(owner_id) if owner_id else None
+            if new_owner_id != lead.owner_id:
+                old_owner = User.query.get(lead.owner_id).username if lead.owner_id else 'Unassigned'
+                new_owner = User.query.get(new_owner_id).username if new_owner_id else 'Unassigned'
+                changes.append(LeadHistory(lead_id=lead.id, user_id=current_user.id,
+                    action='field_change',
+                    description=f'Owner changed from <strong>{old_owner}</strong> to <strong>{new_owner}</strong>'))
+                lead.owner_id = new_owner_id
 
-        # Track assigned_to change
-        assigned_to_raw = request.form.get('assigned_to_id') or None
-        new_assigned_to_id = int(assigned_to_raw) if assigned_to_raw else None
-        if new_assigned_to_id != lead.assigned_to_id:
-            old_assignee = User.query.get(lead.assigned_to_id).username if lead.assigned_to_id else 'Unassigned'
-            new_assignee = User.query.get(new_assigned_to_id).username if new_assigned_to_id else 'Unassigned'
-            changes.append(LeadHistory(lead_id=lead.id, user_id=current_user.id,
-                action='field_change',
-                description=f'Assigned To changed from <strong>{old_assignee}</strong> to <strong>{new_assignee}</strong>'))
-            lead.assigned_to_id = new_assigned_to_id
+        # Track assigned_to change — same guard pattern as owner_id above.
+        # The MOVE TO quick-change form in templates/leads/view.html USED to
+        # omit this field, which silently unassigned the lead. Fixed
+        # 2026-06-08; the guard keeps it safe even if a future caller
+        # forgets it.
+        if 'assigned_to_id' in request.form:
+            assigned_to_raw = request.form.get('assigned_to_id') or None
+            new_assigned_to_id = int(assigned_to_raw) if assigned_to_raw else None
+            if new_assigned_to_id != lead.assigned_to_id:
+                old_assignee = User.query.get(lead.assigned_to_id).username if lead.assigned_to_id else 'Unassigned'
+                new_assignee = User.query.get(new_assigned_to_id).username if new_assigned_to_id else 'Unassigned'
+                changes.append(LeadHistory(lead_id=lead.id, user_id=current_user.id,
+                    action='field_change',
+                    description=f'Assigned To changed from <strong>{old_assignee}</strong> to <strong>{new_assignee}</strong>'))
+                lead.assigned_to_id = new_assigned_to_id
 
-        # Track other field changes
+        # Track other field changes — same partial-form guard. Skip fields
+        # the caller didn't send so quick-action forms that only send a
+        # subset (e.g. MOVE TO) leave the rest alone.
         field_map = [
             ('name', 'name', 'Name'),
             ('contact', 'contact', 'Phone'),
@@ -3187,6 +3373,8 @@ def lead_edit(id):
             ('origin', 'origin', 'Origin'),
         ]
         for form_key, model_attr, label in field_map:
+            if form_key not in request.form:
+                continue
             new_val = request.form.get(form_key, '').strip() or None
             old_val = getattr(lead, model_attr)
             if new_val != old_val:
@@ -3201,7 +3389,10 @@ def lead_edit(id):
         return redirect(url_for('lead_view', id=lead.id))
 
     users = User.query.filter_by(is_active=True).order_by(User.username).all()
-    return render_template('leads/form.html', lead=lead, users=users, action='edit')
+    return render_template(
+        'leads/form.html', lead=lead, users=users, action='edit',
+        stage_options=stages_for_origin(lead.origin),
+    )
 
 
 @app.route('/leads/<int:id>/delete', methods=['POST'])
@@ -3224,28 +3415,51 @@ def lead_delete(id):
 @login_required
 def leads_bulk_assign():
     """Bulk-assign multiple leads to a single user (sets both owner and assigned_to).
-    Available to any logged-in user (was admin-only until 2026-05-31)."""
+    Available to any logged-in user (was admin-only until 2026-05-31).
+
+    Two input modes:
+      • `lead_ids[]` — assign exactly those IDs (original 15-per-page flow).
+      • `select_all_matching=1` + filter params (same names as the leads_list
+        querystring: stage, origin, search, state, owner, lead_type, untouched,
+        updated_from/to, created_from/to) — re-runs the filter SQL and assigns
+        every matching lead. Lets a manager assign 100s of leads at once
+        without depending on pagination.
+    """
     from models import Lead, User, LeadHistory
 
-    lead_ids = request.form.getlist('lead_ids')
     user_id_raw = request.form.get('user_id')
-
-    if not lead_ids:
-        return jsonify({'success': False, 'error': 'No leads selected.'}), 400
     if not user_id_raw:
         return jsonify({'success': False, 'error': 'No user selected.'}), 400
 
     try:
-        lead_ids = [int(x) for x in lead_ids]
         new_user_id = int(user_id_raw)
     except ValueError:
-        return jsonify({'success': False, 'error': 'Invalid ids.'}), 400
+        return jsonify({'success': False, 'error': 'Invalid user id.'}), 400
 
     new_user = User.query.get(new_user_id)
     if not new_user or not new_user.is_active:
         return jsonify({'success': False, 'error': 'User not found or inactive.'}), 400
 
-    leads = Lead.query.filter(Lead.id.in_(lead_ids)).all()
+    select_all_matching = request.form.get('select_all_matching') == '1'
+
+    if select_all_matching:
+        # Re-apply the same filter the user is looking at in the UI. The form
+        # body carries the filter params (mirrored from the URL querystring).
+        leads = _build_leads_query(request.form).all()
+    else:
+        lead_ids = request.form.getlist('lead_ids')
+        if not lead_ids:
+            return jsonify({'success': False, 'error': 'No leads selected.'}), 400
+        try:
+            lead_ids = [int(x) for x in lead_ids]
+        except ValueError:
+            return jsonify({'success': False, 'error': 'Invalid lead ids.'}), 400
+        # Mirror the list-page access rule: non-managers can only bulk-assign
+        # leads already assigned to them.
+        q = Lead.query.filter(Lead.id.in_(lead_ids))
+        if not current_user.is_manager_or_admin():
+            q = q.filter(Lead.assigned_to_id == current_user.id)
+        leads = q.all()
     updated = 0
     for lead in leads:
         changed = False
@@ -3784,7 +3998,7 @@ def _do_facebook_sync(created_by_id):
                     state=state,
                     notes=notes,
                     origin='Facebook',
-                    stage='New Lead',
+                    stage='Untouched',
                     lead_type='Enquiry',
                     facebook_lead_id=fb_lead_id,
                     owner_id=None,
@@ -3874,7 +4088,7 @@ def facebook_webhook_receive():
     import hmac as _hmac
     import hashlib as _hashlib
     import requests as req_lib
-    from models import Lead
+    from models import Lead, default_stage_for_origin
 
     raw = request.get_data(cache=True)
 
@@ -3969,7 +4183,9 @@ def facebook_webhook_receive():
             lead = Lead(
                 name=name, contact=phone, email=email, city=city, state=state,
                 notes=f'Webhook · form_id={lead_data.get("form_id", "")}',
-                origin='Facebook', stage='New Lead', lead_type='Enquiry',
+                origin='Facebook',
+                stage=default_stage_for_origin('Facebook'),
+                lead_type='Enquiry',
                 facebook_lead_id=fb_lead_id, owner_id=None, assigned_to_id=None,
                 created_by=creator_id,
                 created_at=fb_created or datetime.utcnow(),
@@ -4073,6 +4289,10 @@ def tally_index():
     client_name     = request.args.get('client_name', '').strip()
     supplier_id     = request.args.get('supplier_id', '')
     delivery_status = request.args.get('delivery_status', '')
+    # One-click source toggle — '' = all, 'bathqube' = Bathqube only,
+    # 'regular' = everything except Bathqube. Used by the segmented button
+    # group at the top of tally/index.html.
+    source_filter   = request.args.get('source', '')
 
     # ── Regular Quote rows (status='Accepted') ────────────────────────────────
     q = Quote.query.filter(Quote.status == 'Accepted')
@@ -4087,7 +4307,8 @@ def tally_index():
     if delivery_status:
         q = q.filter(Quote.delivery_status == delivery_status)
 
-    quotes = q.order_by(Quote.quote_date.desc()).all()
+    # Skip the regular-quote query entirely when the user clicks "Bathqube only".
+    quotes = [] if source_filter == 'bathqube' else q.order_by(Quote.quote_date.desc()).all()
 
     def _row_from(quote, pis, source, sort_date):
         """Build a uniform tally row dict for either source. The template only
@@ -4180,7 +4401,8 @@ def tally_index():
     # salesman_id intentionally not applied to bathqube — these come from the
     # public configurator, no created_by salesperson.
 
-    bquotes = bq.order_by(BathqubeQuote.created_at.desc()).all()
+    # Skip the bathqube query when the user clicks "Other" (regular) only.
+    bquotes = [] if source_filter == 'regular' else bq.order_by(BathqubeQuote.created_at.desc()).all()
     for quote in bquotes:
         pis = PurchaseInvoice.query.filter_by(bathqube_quote_id=quote.id).all()
         if supplier_id and not any(str(pi.supplier_id) == supplier_id for pi in pis):
@@ -4215,6 +4437,7 @@ def tally_index():
         'client_name':     client_name,
         'supplier_id':     supplier_id,
         'delivery_status': delivery_status,
+        'source':          source_filter,
     }
 
     return render_template('tally/index.html', rows=rows, totals=totals,
@@ -4902,9 +5125,17 @@ def _bathqube_seed_items_from_config(quote):
         → one BathqubeQuoteItem per panel per enclosure.
       - LEGACY (flat fields at top-level): cfg['glassPanels'] = [...] with single type/material/etc.
         → wrap as one synthetic enclosure, then same per-panel expansion.
+
+    Panel sizes render in INCHES for the staff (vcore is always inches),
+    with the original-unit value in parens so the staff can cross-check
+    against what the customer typed. Pre-feature quotes (no dimensionUnit
+    on configData) keep the historical "Wft × Hft" rendering — those
+    quotes were typed in feet, no conversion needed.
     """
+    from utils.bathqube_dimensions import to_inches, get_dimension_unit
     cfg = quote.config or {}
     enclosures = _bathqube_enclosures_from_cfg(cfg)
+    dim_unit = get_dimension_unit(cfg)  # 'mm'|'cm'|'in'|'m' or None for legacy
 
     items = []
     sort = 0
@@ -4936,10 +5167,30 @@ def _bathqube_seed_items_from_config(quote):
                 sqft = float(p.get('sqft') or (width * height))
             except (TypeError, ValueError):
                 width = height = sqft = 0.0
+            if dim_unit:
+                # Always show inches for staff; include original-unit
+                # value in parens so the customer's typed numbers stay
+                # traceable in the line-item description.
+                w_in = to_inches(width, dim_unit)
+                h_in = to_inches(height, dim_unit)
+                size_str = (
+                    f'{w_in:.2f}" × {h_in:.2f}" '
+                    f"(customer: {width:g}×{height:g} {dim_unit})"
+                )
+            else:
+                # Legacy pre-feature quote — customer typed in feet, no
+                # conversion (keeps historical line items unchanged).
+                size_str = f"{width:g}×{height:g}ft"
+            # KAN-45: include the per-sqft rate so the revised quote
+            # surfaces the unit price (same info the initial Bathqube
+            # PDF shows). Embedded inside the bracketed sqft block so
+            # the PDF renderer can pull the whole "[…]" out and style
+            # it as a muted sub-line under the main description.
+            rate_str = f" @ ₹{price_per_sqft:,.0f}/sq.ft" if price_per_sqft > 0 else ""
             desc = (
                 f"{enc_name} — {type_label}"
                 + (f" ({spec})" if spec else '')
-                + f" · Panel {pidx}: {width}×{height}ft ({sqft:.2f} sq.ft)"
+                + f" · Panel {pidx}: {size_str} [{sqft:.2f} sq.ft{rate_str}]"
             )
             rate = round(sqft * price_per_sqft, 2)
             amount = round(rate * qty, 2)

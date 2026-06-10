@@ -241,10 +241,16 @@
 </form>
 
 {# ───────────── Initial state for the JS bootstrap ───────────── #}
+{# dimensionUnit is the customer's chosen unit on the configurator
+   (mm/cm/in/m). The JS needs it to compute sqft via inches conversion
+   instead of treating panel.width × panel.height as feet. Falls back to
+   None for legacy pre-feature quotes (those values ARE in feet so
+   width×height directly gives sqft, which is the JS's existing math). #}
 <script type="application/json" id="initialState">
 {
   "enclosures": {{ enclosures|tojson }},
-  "options": {{ option_lists|tojson }}
+  "options": {{ option_lists|tojson }},
+  "dimensionUnit": {{ (quote.config.get('dimensionUnit') if quote.config and quote.config.get('dimensionUnit') in ['mm','cm','in','m'] else None)|tojson }}
 }
 </script>
 

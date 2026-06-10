@@ -119,15 +119,47 @@ def generate_bathqube_pdf(quote):
     story.append(Paragraph("ITEMS", h_section))
     items = list(quote.items) if quote.items else []
     if items:
-        rows = [['Description', 'Qty', 'Rate (INR)', 'Amount (INR)']]
+        # KAN-45: column structure mirrors the original Bathqube estimate
+        # PDF — a dedicated Sq.ft column and a per-sqft Rate column.
+        # For seeded panel items, we parse the trailing "[N sq.ft @ ₹X/sq.ft]"
+        # bracket out of the description and surface those values in their
+        # own columns (cleaner than embedding them as a sub-line). For
+        # free-form extras (added by staff during revise — no bracket on
+        # their description) we show "—" in Sq.ft and use the stored rate
+        # as a per-unit number, matching the existing semantics.
+        import re as _re
+        SQFT_RX = _re.compile(r'^(.*?)\s*\[\s*([\d.,]+)\s*sq\.ft(?:\s*@\s*₹\s*([\d.,]+)/sq\.ft)?\s*\]\s*$')
+        # Header text uses no rupee glyph because the default Helvetica
+        # ReportLab uses for table cells lacks ₹ and renders it as a
+        # "missing glyph" box. The Amount column header makes the
+        # currency clear from context.
+        rows = [['Description', 'Sq.ft', 'Rate / sq.ft', 'Qty', 'Amount (INR)']]
         for it in items:
+            desc_text = it.description or ''
+            match = SQFT_RX.search(desc_text)
+            if match:
+                main_desc = match.group(1)
+                sqft_val = match.group(2)
+                ppsft_val = match.group(3)  # may be None for legacy items
+                sqft_cell = sqft_val
+                rate_cell = f"{float(ppsft_val.replace(',', '')):,.0f}" if ppsft_val else '—'
+            else:
+                # Extras / legacy / free-form lines — no sqft block
+                main_desc = desc_text
+                sqft_cell = '—'
+                rate_cell = f"{float(it.rate):,.2f}"
             rows.append([
-                Paragraph(it.description, body),
+                Paragraph(main_desc, body),
+                sqft_cell,
+                rate_cell,
                 f"{float(it.quantity):g}",
-                f"{float(it.rate):,.2f}",
                 f"{float(it.amount):,.2f}",
             ])
-        items_tbl = Table(rows, colWidths=[95 * mm, 18 * mm, 28 * mm, 32 * mm], repeatRows=1)
+        items_tbl = Table(
+            rows,
+            colWidths=[80 * mm, 18 * mm, 22 * mm, 15 * mm, 30 * mm],
+            repeatRows=1,
+        )
         items_style = [
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F9FAFB')),
             ('TEXTCOLOR', (0, 0), (-1, 0), MUTED),

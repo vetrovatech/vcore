@@ -27,6 +27,34 @@
   const stateEl = document.getElementById('initialState');
   const initial = stateEl ? JSON.parse(stateEl.textContent) : { enclosures: [], options: {} };
   const options = initial.options || {};
+  // Customer's chosen dimension unit on the configurator. The JS computes
+  // sqft via inches conversion; when null (legacy pre-feature quotes), we
+  // fall back to treating panel values as feet (which is what they ARE for
+  // those quotes — width*height directly gives sqft).
+  const dimensionUnit = initial.dimensionUnit || null;
+  // Label suffix shown next to the Width/Height inputs. For modern quotes
+  // we show the customer's actual unit; for legacy (pre-feature) quotes the
+  // values ARE in feet so we fall back to "ft".
+  const unitLabel = dimensionUnit || 'ft';
+
+  // Inches per ONE unit of the customer's chosen unit. Used to convert
+  // panel.width / panel.height (which are in the customer's unit) into
+  // inches before computing sqft = (in × in) / 144.
+  const UNIT_TO_INCHES = { mm: 1 / 25.4, cm: 1 / 2.54, in: 1, m: 39.37007874015748 };
+  // Per-unit floor — the legacy code clamped to 0.5 (feet). Pick something
+  // comparable for the metric units so a stray 0 in an input box doesn't
+  // suddenly zero out the sqft.
+  const MIN_BY_UNIT = { mm: 100, cm: 10, in: 4, m: 0.1 };
+  function panelSqft(w, h) {
+    if (dimensionUnit) {
+      const min = MIN_BY_UNIT[dimensionUnit] || 0.5;
+      const wi = Math.max(min, w) * UNIT_TO_INCHES[dimensionUnit];
+      const hi = Math.max(min, h) * UNIT_TO_INCHES[dimensionUnit];
+      return (wi * hi) / 144;
+    }
+    // Legacy: values ARE in feet, sqft = w × h directly.
+    return Math.max(0.5, w) * Math.max(0.5, h);
+  }
 
   // Working state: a deep copy so we never accidentally mutate `initial`.
   // Each enclosure carries a synthetic _uid for React-like list keys.
@@ -81,7 +109,7 @@
 
   // ── 2. Render an enclosure card ────────────────────────────────────────────
   function renderEnclosure(enc, idx) {
-    const sqft = enc.glassPanels.reduce((s, p) => s + Math.max(0.5, p.width) * Math.max(0.5, p.height), 0);
+    const sqft = enc.glassPanels.reduce((s, p) => s + panelSqft(p.width, p.height), 0);
     const subtotal = sqft * enc.pricePerSqft * Math.max(1, enc.quantity);
 
     const card = document.createElement('div');
@@ -191,18 +219,19 @@
 
   // ── 3. Render a panel row inside an enclosure body ─────────────────────────
   function renderPanel(panel, idx, total) {
-    const sqft = Math.max(0.5, panel.width) * Math.max(0.5, panel.height);
+    const sqft = panelSqft(panel.width, panel.height);
+    const minInput = MIN_BY_UNIT[dimensionUnit] || 0.5;
     const row = document.createElement('div');
     row.className = 'row g-2 align-items-end mb-2 panel-row';
     row.innerHTML = `
       <div class="col-1 text-muted small">Panel ${idx + 1}</div>
       <div class="col-3">
-        <label class="form-label small mb-0">Width (ft)</label>
-        <input class="form-control form-control-sm field-panel-width" type="number" min="0.5" step="any" value="${panel.width}">
+        <label class="form-label small mb-0">Width (${unitLabel})</label>
+        <input class="form-control form-control-sm field-panel-width" type="number" min="${minInput}" step="any" value="${panel.width}">
       </div>
       <div class="col-3">
-        <label class="form-label small mb-0">Height (ft)</label>
-        <input class="form-control form-control-sm field-panel-height" type="number" min="0.5" step="any" value="${panel.height}">
+        <label class="form-label small mb-0">Height (${unitLabel})</label>
+        <input class="form-control form-control-sm field-panel-height" type="number" min="${minInput}" step="any" value="${panel.height}">
       </div>
       <div class="col-3 text-end small">
         <span class="text-muted">Sqft:</span> <strong class="panel-sqft">${sqft.toFixed(2)}</strong>
@@ -275,7 +304,7 @@
         const sumSpec = card.querySelector('.enc-summary-spec');
         if (sumName) sumName.textContent = enc.name || ('Enclosure ' + (state.enclosures.indexOf(enc) + 1));
         if (sumSpec) {
-          const sqft = enc.glassPanels.reduce((s, p) => s + Math.max(0.5, p.width) * Math.max(0.5, p.height), 0);
+          const sqft = enc.glassPanels.reduce((s, p) => s + panelSqft(p.width, p.height), 0);
           sumSpec.textContent = `${enc.typeLabel || '—'} · ${enc.materialLabel || '—'} · ${enc.glassPanels.length} panel${enc.glassPanels.length === 1 ? '' : 's'} · ${sqft.toFixed(1)} sq.ft × ${enc.quantity}`;
         }
         updateEnclosureSubtotalInPlace(card, enc);
@@ -324,7 +353,7 @@
       const updatePanel = () => {
         enc.glassPanels[pIdx].width = numOr(w.value, 0.5);
         enc.glassPanels[pIdx].height = numOr(h.value, 0.5);
-        const s = Math.max(0.5, enc.glassPanels[pIdx].width) * Math.max(0.5, enc.glassPanels[pIdx].height);
+        const s = panelSqft(enc.glassPanels[pIdx].width, enc.glassPanels[pIdx].height);
         if (sqftEl) sqftEl.textContent = s.toFixed(2);
         updateEnclosureSubtotalInPlace(card, enc);
         recomputeTotals();
@@ -360,7 +389,7 @@
   }
 
   function updateEnclosureSubtotalInPlace(card, enc) {
-    const sqft = enc.glassPanels.reduce((s, p) => s + Math.max(0.5, p.width) * Math.max(0.5, p.height), 0);
+    const sqft = enc.glassPanels.reduce((s, p) => s + panelSqft(p.width, p.height), 0);
     const subtotal = sqft * enc.pricePerSqft * Math.max(1, enc.quantity);
     const sumName = card.querySelector('.enc-summary-name');
     const sumSpec = card.querySelector('.enc-summary-spec');
@@ -427,7 +456,7 @@
     // Enclosure subtotal
     let encSubtotal = 0;
     for (const enc of state.enclosures) {
-      const sqft = enc.glassPanels.reduce((s, p) => s + Math.max(0.5, p.width) * Math.max(0.5, p.height), 0);
+      const sqft = enc.glassPanels.reduce((s, p) => s + panelSqft(p.width, p.height), 0);
       encSubtotal += sqft * enc.pricePerSqft * Math.max(1, enc.quantity);
     }
     // Extras subtotal
@@ -492,14 +521,18 @@
       hardwareTypeLabel: e.hardwareTypeLabel || '',
       thicknessLabel: e.thicknessLabel || '',
       glassPanels: e.glassPanels.map(p => {
-        const w = Math.max(0.5, p.width);
-        const h = Math.max(0.5, p.height);
-        return { width: w, height: h, sqft: w * h };
+        // Preserve the customer's typed width/height (in their chosen unit)
+        // but compute sqft via unit-aware inches conversion, matching the
+        // configurator's math. THIS is the field the server's seeder reads
+        // to compute rate × amount on each BathqubeQuoteItem.
+        const w = p.width;
+        const h = p.height;
+        return { width: w, height: h, sqft: panelSqft(w, h) };
       }),
       pricePerSqft: e.pricePerSqft || 0,
       quantity: Math.max(1, Math.floor(e.quantity || 1)),
-      sqft: e.glassPanels.reduce((s, p) => s + Math.max(0.5, p.width) * Math.max(0.5, p.height), 0),
-      subtotal: e.glassPanels.reduce((s, p) => s + Math.max(0.5, p.width) * Math.max(0.5, p.height), 0)
+      sqft: e.glassPanels.reduce((s, p) => s + panelSqft(p.width, p.height), 0),
+      subtotal: e.glassPanels.reduce((s, p) => s + panelSqft(p.width, p.height), 0)
                 * (e.pricePerSqft || 0) * Math.max(1, e.quantity || 1),
     }));
     document.getElementById('enclosuresJson').value = JSON.stringify(clean);

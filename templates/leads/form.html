@@ -85,11 +85,11 @@
             <div class="row g-3 mb-4">
                 <div class="col-6">
                     <label class="form-label fw-semibold">Stage</label>
-                    <select class="form-select" name="stage">
-                        {% for s in ['New Lead','Contacted','Not Connected','Qualified','PI Shared','Closed Won','Closed Lost','Junk'] %}
+                    <select class="form-select" name="stage" id="stage-select">
+                        {% for s in stage_options %}
                         <option value="{{ s }}"
                             {% if lead and lead.stage == s %}selected
-                            {% elif not lead and s == 'New Lead' %}selected{% endif %}>
+                            {% elif not lead and loop.first %}selected{% endif %}>
                             {{ s }}
                         </option>
                         {% endfor %}
@@ -97,7 +97,7 @@
                 </div>
                 <div class="col-6">
                     <label class="form-label fw-semibold">Origin</label>
-                    <input type="text" class="form-control" name="origin"
+                    <input type="text" class="form-control" name="origin" id="origin-input"
                         value="{{ lead.origin or '' if lead else '' }}"
                         placeholder="e.g. Facebook, Google">
                 </div>
@@ -113,4 +113,38 @@
         </form>
     </div>
 </div>
+
+{# Origin-aware stage swap — typing "Facebook" in Origin switches the Stage
+   dropdown to the FB funnel (Untouched, Quote 1 Shared, …) and vice versa.
+   See models.LEAD_STAGES_BY_ORIGIN. #}
+<script>
+(function () {
+    const STAGES_BY_ORIGIN = {
+        'facebook': {{ stage_options_facebook|default(['Untouched','Yet to connect','Quote 1 Shared','Quote 2 Shared','Quote 3 Shared','Not Interested','Awaiting Payment','Junk','Payment Rcvd','Lost'])|tojson }},
+    };
+    const STAGES_DEFAULT = {{ stage_options_default|default(['New Lead','Contacted','Not Connected','Qualified','PI Shared','Closed Won','Closed Lost','Junk'])|tojson }};
+
+    const originInput = document.getElementById('origin-input');
+    const stageSelect = document.getElementById('stage-select');
+    if (!originInput || !stageSelect) return;
+
+    function stagesFor(origin) {
+        const key = (origin || '').trim().toLowerCase();
+        return STAGES_BY_ORIGIN[key] || STAGES_DEFAULT;
+    }
+    function repopulate() {
+        const stages = stagesFor(originInput.value);
+        const current = stageSelect.value;
+        stageSelect.innerHTML = '';
+        stages.forEach(function (s, i) {
+            const opt = document.createElement('option');
+            opt.value = s; opt.textContent = s;
+            if (s === current || (!current && i === 0)) opt.selected = true;
+            stageSelect.appendChild(opt);
+        });
+    }
+    originInput.addEventListener('change', repopulate);
+    originInput.addEventListener('blur', repopulate);
+})();
+</script>
 {% endblock %}

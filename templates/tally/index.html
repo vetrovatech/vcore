@@ -283,7 +283,36 @@
 
 <!-- Filters -->
 <div class="filter-card">
+    {# One-click source segregation — All / Bathqube only / Other. Each
+       button preserves the other active filters in the querystring so the
+       manager can layer this on top of a date or BDE filter. Server-side
+       skips the irrelevant query branch in tally_index. #}
+    <div class="d-flex align-items-center gap-2 mb-3 flex-wrap" style="border-bottom:1px solid #e5e7eb;padding-bottom:12px;">
+        <span style="font-size:0.72rem;font-weight:700;letter-spacing:0.6px;color:#64748b;text-transform:uppercase;">SHOW:</span>
+        {% set _qs = {'date_from': filters.date_from, 'date_to': filters.date_to,
+                      'salesman_id': filters.salesman_id, 'client_name': filters.client_name,
+                      'supplier_id': filters.supplier_id, 'delivery_status': filters.delivery_status} %}
+        <div class="btn-group btn-group-sm" role="group" aria-label="Source filter">
+            <a href="{{ url_for('tally_index', **_qs) }}"
+               class="btn {% if not filters.source %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+                <i class="bi bi-collection me-1"></i>All
+            </a>
+            <a href="{{ url_for('tally_index', source='bathqube', **_qs) }}"
+               class="btn {% if filters.source == 'bathqube' %}btn-info text-white{% else %}btn-outline-info{% endif %}">
+                <i class="bi bi-droplet me-1"></i>Bathqube only
+            </a>
+            <a href="{{ url_for('tally_index', source='regular', **_qs) }}"
+               class="btn {% if filters.source == 'regular' %}btn-dark{% else %}btn-outline-dark{% endif %}">
+                <i class="bi bi-briefcase me-1"></i>Other tallys
+            </a>
+        </div>
+    </div>
     <form method="GET" action="{{ url_for('tally_index') }}">
+        {# Carry the source choice through the regular filter form too —
+           otherwise hitting Apply on date/BDE drops the segregation. #}
+        {% if filters.source %}
+        <input type="hidden" name="source" value="{{ filters.source }}">
+        {% endif %}
         <div class="row g-2 align-items-end">
             <div class="col-6 col-md-2">
                 <label class="form-label">From Date</label>

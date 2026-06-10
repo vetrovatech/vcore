@@ -847,6 +847,69 @@ class SupplierPricing(db.Model):
         return f'<SupplierPricing {self.supplier.name if self.supplier else "N/A"} - {self.glass_type.name if self.glass_type else "N/A"}>'
 
 
+# ── Leadfy stage configuration ────────────────────────────────────────────────
+# `stage` is a free-form String(50) column with no DB enum, so the allowed
+# values are defined here in Python. Different lead origins follow different
+# sales funnels — Facebook ads run through a quote-revision flow (Quote 1/2/3
+# Shared → Awaiting Payment → Payment Rcvd), everything else uses the generic
+# CRM stages. Adding a new origin-specific funnel = add a new list + register
+# it in LEAD_STAGES_BY_ORIGIN.
+
+LEAD_STAGES_DEFAULT = [
+    'New Lead', 'Contacted', 'Not Connected', 'Qualified',
+    'PI Shared', 'Closed Won', 'Closed Lost', 'Junk',
+]
+
+LEAD_STAGES_FACEBOOK = [
+    'Untouched', 'Yet to connect',
+    'Quote 1 Shared', 'Quote 2 Shared', 'Quote 3 Shared',
+    'Not Interested', 'Awaiting Payment',
+    'Junk', 'Payment Rcvd', 'Lost',
+]
+
+LEAD_STAGES_BY_ORIGIN = {
+    'facebook': LEAD_STAGES_FACEBOOK,
+}
+
+# Union of every known stage — used for the leads-list filter dropdown so a
+# user can filter by any stage regardless of origin selection.
+LEAD_STAGES_ALL = list(dict.fromkeys(LEAD_STAGES_DEFAULT + LEAD_STAGES_FACEBOOK))
+
+LEAD_STAGE_BADGE_CLASSES = {
+    # Generic CRM stages
+    'New Lead': 'primary',
+    'Contacted': 'info',
+    'Not Connected': 'warning',
+    'Qualified': 'warning',
+    'PI Shared': 'secondary',
+    'Closed Won': 'success',
+    'Closed Lost': 'danger',
+    'Junk': 'dark',
+    # Facebook funnel
+    'Untouched': 'primary',
+    'Yet to connect': 'info',
+    'Quote 1 Shared': 'secondary',
+    'Quote 2 Shared': 'secondary',
+    'Quote 3 Shared': 'secondary',
+    'Not Interested': 'warning',
+    'Awaiting Payment': 'warning',
+    'Payment Rcvd': 'success',
+    'Lost': 'danger',
+}
+
+
+def stages_for_origin(origin):
+    """Return the ordered list of allowed stages for the given origin string."""
+    if origin and origin.strip().lower() in LEAD_STAGES_BY_ORIGIN:
+        return LEAD_STAGES_BY_ORIGIN[origin.strip().lower()]
+    return LEAD_STAGES_DEFAULT
+
+
+def default_stage_for_origin(origin):
+    """First stage in the funnel for the given origin — used when creating leads."""
+    return stages_for_origin(origin)[0]
+
+
 class Lead(db.Model):
     """Lead model for Leadfy lead management"""
     __tablename__ = 'leads'
@@ -884,9 +947,11 @@ class Lead(db.Model):
     notes = db.Column(db.Text, nullable=True)
     is_untouched = db.Column(db.Boolean, default=True)
 
-    # Stage and origin
+    # Stage and origin. `stage` is a free-form string; the allowed set varies by
+    # `origin` — Facebook leads use the funnel-style stages requested by ops
+    # (Untouched → Quote 1 Shared → … → Payment Rcvd), every other origin uses
+    # the generic CRM stages. See LEAD_STAGES_DEFAULT / LEAD_STAGES_FACEBOOK.
     stage = db.Column(db.String(50), nullable=False, default='New Lead', index=True)
-    # New Lead, Contacted, Not Connected, Qualified, PI Shared, Closed Won, Closed Lost, Junk
     origin = db.Column(db.String(100), nullable=True, index=True)
 
     # Ownership
@@ -914,17 +979,11 @@ class Lead(db.Model):
 
     def get_stage_badge_class(self):
         """Get Bootstrap badge class based on stage"""
-        stage_classes = {
-            'New Lead': 'primary',
-            'Contacted': 'info',
-            'Not Connected': 'warning',
-            'Qualified': 'warning',
-            'PI Shared': 'secondary',
-            'Closed Won': 'success',
-            'Closed Lost': 'danger',
-            'Junk': 'dark',
-        }
-        return stage_classes.get(self.stage, 'secondary')
+        return LEAD_STAGE_BADGE_CLASSES.get(self.stage, 'secondary')
+
+    def stage_options(self):
+        """Allowed stage values for this lead, based on its origin."""
+        return stages_for_origin(self.origin)
 
     def get_initials(self):
         """Get initials from name"""
