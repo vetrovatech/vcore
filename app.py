@@ -4207,10 +4207,17 @@ def facebook_webhook_receive():
                         # If a particular leg is missing on Meta's side
                         # (rare; usually only on archived ads) the key
                         # is simply absent from the response.
+                        # NOTE: `form_name` is NOT a field on the
+                        # leadgen edge — Graph returns error #100
+                        # ("Tried accessing nonexisting field"). The
+                        # form_id stays in our `notes` blob; if BD ever
+                        # wants the human-readable form name we'd have
+                        # to make a second call to /{form_id}?fields=name,
+                        # not worth the round-trip yet.
                         'fields': (
                             'id,created_time,field_data,form_id,'
                             'ad_id,adset_id,campaign_id,'
-                            'campaign_name,adset_name,ad_name,form_name'
+                            'campaign_name,adset_name,ad_name'
                         ),
                     },
                     timeout=10,
@@ -4256,7 +4263,9 @@ def facebook_webhook_receive():
             fb_adset_name    = lead_data.get('adset_name')    or None
             fb_ad_id         = lead_data.get('ad_id')         or None
             fb_ad_name       = lead_data.get('ad_name')       or None
-            fb_form_name     = lead_data.get('form_name')     or None
+            # form_name isn't fetchable on the leadgen edge — leave NULL.
+            # Resolvable via a second Graph call if BD ever asks.
+            fb_form_name     = None
 
             lead = Lead(
                 name=name, contact=phone, email=email, city=city, state=state,

@@ -81,9 +81,11 @@ def backfill():
                     f'https://graph.facebook.com/{GRAPH_VERSION}/{lead.facebook_lead_id}',
                     params={
                         'access_token': page_token,
+                        # form_name is NOT a leadgen-edge field (error #100).
+                        # Form_id is already in notes — skip form_name.
                         'fields': (
                             'ad_id,adset_id,campaign_id,'
-                            'campaign_name,adset_name,ad_name,form_name'
+                            'campaign_name,adset_name,ad_name'
                         ),
                     },
                     timeout=10,
@@ -113,7 +115,7 @@ def backfill():
                 'fb_adset_name':    data.get('adset_name'),
                 'fb_ad_id':         data.get('ad_id'),
                 'fb_ad_name':       data.get('ad_name'),
-                'fb_form_name':     data.get('form_name'),
+                # form_name not requested (see fields list above).
             }
             if not any(v for v in updates.values()):
                 skipped += 1
