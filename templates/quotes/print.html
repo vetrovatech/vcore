@@ -326,6 +326,7 @@
                     <th colspan="2" style="width: 10%;">Chargeable size<br>(mm)</th>
                     <th rowspan="2" style="width: 4%;">Qty</th>
                     <th rowspan="2" style="width: 7%;">Area (Sq Mtr)</th>
+                    <th rowspan="2" style="width: 7%;">Total Area (Sq Mtr)</th>
                     <th rowspan="2" style="width: 4%;">Holes</th>
                     <th rowspan="2" style="width: 4%;">Cutouts</th>
                     <th rowspan="2" style="width: 9%;">Rate / Sq Mtr</th>
@@ -346,7 +347,7 @@
                 <!-- Group Row -->
                 <tr class="group-row">
                     <td>{{ ns.group_num }}</td>
-                    <td colspan="12" class="text-left"><strong>{{ item.particular }}</strong></td>
+                    <td colspan="13" class="text-left"><strong>{{ item.particular }}</strong></td>
                 </tr>
 
                 <!-- Sub-items -->
@@ -363,6 +364,7 @@
                     <td>{{ sub_item.quantity }}</td>
                     <td class="text-right">{{ "{:.4f}".format(sub_item.unit_square) if sub_item.unit_square else
                         '0.0000' }}</td>
+                    <td class="text-right">{{ "{:.4f}".format(sub_item.unit_square * sub_item.quantity) if (sub_item.unit_square and sub_item.unit != 'pcs') else '-' }}</td>
                     <td>{{ sub_item.hole or 0 }}</td>
                     <td>{{ sub_item.cutout or 0 }}</td>
                     <td class="text-right">{{ "{:,.2f}".format(sub_item.rate_sqper) }}</td>
@@ -382,12 +384,32 @@
                     <td>{{ item.quantity }}</td>
                     <td class="text-right">{{ "{:.4f}".format(item.unit_square) if item.unit_square else '0.0000' }}
                     </td>
+                    <td class="text-right">{{ "{:.4f}".format(item.unit_square * item.quantity) if (item.unit_square and item.unit != 'pcs') else '-' }}</td>
                     <td class="text-right">{{ "{:,.2f}".format(item.rate_sqper) }}</td>
                     <td class="text-right">{{ "{:,.2f}".format(item.total) }}</td>
                 </tr>
                 {% endif %}
                 {% endfor %}
             </tbody>
+            {# Footer totals — Total Qty + Total Sq Mtr summed across all leaf
+               (non-group) rows. Mirrors the form footer so the printed PDF
+               shows the same running totals the user saw while editing. #}
+            {% set ns_tot = namespace(qty=0, sqm=0.0) %}
+            {% for it in quote.items if not it.is_group %}
+                {% if it.unit != 'pcs' and it.unit_square %}
+                    {% set ns_tot.sqm = ns_tot.sqm + (it.unit_square|float * it.quantity) %}
+                {% endif %}
+                {% set ns_tot.qty = ns_tot.qty + it.quantity %}
+            {% endfor %}
+            <tfoot>
+                <tr style="font-weight: bold; background-color: #f8f9fa;">
+                    <td colspan="7" class="text-right">Totals</td>
+                    <td>{{ ns_tot.qty }}</td>
+                    <td></td>
+                    <td class="text-right">{{ "{:.4f}".format(ns_tot.sqm) }}</td>
+                    <td colspan="4"></td>
+                </tr>
+            </tfoot>
         </table>
         {% endif %}
 

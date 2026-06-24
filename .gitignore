@@ -52,3 +52,6 @@ instance/
 
 # AWS
 .serverless/
+
+# deploy-aws.sh rollback-history snapshots — regenerated each deploy
+.deploy-history/

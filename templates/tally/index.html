@@ -450,7 +450,7 @@
                 {{ r.client_payment_status }}
             </span>
             {% if r.online_received > 0 %}
-            <span style="font-size:0.72rem;color:#64748b;"><i class="bi bi-phone" style="font-size:0.65rem;"></i> ₹{{ "{:,.0f}".format(r.online_received) }} online</span>
+            <span style="font-size:0.72rem;color:#64748b;"><i class="bi bi-phone" style="font-size:0.65rem;"></i> ₹{{ "{:,.0f}".format(r.online_received) }} online{% if r.receipt_count > 0 %} <span style="color:#0f766e;font-weight:600;" title="From {{ r.receipt_count }} payment receipt{{ 's' if r.receipt_count != 1 else '' }}">· {{ r.receipt_count }} receipt{{ 's' if r.receipt_count != 1 else '' }}</span>{% endif %}</span>
             {% endif %}
             {% if r.cash_received > 0 %}
             <span style="font-size:0.72rem;color:#64748b;"><i class="bi bi-cash" style="font-size:0.65rem;"></i> ₹{{ "{:,.0f}".format(r.cash_received) }} cash</span>

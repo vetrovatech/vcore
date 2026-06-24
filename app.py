@@ -4324,7 +4324,25 @@ def tally_index():
         total_cost  = pi_amount + misc
         profit      = sale_value - total_cost
         cash_recv   = float(quote.cash_received   or 0)
-        online_recv = float(quote.amount_received or 0)
+
+        # ── Bathqube payment receipts → "Tally updates the moment BD saves
+        #    a receipt" ────────────────────────────────────────────────────
+        # Legacy path: BD typed amount_received directly via the Tally edit
+        # form. New path (since the BathqubePaymentReceipt collection
+        # landed): BD records one UTR-audited receipt per inflow at
+        # /quotes/bathqube/<id>/receipts. The receipts sum is the source of
+        # truth; the legacy flat field is a fallback ONLY for quotes that
+        # pre-date the receipts system (zero receipts on file).
+        # Net effect: as soon as BD saves a receipt, the next /tally render
+        # picks up the new total without any cron / hook / denormalisation.
+        receipt_count = 0
+        receipts_sum  = 0.0
+        if source == 'bathqube':
+            receipts_sum  = float(getattr(quote, 'paid_via_receipts', 0) or 0)
+            receipt_count = len(getattr(quote, 'payment_receipts', []) or [])
+            online_recv = receipts_sum if receipts_sum > 0 else float(quote.amount_received or 0)
+        else:
+            online_recv = float(quote.amount_received or 0)
         total_recv  = cash_recv + online_recv
 
         # Per-source display fields. Regular Quote has quote_number, quote_date,
@@ -4375,6 +4393,12 @@ def tally_index():
             'cash_received':     cash_recv,
             'online_received':   online_recv,
             'amount_received':   total_recv,
+            # Receipts metadata (bathqube only — both 0 for regular quotes).
+            # Lets the template surface a "N receipts (₹X)" hint under the
+            # amount cell so BD can tell at a glance that the figure came
+            # from the receipts collection, not from a manual Tally edit.
+            'receipt_count':     receipt_count,
+            'receipts_sum':      receipts_sum,
             'client_balance':    sale_value - total_recv,
             'delivery_status':   quote.delivery_status,
             **display,
@@ -5516,6 +5540,201 @@ def bathqube_quote_pdf(id):
         BytesIO(pdf_bytes),
         mimetype='application/pdf',
         as_attachment=True,
+        download_name=filename,
+    )
+
+
+def _ensure_work_order(quote):
+    """Return the BathqubeWorkOrder row for this quote, creating an empty
+    one the first time it's needed. Keeps the workshop docs working
+    even on quotes that pre-date the work_order auto-create logic."""
+    from models import BathqubeWorkOrder
+    wo = quote.work_order  # backref, uselist=False
+    if wo is None:
+        wo = BathqubeWorkOrder(quote_id=quote.id)
+        db.session.add(wo)
+        db.session.flush()
+        # Re-read so the relationship sees it
+        quote.work_order = wo
+    return wo
+
+
+@app.route('/quotes/bathqube/<int:id>/work-order.pdf', methods=['GET'])
+@login_required
+def bathqube_work_order_pdf(id):
+    """Generate a compact glass-workshop Work Order PDF.
+
+    Manual button — appears in the quote view once stage = closed_won (the
+    quote view template gates the button; we permit the route itself for
+    any stage so BD can pre-print before confirming the close, but emit a
+    Flash warning when stage hasn't reached closed_won yet)."""
+    from utils.bathqube_pdf import generate_bathqube_work_order_pdf
+    from flask import send_file
+    from io import BytesIO
+
+    quote = BathqubeQuote.query.get_or_404(id)
+    # Lazily create the work_order row if missing so cutting_notes /
+    # ops_notes can attach to something stable.
+    _ensure_work_order(quote)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    pdf_bytes = generate_bathqube_work_order_pdf(quote)
+    filename = f"WO-{quote.estimate_number or ('BQ-' + str(quote.id))}.pdf"
+    return send_file(
+        BytesIO(pdf_bytes),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+@app.route('/quotes/bathqube/<int:id>/cutting-notes', methods=['POST'])
+@login_required
+def bathqube_cutting_notes_save(id):
+    """Save workshop fields on the quote's work_order: cutting_notes,
+    delivery_eta, priority. All three are optional and editable
+    independently — submit the whole form to update any of them. The
+    Work Order PDF re-renders fresh on every download, so these edits
+    are visible the next time BD clicks Generate Work Order PDF."""
+    from datetime import date as _date
+
+    quote = BathqubeQuote.query.get_or_404(id)
+    wo = _ensure_work_order(quote)
+
+    notes = (request.form.get('cutting_notes') or '').strip()
+    if len(notes) > 4000:
+        flash('Workshop notes are too long (max 4,000 chars).', 'warning')
+        return redirect(url_for('bathqube_quote_view', id=quote.id))
+    wo.cutting_notes = notes or None
+
+    eta_raw = (request.form.get('delivery_eta') or '').strip()
+    if eta_raw:
+        try:
+            wo.delivery_eta = _date.fromisoformat(eta_raw)
+        except ValueError:
+            flash('Invalid delivery ETA date.', 'warning')
+            return redirect(url_for('bathqube_quote_view', id=quote.id))
+    else:
+        wo.delivery_eta = None
+
+    priority = (request.form.get('priority') or 'normal').strip().lower()
+    if priority not in ('low', 'normal', 'urgent'):
+        priority = 'normal'
+    wo.priority = priority
+
+    try:
+        db.session.commit()
+        flash('Workshop details saved.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Could not save: {e}', 'danger')
+    return redirect(url_for('bathqube_quote_view', id=quote.id))
+
+
+@app.route('/quotes/bathqube/<int:id>/receipts', methods=['POST'])
+@login_required
+def bathqube_receipt_create(id):
+    """Record a customer payment against this quote. Creates one
+    BathqubePaymentReceipt row + immediately generates its PDF for
+    download. Multiple receipts per quote — one per inflow (10% advance,
+    install milestone, balance, etc.)."""
+    from models import BathqubePaymentReceipt
+    from utils.bathqube_pdf import next_receipt_number
+    from datetime import date as _date
+
+    quote = BathqubeQuote.query.get_or_404(id)
+
+    # Validate the form
+    raw_amount = (request.form.get('amount') or '').strip()
+    try:
+        amount = float(raw_amount)
+    except ValueError:
+        flash('Amount must be a number.', 'warning')
+        return redirect(url_for('bathqube_quote_view', id=quote.id))
+    if amount <= 0:
+        flash('Amount must be greater than 0.', 'warning')
+        return redirect(url_for('bathqube_quote_view', id=quote.id))
+
+    method = (request.form.get('payment_method') or 'bank_transfer').strip()
+    if method not in ('bank_transfer', 'upi', 'cash', 'cheque'):
+        flash('Invalid payment method.', 'warning')
+        return redirect(url_for('bathqube_quote_view', id=quote.id))
+
+    utr = (request.form.get('utr_number') or '').strip() or None
+    cheque = (request.form.get('cheque_number') or '').strip() or None
+    if method in ('bank_transfer', 'upi') and not utr:
+        flash('UTR / reference number is required for bank transfer / UPI payments.', 'warning')
+        return redirect(url_for('bathqube_quote_view', id=quote.id))
+    if method == 'cheque' and not cheque:
+        flash('Cheque number is required for cheque payments.', 'warning')
+        return redirect(url_for('bathqube_quote_view', id=quote.id))
+
+    notes = (request.form.get('notes') or '').strip() or None
+
+    received_raw = (request.form.get('received_at') or '').strip()
+    if received_raw:
+        try:
+            received_at = _date.fromisoformat(received_raw)
+        except ValueError:
+            flash('Invalid received-at date.', 'warning')
+            return redirect(url_for('bathqube_quote_view', id=quote.id))
+    else:
+        received_at = _date.today()
+
+    # Mint the receipt number + insert
+    receipt_number = next_receipt_number(db.session)
+    rcpt = BathqubePaymentReceipt(
+        quote_id=quote.id,
+        receipt_number=receipt_number,
+        received_at=received_at,
+        amount=amount,
+        payment_method=method,
+        utr_number=utr,
+        cheque_number=cheque,
+        notes=notes,
+        created_by=current_user.id,
+    )
+    db.session.add(rcpt)
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Could not save receipt: {e}', 'danger')
+        return redirect(url_for('bathqube_quote_view', id=quote.id))
+
+    flash(f'Payment ₹{amount:,.2f} recorded · receipt {receipt_number}', 'success')
+    # Open the receipt PDF in a new tab so BD can immediately share it.
+    return redirect(url_for('bathqube_receipt_pdf', id=quote.id, receipt_id=rcpt.id))
+
+
+@app.route('/quotes/bathqube/<int:id>/receipts/<int:receipt_id>.pdf', methods=['GET'])
+@login_required
+def bathqube_receipt_pdf(id, receipt_id):
+    """Download a single payment receipt PDF. Re-generated fresh from
+    the row each time — the cumulative running total reflects all
+    receipts dated up to and including this one."""
+    from models import BathqubePaymentReceipt
+    from utils.bathqube_pdf import generate_bathqube_receipt_pdf
+    from flask import send_file
+    from io import BytesIO
+
+    receipt = BathqubePaymentReceipt.query.get_or_404(receipt_id)
+    if receipt.quote_id != id:
+        # Defensive — shouldn't happen via the UI but guard against
+        # URL-tampering where someone references a receipt that belongs
+        # to a different quote.
+        flash('Receipt does not belong to this quote.', 'warning')
+        return redirect(url_for('bathqube_quote_view', id=id))
+
+    pdf_bytes = generate_bathqube_receipt_pdf(receipt)
+    filename = f"{receipt.receipt_number}.pdf"
+    return send_file(
+        BytesIO(pdf_bytes),
+        mimetype='application/pdf',
+        as_attachment=False,  # open in new tab; BD can save from browser
         download_name=filename,
     )
 

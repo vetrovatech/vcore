@@ -1401,9 +1401,28 @@ class BathqubeQuote(db.Model):
                                 order_by='BathqubeQuoteRevision.revision_number.desc()')
 
     @property
+    def paid_via_receipts(self):
+        """Sum of all BathqubePaymentReceipt rows on this quote — the
+        UTR-audited running total. Use this for any new code; the legacy
+        `amount_received` field is left in place for Tally back-compat
+        but should be considered deprecated for sales-side flows."""
+        rows = getattr(self, 'payment_receipts', None) or []
+        return sum(float(r.amount or 0) for r in rows)
+
+    @property
+    def paid_to_date(self):
+        """The effective amount-received: receipts sum if any exist,
+        else the legacy flat field. Lets new receipt-based code and
+        legacy quotes coexist without breaking either."""
+        receipts_sum = self.paid_via_receipts
+        if receipts_sum > 0:
+            return receipts_sum
+        return float(self.amount_received or 0)
+
+    @property
     def balance_payable(self):
         effective_total = float(self.revised_total if self.revised_total is not None else self.total or 0)
-        return max(0.0, effective_total - float(self.amount_received or 0))
+        return max(0.0, effective_total - self.paid_to_date)
 
     @property
     def config(self):
@@ -1546,6 +1565,19 @@ class BathqubeWorkOrder(db.Model):
     delivery_eta              = db.Column(db.Date, nullable=True)
 
     ops_notes = db.Column(db.Text, nullable=True)
+    # Workshop-floor instructions printed on the Work Order PDF that goes
+    # to the glass cutters. Distinct from `ops_notes` (which is broader
+    # internal scheduling / customer-side notes); cutting_notes is what
+    # the worker actually reads on the printed sheet. Free-form text:
+    # "Saturday install only", "use 10mm not 8mm for the door panel",
+    # "spare 600×1900 piece needed", etc. Editable by BD before
+    # generating the PDF.
+    cutting_notes = db.Column(db.Text, nullable=True)
+    # Workshop scheduling priority. Drives a visual badge on the WO PDF
+    # so the floor team can pull urgent jobs to the front of the queue.
+    # `normal` = standard turnaround; `urgent` = jump-the-queue.
+    # `low` = backfill when there's downtime.
+    priority = db.Column(db.String(10), nullable=False, default='normal')
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -1588,4 +1620,68 @@ class BathqubeStageAttachment(db.Model):
 
     def __repr__(self):
         return f'<BathqubeStageAttachment q={self.quote_id} stage={self.stage} kind={self.kind}>'
+
+
+class BathqubePaymentReceipt(db.Model):
+    """One payment receipt against a Bathqube quote.
+
+    Customers typically pay in instalments — 10–30% advance, the rest on
+    install. Each row is ONE inflow: amount + UTR + date. The downloadable
+    receipt PDF for this row shows the cumulative summary as of this
+    receipt's date (previous payments + this one + balance due).
+
+    `BathqubeQuote.amount_received` was a single flat ₹ field; from now on
+    the source of truth is the SUM of these receipts. The legacy field is
+    still on the model for back-compat with existing rows (and for the
+    Tally screen which is not tied to UTR-level audit), but new payments
+    should always be recorded as receipts.
+
+    Permanent log — never UPDATE or DELETE an existing row even if BD
+    typed wrong. Instead create a corrective receipt with a negative
+    amount or refund-mode flag. That keeps the audit trail intact.
+    """
+    __tablename__ = 'bathqube_payment_receipts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('bathqube_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+
+    # Human-readable receipt id, e.g. "BQ-RCP-2026-0042". Unique across
+    # all receipts so it can be the printed reference number the
+    # customer quotes back. Auto-assigned at create time.
+    receipt_number = db.Column(db.String(32), unique=True, nullable=False, index=True)
+
+    # When the money actually hit our account (typed by BD on the form,
+    # defaults to today). NOT the same as created_at — BD may record a
+    # payment a day or two after the inflow.
+    received_at = db.Column(db.Date, nullable=False, default=datetime.utcnow)
+
+    amount = db.Column(db.Numeric(12, 2), nullable=False)
+
+    # bank_transfer | upi | cash | cheque — drives which reference field
+    # is mandatory and how the PDF describes the payment.
+    payment_method = db.Column(db.String(20), nullable=False, default='bank_transfer')
+
+    # Banking refs — at most one of these is filled in per row depending
+    # on payment_method. We don't enforce a check constraint because BD
+    # may legitimately have neither (cash receipts).
+    utr_number = db.Column(db.String(40), nullable=True)
+    cheque_number = db.Column(db.String(40), nullable=True)
+
+    # Optional free-form (e.g. "10% advance per WO signed", "balance after
+    # install — site 8th floor delay, see WhatsApp"). Printed in small
+    # text on the PDF.
+    notes = db.Column(db.String(500), nullable=True)
+
+    # Audit
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    quote = db.relationship('BathqubeQuote', backref=db.backref('payment_receipts', lazy=True,
+                                                                cascade='all, delete-orphan',
+                                                                order_by='BathqubePaymentReceipt.received_at.desc(), BathqubePaymentReceipt.id.desc()'))
+    creator = db.relationship('User', foreign_keys=[created_by])
+
+    def __repr__(self):
+        return f'<BathqubePaymentReceipt {self.receipt_number} q={self.quote_id} amt={self.amount}>'
 

@@ -87,6 +87,62 @@
                             <div class="small text-muted">Track delivery, supplier costs, payments, and profit.</div>
                         </a>
                     </div>
+
+                    {# ─── Workshop Work Order — printable cutting sheet ─── #}
+                    <div class="col-md-12">
+                        <div class="border rounded p-3 bg-warning bg-opacity-10">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <strong class="small text-uppercase text-muted">
+                                    <i class="bi bi-tools"></i> Workshop Work Order
+                                </strong>
+                                <a href="{{ url_for('bathqube_work_order_pdf', id=quote.id) }}"
+                                   target="_blank"
+                                   class="btn btn-warning btn-sm">
+                                    <i class="bi bi-file-earmark-arrow-down"></i> Generate Work Order PDF
+                                </a>
+                            </div>
+                            <form method="POST" action="{{ url_for('bathqube_cutting_notes_save', id=quote.id) }}">
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-5">
+                                        <label class="form-label small text-muted mb-1">Delivery ETA</label>
+                                        <input type="date" name="delivery_eta"
+                                               class="form-control form-control-sm"
+                                               value="{{ quote.work_order.delivery_eta.isoformat() if (quote.work_order and quote.work_order.delivery_eta) else '' }}">
+                                    </div>
+                                    <div class="col-md-7">
+                                        <label class="form-label small text-muted mb-1">Priority</label>
+                                        <div class="btn-group btn-group-sm d-flex" role="group">
+                                            {% set cur_priority = (quote.work_order.priority if quote.work_order else 'normal') or 'normal' %}
+                                            <input type="radio" name="priority" value="low" id="pr_low" class="btn-check"
+                                                {% if cur_priority == 'low' %}checked{% endif %}>
+                                            <label for="pr_low" class="btn btn-outline-secondary">Low</label>
+
+                                            <input type="radio" name="priority" value="normal" id="pr_normal" class="btn-check"
+                                                {% if cur_priority == 'normal' %}checked{% endif %}>
+                                            <label for="pr_normal" class="btn btn-outline-primary">Normal</label>
+
+                                            <input type="radio" name="priority" value="urgent" id="pr_urgent" class="btn-check"
+                                                {% if cur_priority == 'urgent' %}checked{% endif %}>
+                                            <label for="pr_urgent" class="btn btn-outline-danger">Urgent</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <label for="cutting_notes_input" class="form-label small text-muted mb-1">
+                                    Workshop-only instructions
+                                    <span class="small text-muted">(printed on WO — invisible to customer)</span>
+                                </label>
+                                <textarea id="cutting_notes_input" name="cutting_notes"
+                                          class="form-control form-control-sm" rows="2"
+                                          placeholder="e.g. Saturday install only · spare 600×1900 glass · bring extra hinges"
+                                          maxlength="4000">{{ (quote.work_order.cutting_notes if quote.work_order else '') or '' }}</textarea>
+                                <div class="mt-2 d-flex justify-content-end">
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                        Save workshop details
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
                     {% endif %}
 
                     {% set ops_stages_list = ['closed_won', 'measurement_scheduled', 'measurement_done', 'customer_signoff', 'in_fabrication', 'ready_to_dispatch', 'installation_scheduled', 'installed', 'handover_complete'] %}
@@ -161,9 +217,133 @@
                     {% if quote.revised_total is not none %}
                     <tr class="table-warning"><th>Revised total</th><th class="text-end">₹{{ '{:,.2f}'.format(quote.revised_total) }}</th></tr>
                     {% endif %}
-                    <tr><td>Received</td><td class="text-end">₹{{ '{:,.2f}'.format(quote.amount_received or 0) }}</td></tr>
+                    <tr>
+                        <td>
+                            Received
+                            {% if quote.payment_receipts and quote.payment_receipts|length > 0 %}
+                            <span class="badge bg-light text-muted ms-1">{{ quote.payment_receipts|length }} receipt{{ '' if quote.payment_receipts|length == 1 else 's' }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">₹{{ '{:,.2f}'.format(quote.paid_to_date) }}</td>
+                    </tr>
                     <tr class="table-light"><th>Balance payable</th><th class="text-end">₹{{ '{:,.2f}'.format(quote.balance_payable) }}</th></tr>
                 </table>
+            </div>
+        </div>
+
+        {# ─── Payment receipts — UTR-audited running total + per-receipt PDFs ─── #}
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong><i class="bi bi-receipt"></i> Payments</strong>
+                <button type="button" class="btn btn-sm btn-primary"
+                        data-bs-toggle="collapse" data-bs-target="#recordPaymentForm">
+                    <i class="bi bi-plus-lg"></i> Record payment
+                </button>
+            </div>
+
+            {# Collapsible form — folds away until BD needs to record an inflow #}
+            <div class="collapse" id="recordPaymentForm">
+                <div class="card-body bg-light border-bottom">
+                    <form method="POST" action="{{ url_for('bathqube_receipt_create', id=quote.id) }}">
+                        <div class="row g-2">
+                            <div class="col-md-4">
+                                <label class="form-label small text-muted mb-1">Amount (₹) *</label>
+                                <input type="number" name="amount" step="0.01" min="0.01" required
+                                       class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small text-muted mb-1">Method *</label>
+                                <select name="payment_method" class="form-select form-select-sm" required>
+                                    <option value="bank_transfer">Bank transfer</option>
+                                    <option value="upi">UPI</option>
+                                    <option value="cheque">Cheque</option>
+                                    <option value="cash">Cash</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small text-muted mb-1">Received on</label>
+                                <input type="date" name="received_at" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small text-muted mb-1">UTR / UPI ref</label>
+                                <input type="text" name="utr_number" maxlength="40"
+                                       class="form-control form-control-sm"
+                                       placeholder="Required for bank transfer / UPI">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small text-muted mb-1">Cheque #</label>
+                                <input type="text" name="cheque_number" maxlength="40"
+                                       class="form-control form-control-sm"
+                                       placeholder="Required only for cheque">
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label small text-muted mb-1">Notes (optional)</label>
+                                <input type="text" name="notes" maxlength="500"
+                                       class="form-control form-control-sm"
+                                       placeholder='e.g. "10% advance per WO signed" · "balance after install"'>
+                            </div>
+                            <div class="col-12 d-flex justify-content-end">
+                                <button type="submit" class="btn btn-primary btn-sm">
+                                    Record payment &amp; download receipt
+                                </button>
+                            </div>
+                        </div>
+                        <p class="small text-muted mt-2 mb-0">
+                            <i class="bi bi-info-circle"></i>
+                            Receipt PDF opens in a new tab on save. Once recorded, a receipt cannot
+                            be edited — if you typed something wrong, record a corrective receipt
+                            instead so the audit trail stays intact.
+                        </p>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card-body p-0">
+                {% if quote.payment_receipts and quote.payment_receipts|length > 0 %}
+                <table class="table table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Date</th>
+                            <th>Receipt #</th>
+                            <th class="text-end">Amount</th>
+                            <th>Method</th>
+                            <th>Ref</th>
+                            <th class="text-end">PDF</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in quote.payment_receipts %}
+                        <tr>
+                            <td class="small">{{ r.received_at.strftime('%d %b %Y') }}</td>
+                            <td class="small"><code>{{ r.receipt_number }}</code></td>
+                            <td class="text-end"><strong>₹{{ '{:,.2f}'.format(r.amount) }}</strong></td>
+                            <td class="small text-capitalize">{{ r.payment_method.replace('_', ' ') }}</td>
+                            <td class="small text-muted">
+                                {% if r.utr_number %}{{ r.utr_number }}
+                                {% elif r.cheque_number %}#{{ r.cheque_number }}
+                                {% else %}—{% endif %}
+                            </td>
+                            <td class="text-end">
+                                <a href="{{ url_for('bathqube_receipt_pdf', id=quote.id, receipt_id=r.id) }}"
+                                   target="_blank" class="btn btn-link btn-sm p-0">
+                                    <i class="bi bi-file-earmark-pdf"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% if r.notes %}
+                        <tr>
+                            <td></td>
+                            <td colspan="5" class="small text-muted fst-italic">{{ r.notes }}</td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted small p-3 mb-0">
+                    No payments recorded yet. Click <strong>Record payment</strong> above to log an inflow.
+                </p>
+                {% endif %}
             </div>
         </div>
 

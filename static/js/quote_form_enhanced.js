@@ -38,6 +38,15 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    // Trigger per-row recalc so display-only fields like the new
+    // .total-area-display (per-piece area × qty) get populated when
+    // editing an existing quote. Without this the column reads blank
+    // until the user clicks into any input.
+    document.querySelectorAll('.sub-item-row').forEach(row => {
+        const anyInput = row.querySelector('.qty-input');
+        if (anyInput) calculateItemTotal(anyInput);
+    });
+
     // Update totals
     updateTotals();
 
@@ -75,7 +84,7 @@ function loadExistingItems(items) {
 
             row.innerHTML = `
                 <td class="item-number" style="font-weight: bold;">${groupCounter}</td>
-                <td colspan="12">
+                <td colspan="14">
                     <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                         <input type="text" class="form-control form-control-sm particular-input"
                                name="items[${itemCounter}][particular]"
@@ -207,6 +216,15 @@ function addSubItemWithData(groupRow, data) {
                    placeholder="0.0000" readonly>
         </td>
         <td>
+            <!-- Per-row total area = per-piece area × qty. Display-only;
+                 does NOT feed into the jumbo trigger (jumbo stays based on
+                 per-piece area since it represents a physical jumbo sheet).
+                 Computed in calculateItemTotal(). -->
+            <input type="number" step="0.0001" class="form-control form-control-sm total-area-display"
+                   value="${(data.unit_square && data.quantity) ? (data.unit_square * data.quantity).toFixed(4) : ''}"
+                   placeholder="0.0000" readonly tabindex="-1">
+        </td>
+        <td>
             <input type="number" class="form-control form-control-sm hole-input"
                    name="items[${itemCounter}][hole]"
                    value="${data.hole || 0}"
@@ -225,8 +243,8 @@ function addSubItemWithData(groupRow, data) {
                    placeholder="Rate" oninput="calculateItemTotal(this)" required>
         </td>
         <td>
-            <input type="number" step="0.01" class="form-control form-control-sm total-display" 
-                   name="items[${itemCounter}][total]" 
+            <input type="number" step="0.01" class="form-control form-control-sm total-display"
+                   name="items[${itemCounter}][total]"
                    value="${data.total ? data.total.toFixed(2) : ''}"
                    placeholder="0.00" readonly>
         </td>
@@ -273,7 +291,7 @@ function addGroup() {
 
     row.innerHTML = `
         <td class="item-number" style="font-weight: bold;">${groupCounter}</td>
-        <td colspan="12">
+        <td colspan="14">
             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                 <input type="text" class="form-control form-control-sm particular-input"
                        name="items[${itemCounter}][particular]"
@@ -385,6 +403,11 @@ function addSubItem(button) {
             <input type="number" step="0.0001" class="form-control form-control-sm unit-square-display"
                    name="items[${itemCounter}][unit_square]"
                    placeholder="0.0000" readonly>
+        </td>
+        <td>
+            <!-- Per-row total area = per-piece area × qty (display-only). -->
+            <input type="number" step="0.0001" class="form-control form-control-sm total-area-display"
+                   placeholder="0.0000" readonly tabindex="-1">
         </td>
         <td>
             <input type="number" class="form-control form-control-sm hole-input"
@@ -506,6 +529,16 @@ function calculateItemTotal(input) {
         unitSquareInput.value = unit === 'pcs' ? '' : unitSquare.toFixed(4);
     }
 
+    // Update per-row total area = per-piece area × qty (display-only;
+    // does NOT feed back into the jumbo trigger). Blank for 'pcs' rows
+    // since they don't have an area concept.
+    const totalAreaInput = row.querySelector('.total-area-display');
+    if (totalAreaInput) {
+        totalAreaInput.value = unit === 'pcs'
+            ? ''
+            : (unitSquare * quantity).toFixed(4);
+    }
+
     // Add hole and cutout charges from parent group
     const holes = parseInt(row.querySelector('.hole-input')?.value) || 0;
     const cutouts = parseInt(row.querySelector('.cutout-input')?.value) || 0;
@@ -585,6 +618,22 @@ function updateTotals() {
     });
     const jumboField = document.getElementById('jumbo_size_charges');
     if (jumboField) jumboField.value = jumboSizeCharges.toFixed(2);
+
+    // Footer running totals — Total Qty + Total Sq Mtr across all sub-items.
+    // Surfaced as <span id="totalQtyDisplay"> / <span id="totalSqmtDisplay">
+    // in the table's <tfoot>. Updated every time any row recalculates.
+    let totalQty = 0;
+    let totalSqmt = 0;
+    document.querySelectorAll('.sub-item-row').forEach(row => {
+        const q = parseInt(row.querySelector('.qty-input')?.value) || 0;
+        const ta = parseFloat(row.querySelector('.total-area-display')?.value) || 0;
+        totalQty  += q;
+        totalSqmt += ta;
+    });
+    const qtyDisplay = document.getElementById('totalQtyDisplay');
+    if (qtyDisplay) qtyDisplay.textContent = totalQty;
+    const sqmtDisplay = document.getElementById('totalSqmtDisplay');
+    if (sqmtDisplay) sqmtDisplay.textContent = totalSqmt.toFixed(4);
 
     // Summarise hole & cutout charges across all sub-items (informational — already in subtotal)
     let totalHolesSummary = 0;

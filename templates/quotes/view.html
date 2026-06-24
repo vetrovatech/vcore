@@ -266,6 +266,7 @@
                         <th style="width: 6%">Unit</th>
                         <th style="width: 5%">Qty</th>
                         <th style="width: 8%">Area (Sq Mtr)</th>
+                        <th style="width: 8%">Total Area (Sq Mtr)</th>
                         <th style="width: 5%">Holes</th>
                         <th style="width: 5%">Cutouts</th>
                         <th style="width: 10%">Rate / Sq Mtr</th>
@@ -279,7 +280,7 @@
                     {% if item.is_group %}
                     <tr class="table-secondary">
                         <td><strong>{{ ns.group_num }}</strong></td>
-                        <td colspan="10"><strong>{{ item.particular }}</strong></td>
+                        <td colspan="11"><strong>{{ item.particular }}</strong></td>
                     </tr>
                     {% set sub_items = item.children|sort(attribute='sort_order') %}
                     {% for sub_item in sub_items %}
@@ -299,6 +300,7 @@
                         <td>{{ sub_item.unit or 'MM' }}</td>
                         <td>{{ sub_item.quantity }}</td>
                         <td>{{ "{:.4f}".format(sub_item.unit_square) if sub_item.unit_square else '-' }}</td>
+                        <td>{{ "{:.4f}".format(sub_item.unit_square * sub_item.quantity) if (sub_item.unit_square and sub_item.unit != 'pcs') else '-' }}</td>
                         <td>{{ sub_item.hole or 0 }}</td>
                         <td>{{ sub_item.cutout or 0 }}</td>
                         <td>₹{{ "{:,.2f}".format(sub_item.rate_sqper) }}</td>
@@ -322,12 +324,29 @@
                         <td>{{ item.unit or 'MM' }}</td>
                         <td>{{ item.quantity }}</td>
                         <td>{{ "{:.4f}".format(item.unit_square) if item.unit_square else '-' }}</td>
+                        <td>{{ "{:.4f}".format(item.unit_square * item.quantity) if (item.unit_square and item.unit != 'pcs') else '-' }}</td>
                         <td>₹{{ "{:,.2f}".format(item.rate_sqper) }}</td>
                         <td>₹{{ "{:,.2f}".format(item.total) }}</td>
                     </tr>
                     {% endif %}
                     {% endfor %}
                 </tbody>
+                {% set ns_tot = namespace(qty=0, sqm=0.0) %}
+                {% for it in quote.items if not it.is_group %}
+                    {% if it.unit != 'pcs' and it.unit_square %}
+                        {% set ns_tot.sqm = ns_tot.sqm + (it.unit_square|float * it.quantity) %}
+                    {% endif %}
+                    {% set ns_tot.qty = ns_tot.qty + it.quantity %}
+                {% endfor %}
+                <tfoot class="table-light">
+                    <tr style="font-weight: 600;">
+                        <td colspan="5" class="text-end text-muted">Totals</td>
+                        <td>{{ ns_tot.qty }}</td>
+                        <td></td>
+                        <td>{{ "{:.4f}".format(ns_tot.sqm) }}</td>
+                        <td colspan="4"></td>
+                    </tr>
+                </tfoot>
             </table>
             {% endif %}
         </div>
