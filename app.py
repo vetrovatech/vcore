@@ -3015,6 +3015,20 @@ def _build_leads_query(args, *, restrict_to_current_user=True):
         query = query.filter(Lead.origin == args.get('origin'))
     if args.get('lead_type'):
         query = query.filter(Lead.lead_type == args.get('lead_type'))
+
+    # ── Facebook ad-hierarchy filters ────────────────────────────────
+    # Three nested drill-downs: campaign → adset → ad. BD picks any of
+    # them via the dropdowns on /leads. We filter on IDs (not names) so
+    # the URL is stable even if a campaign gets renamed in Ads Manager
+    # mid-flight. The DISTINCT name lists for the dropdowns are built
+    # in `leads_list` below — keep the filter logic + the dropdown
+    # data-source aligned (ID + name pairs).
+    if args.get('fb_campaign_id'):
+        query = query.filter(Lead.fb_campaign_id == args.get('fb_campaign_id'))
+    if args.get('fb_adset_id'):
+        query = query.filter(Lead.fb_adset_id == args.get('fb_adset_id'))
+    if args.get('fb_ad_id'):
+        query = query.filter(Lead.fb_ad_id == args.get('fb_ad_id'))
     untouched = args.get('untouched', '')
     if untouched == '1':
         query = query.filter(Lead.is_untouched == True)  # noqa: E712
@@ -3203,6 +3217,9 @@ def leads_list():
     created_from = request.args.get('created_from', '')
     created_to = request.args.get('created_to', '')
     lead_type_filter = request.args.get('lead_type', '')
+    fb_campaign_filter = request.args.get('fb_campaign_id', '')
+    fb_adset_filter    = request.args.get('fb_adset_id',    '')
+    fb_ad_filter       = request.args.get('fb_ad_id',       '')
 
     query = _build_leads_query(request.args)
 
@@ -3229,6 +3246,34 @@ def leads_list():
     states = db.session.query(Lead.state).filter(Lead.state.isnot(None)).distinct().order_by(Lead.state).all()
     states = [s[0] for s in states]
 
+    # ── FB ad-hierarchy dropdown options ─────────────────────────────
+    # (id, name) pairs so the dropdown displays the human-readable name
+    # while the form submits the stable ID. If the customer narrows by
+    # campaign, the adset list narrows to that campaign's adsets — same
+    # idea for ad. Lists are computed at request time; for now the
+    # cardinality of campaigns/adsets is small enough (tens, not
+    # thousands) that an unindexed DISTINCT scan is fine. We can add a
+    # cached materialised view later if Meta starts spamming us.
+    fb_campaigns = db.session.query(
+        Lead.fb_campaign_id, Lead.fb_campaign_name
+    ).filter(Lead.fb_campaign_id.isnot(None)).distinct().order_by(
+        Lead.fb_campaign_name
+    ).all()
+    fb_adsets_q = db.session.query(
+        Lead.fb_adset_id, Lead.fb_adset_name
+    ).filter(Lead.fb_adset_id.isnot(None))
+    if fb_campaign_filter:
+        fb_adsets_q = fb_adsets_q.filter(Lead.fb_campaign_id == fb_campaign_filter)
+    fb_adsets = fb_adsets_q.distinct().order_by(Lead.fb_adset_name).all()
+    fb_ads_q = db.session.query(
+        Lead.fb_ad_id, Lead.fb_ad_name
+    ).filter(Lead.fb_ad_id.isnot(None))
+    if fb_campaign_filter:
+        fb_ads_q = fb_ads_q.filter(Lead.fb_campaign_id == fb_campaign_filter)
+    if fb_adset_filter:
+        fb_ads_q = fb_ads_q.filter(Lead.fb_adset_id == fb_adset_filter)
+    fb_ads = fb_ads_q.distinct().order_by(Lead.fb_ad_name).all()
+
     from models import IndiamartToken, LEAD_STAGES_ALL, LEAD_STAGES_DEFAULT, LEAD_STAGES_FACEBOOK
     indiamart_token = IndiamartToken.query.first()
     fb_token_set = bool(os.getenv('FB_PAGE_ACCESS_TOKEN', ''))
@@ -3250,6 +3295,13 @@ def leads_list():
                            updated_to=updated_to,
                            created_from=created_from,
                            created_to=created_to,
+                           # FB ad-hierarchy filter state + dropdown options
+                           fb_campaign_filter=fb_campaign_filter,
+                           fb_adset_filter=fb_adset_filter,
+                           fb_ad_filter=fb_ad_filter,
+                           fb_campaigns=fb_campaigns,
+                           fb_adsets=fb_adsets,
+                           fb_ads=fb_ads,
                            indiamart_token=indiamart_token,
                            fb_token_set=fb_token_set,
                            stage_options_all=LEAD_STAGES_ALL,
@@ -4147,7 +4199,20 @@ def facebook_webhook_receive():
             try:
                 resp = req_lib.get(
                     f'https://graph.facebook.com/v19.0/{fb_lead_id}',
-                    params={'access_token': page_token, 'fields': 'id,created_time,field_data,form_id'},
+                    params={
+                        'access_token': page_token,
+                        # Nested-field expansion pulls campaign / adset /
+                        # ad / form names in ONE round trip so we don't
+                        # have to make 4 sequential Graph calls per lead.
+                        # If a particular leg is missing on Meta's side
+                        # (rare; usually only on archived ads) the key
+                        # is simply absent from the response.
+                        'fields': (
+                            'id,created_time,field_data,form_id,'
+                            'ad_id,adset_id,campaign_id,'
+                            'campaign_name,adset_name,ad_name,form_name'
+                        ),
+                    },
                     timeout=10,
                 )
                 lead_data = resp.json()
@@ -4180,6 +4245,19 @@ def facebook_webhook_receive():
                 ts = value.get('created_time')
                 if isinstance(ts, (int, float)):
                     fb_created = datetime.utcfromtimestamp(ts)
+            # Capture the ad-hierarchy metadata for BD's campaign filters
+            # on /leads. None-safe: if Meta omitted a leg (archived ad,
+            # organic lead form, etc.) the column simply stays NULL and
+            # the lead falls into the "Unknown campaign" filter bucket
+            # rather than blocking ingest.
+            fb_campaign_id   = lead_data.get('campaign_id')   or None
+            fb_campaign_name = lead_data.get('campaign_name') or None
+            fb_adset_id      = lead_data.get('adset_id')      or None
+            fb_adset_name    = lead_data.get('adset_name')    or None
+            fb_ad_id         = lead_data.get('ad_id')         or None
+            fb_ad_name       = lead_data.get('ad_name')       or None
+            fb_form_name     = lead_data.get('form_name')     or None
+
             lead = Lead(
                 name=name, contact=phone, email=email, city=city, state=state,
                 notes=f'Webhook · form_id={lead_data.get("form_id", "")}',
@@ -4189,6 +4267,13 @@ def facebook_webhook_receive():
                 facebook_lead_id=fb_lead_id, owner_id=None, assigned_to_id=None,
                 created_by=creator_id,
                 created_at=fb_created or datetime.utcnow(),
+                fb_campaign_id=fb_campaign_id,
+                fb_campaign_name=fb_campaign_name,
+                fb_adset_id=fb_adset_id,
+                fb_adset_name=fb_adset_name,
+                fb_ad_id=fb_ad_id,
+                fb_ad_name=fb_ad_name,
+                fb_form_name=fb_form_name,
             )
             db.session.add(lead)
             new_count += 1

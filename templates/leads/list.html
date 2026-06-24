@@ -430,13 +430,58 @@
             </div>
             <div class="col-auto d-flex gap-2">
                 <button type="submit" class="btn btn-primary btn-sm">Filter</button>
-                {% if search_query or stage_filter or state_filter or origin_filter or owner_filter or updated_from or updated_to or created_from or created_to or request.args.get('lead_type') or request.args.get('untouched') %}
+                {% if search_query or stage_filter or state_filter or origin_filter or owner_filter or updated_from or updated_to or created_from or created_to or request.args.get('lead_type') or request.args.get('untouched') or fb_campaign_filter or fb_adset_filter or fb_ad_filter %}
                 <a href="{{ url_for('leads_list') }}" class="btn btn-outline-secondary btn-sm js-clear-filters">
                     <i class="bi bi-x-circle"></i> Clear
                 </a>
                 {% endif %}
             </div>
         </div>
+
+        {# ─ Facebook ad-hierarchy filters ─────────────────────────────
+           Render the row only when at least one FB campaign has been
+           ingested. Keeps the filter bar uncluttered for shops that
+           don't run Meta ads. The three dropdowns drill down: picking
+           a campaign narrows the adsets, picking an adset narrows the
+           ads — same SELECT DISTINCT logic that fed the list query
+           (see leads_list in app.py). #}
+        {% if fb_campaigns %}
+        <div class="row g-2 align-items-end mt-2 pt-2 border-top">
+            <div class="col-md-1 text-muted small d-flex align-items-end" style="line-height:1.4;">
+                <i class="bi bi-megaphone"></i> &nbsp;<span class="fw-semibold">Facebook</span>
+            </div>
+            <div class="col-md-3">
+                <div class="filter-label">Campaign</div>
+                <select class="form-select form-select-sm" name="fb_campaign_id"
+                        onchange="this.form.querySelector('[name=fb_adset_id]').value=''; this.form.querySelector('[name=fb_ad_id]').value=''; this.form.submit();">
+                    <option value="">All Campaigns</option>
+                    {% for cid, cname in fb_campaigns %}
+                    <option value="{{ cid }}" {% if fb_campaign_filter == cid %}selected{% endif %}>{{ cname or cid }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <div class="filter-label">Adset</div>
+                <select class="form-select form-select-sm" name="fb_adset_id"
+                        onchange="this.form.querySelector('[name=fb_ad_id]').value=''; this.form.submit();">
+                    <option value="">All Adsets</option>
+                    {% for sid, sname in fb_adsets %}
+                    <option value="{{ sid }}" {% if fb_adset_filter == sid %}selected{% endif %}>{{ sname or sid }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <div class="filter-label">Ad</div>
+                <select class="form-select form-select-sm" name="fb_ad_id"
+                        onchange="this.form.submit();">
+                    <option value="">All Ads</option>
+                    {% for aid, aname in fb_ads %}
+                    <option value="{{ aid }}" {% if fb_ad_filter == aid %}selected{% endif %}>{{ aname or aid }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        {% endif %}
     </form>
 </div>
 
@@ -605,6 +650,19 @@
                             <div class="meta-text">{{ (lead.created_at | to_ist).strftime('%d %b, %I:%M %p') }}</div>
                             {% if lead.origin %}
                             <div class="meta-text">{{ lead.origin }}</div>
+                            {% endif %}
+                            {# FB campaign badge — only renders when the
+                               webhook captured campaign metadata. Clicking
+                               filters the list to just that campaign so
+                               BD can drill in with one click. #}
+                            {% if lead.fb_campaign_name or lead.fb_ad_name %}
+                            <a href="{{ url_for('leads_list', fb_campaign_id=lead.fb_campaign_id) if lead.fb_campaign_id else '#' }}"
+                               class="badge bg-light text-primary text-decoration-none mt-1"
+                               style="font-size:0.65rem; font-weight:500; white-space:normal; text-align:left; max-width:160px;"
+                               title="{% if lead.fb_campaign_name %}Campaign: {{ lead.fb_campaign_name }}{% endif %}{% if lead.fb_adset_name %}&#10;Adset: {{ lead.fb_adset_name }}{% endif %}{% if lead.fb_ad_name %}&#10;Ad: {{ lead.fb_ad_name }}{% endif %}">
+                                <i class="bi bi-megaphone-fill"></i>
+                                {{ lead.fb_campaign_name or lead.fb_ad_name }}
+                            </a>
                             {% endif %}
                         </td>
 
@@ -803,7 +861,8 @@
                        search=search_query, stage=stage_filter, state=state_filter,
                        origin=origin_filter, owner=owner_filter, lead_type=lead_type_filter,
                        updated_from=updated_from, updated_to=updated_to,
-                       created_from=created_from, created_to=created_to) }}">
+                       created_from=created_from, created_to=created_to,
+                       fb_campaign_id=fb_campaign_filter, fb_adset_id=fb_adset_filter, fb_ad_id=fb_ad_filter) }}">
                     <i class="bi bi-chevron-left"></i>
                 </a>
             </li>
@@ -817,7 +876,8 @@
                            search=search_query, stage=stage_filter, state=state_filter,
                            origin=origin_filter, owner=owner_filter, lead_type=lead_type_filter,
                            updated_from=updated_from, updated_to=updated_to,
-                           created_from=created_from, created_to=created_to) }}">
+                           created_from=created_from, created_to=created_to,
+                           fb_campaign_id=fb_campaign_filter, fb_adset_id=fb_adset_filter, fb_ad_id=fb_ad_filter) }}">
                         {{ p }}
                     </a>
                 </li>
@@ -833,7 +893,8 @@
                        search=search_query, stage=stage_filter, state=state_filter,
                        origin=origin_filter, owner=owner_filter, lead_type=lead_type_filter,
                        updated_from=updated_from, updated_to=updated_to,
-                       created_from=created_from, created_to=created_to) }}">
+                       created_from=created_from, created_to=created_to,
+                       fb_campaign_id=fb_campaign_filter, fb_adset_id=fb_adset_filter, fb_ad_id=fb_ad_filter) }}">
                     <i class="bi bi-chevron-right"></i>
                 </a>
             </li>

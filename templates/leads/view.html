@@ -342,6 +342,59 @@
             {% endif %}
         </div>
 
+        <!-- Facebook ad-hierarchy info — captured by the webhook ingest.
+             Renders the campaign / adset / ad / form names BD picked in
+             Ads Manager. Each name is a deep-link back to /leads
+             pre-filtered so BD can pivot from "this lead" to "show me
+             every lead from this same campaign" with one click. -->
+        {% if lead.origin == 'Facebook' and (lead.fb_campaign_name or lead.fb_ad_name or lead.fb_form_name) %}
+        <div class="info-card">
+            <h6><i class="bi bi-megaphone-fill"></i> Facebook Campaign</h6>
+            {% if lead.fb_campaign_name %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-bullseye"></i> Campaign</span>
+                <span class="detail-value">
+                    <a href="{{ url_for('leads_list', fb_campaign_id=lead.fb_campaign_id) }}" class="text-decoration-none">
+                        {{ lead.fb_campaign_name }}
+                    </a>
+                </span>
+            </div>
+            {% endif %}
+            {% if lead.fb_adset_name %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-collection"></i> Adset</span>
+                <span class="detail-value">
+                    <a href="{{ url_for('leads_list', fb_campaign_id=lead.fb_campaign_id, fb_adset_id=lead.fb_adset_id) }}" class="text-decoration-none">
+                        {{ lead.fb_adset_name }}
+                    </a>
+                </span>
+            </div>
+            {% endif %}
+            {% if lead.fb_ad_name %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-image"></i> Ad</span>
+                <span class="detail-value">
+                    <a href="{{ url_for('leads_list', fb_campaign_id=lead.fb_campaign_id, fb_adset_id=lead.fb_adset_id, fb_ad_id=lead.fb_ad_id) }}" class="text-decoration-none">
+                        {{ lead.fb_ad_name }}
+                    </a>
+                </span>
+            </div>
+            {% endif %}
+            {% if lead.fb_form_name %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-ui-checks"></i> Form</span>
+                <span class="detail-value text-muted">{{ lead.fb_form_name }}</span>
+            </div>
+            {% endif %}
+            {% if lead.facebook_lead_id %}
+            <div class="detail-row">
+                <span class="detail-label"><i class="bi bi-hash"></i> Lead ID</span>
+                <span class="detail-value text-muted">{{ lead.facebook_lead_id }}</span>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
         <!-- IndiaMart Info -->
         {% if lead.origin == 'IndiaMart' %}
         <div class="info-card">

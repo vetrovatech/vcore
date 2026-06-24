@@ -926,6 +926,24 @@ class Lead(db.Model):
     # Facebook Lead Ads integration
     facebook_lead_id = db.Column(db.String(50), nullable=True, unique=True, index=True)
 
+    # FB ad-hierarchy metadata — captured from the Graph API on webhook
+    # ingest (see facebook_webhook_receive in app.py). Powers the
+    # Campaign / Adset / Ad filters on /leads so BD can answer "how is
+    # the HSR-Showers-Lookalike creative converting?". All nullable —
+    # IndiaMart / WhatsApp / manually-entered leads stay valid. Schema
+    # parity in migrate_add_lead_facebook_campaign.py.
+    fb_campaign_id   = db.Column(db.String(50),  nullable=True, index=True)
+    fb_campaign_name = db.Column(db.String(255), nullable=True, index=True)
+    fb_adset_id      = db.Column(db.String(50),  nullable=True)
+    fb_adset_name    = db.Column(db.String(255), nullable=True)
+    fb_ad_id         = db.Column(db.String(50),  nullable=True)
+    fb_ad_name       = db.Column(db.String(255), nullable=True)
+    # form_id was previously stuffed into `notes`. The name (e.g.
+    # "Bathqube Shower Quote · HSR") is what BD wants to read in the list
+    # — promote it to its own column. form_id stays in notes for legacy
+    # parity with already-imported leads.
+    fb_form_name     = db.Column(db.String(255), nullable=True)
+
     # IndiaMart integration
     indiamart_id = db.Column(db.String(50), nullable=True, unique=True, index=True)
     buyer_glid = db.Column(db.String(50), nullable=True)
