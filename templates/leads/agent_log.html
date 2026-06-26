@@ -183,6 +183,86 @@
     </div>
 </form>
 
+{# ── CURRENT SNAPSHOT — matches /leads filter counts directly.
+   Always shows the present-DB state regardless of the date picker; the
+   matrix below uses the date picker for activity-flow. Without this
+   block, BD compared activity-event counts to /leads snapshot counts
+   and got confused (the two answer different questions). ────────── #}
+<div class="al-matrix-card" style="margin-bottom: 18px; background: #f8fafc; border: 1px solid #e2e8f0;">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 14px 16px 6px;">
+        <div>
+            <h6 style="margin: 0; font-size: 0.92rem; font-weight: 700; color: #0f172a;">
+                <i class="bi bi-pie-chart-fill" style="color: #2563eb;"></i>
+                Current snapshot
+            </h6>
+            <div style="font-size: 0.78rem; color: #64748b; margin-top: 2px;">
+                Where every lead is right now. Matches the /leads filter counts exactly — date picker doesn't affect this row.
+            </div>
+        </div>
+        <div style="font-size: 0.82rem; color: #475569;">
+            <strong>{{ snapshot_grand_total }}</strong> total
+            {% if snapshot_unowned > 0 %}
+                · <span title="Leads with no owner assigned — visible in /leads but not in any owner column">{{ snapshot_unowned }} unowned</span>
+            {% endif %}
+            {% if snapshot_other_stages_count > 0 %}
+                · <span style="color: #b45309;" title="Leads with a stage value not in the standard list (legacy free-text / custom funnel)">{{ snapshot_other_stages_count }} in non-standard stages</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="al-matrix-wrap" style="padding: 0 14px 14px;">
+        <table class="al-table">
+            <thead>
+                <tr>
+                    <th class="al-stage-th">Stage</th>
+                    {% for owner in owners %}
+                    <th>
+                        <a href="{{ url_for('leads_list', owner=owner.id) }}"
+                           style="color: inherit; text-decoration: none;">
+                            {{ owner.username }}
+                        </a>
+                    </th>
+                    {% endfor %}
+                    <th class="al-totals-col">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stage in stages %}
+                {% if snapshot_stage_totals.get(stage, 0) > 0 %}
+                <tr>
+                    <td class="al-stage-td">
+                        <a href="{{ url_for('leads_list', stage=stage) }}"
+                           style="color: inherit; text-decoration: none;">
+                            <span class="al-badge-pill bg-{{ badge_class_for.get(stage, 'secondary') }} text-white">{{ stage }}</span>
+                        </a>
+                    </td>
+                    {% for owner in owners %}
+                        {% set cnt = snapshot_matrix.get(owner.id, {}).get(stage, 0) %}
+                        <td>
+                            {% if cnt > 0 %}
+                            <a class="al-cell-link"
+                               href="{{ url_for('leads_list', stage=stage, owner=owner.id) }}"
+                               title="{{ cnt }} lead{{ '' if cnt == 1 else 's' }} currently with {{ owner.username }} in {{ stage }}">{{ cnt }}</a>
+                            {% else %}
+                            <span class="al-cell-zero">·</span>
+                            {% endif %}
+                        </td>
+                    {% endfor %}
+                    <td class="al-totals-col">{{ snapshot_stage_totals.get(stage, 0) }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+                <tr class="al-totals-row">
+                    <td class="al-stage-td">Total</td>
+                    {% for owner in owners %}
+                    <td>{{ snapshot_owner_totals.get(owner.id, 0) }}</td>
+                    {% endfor %}
+                    <td class="al-grand">{{ snapshot_grand_total }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
 {# ── Selected range summary ───────────────────────────────────────────── #}
 <div style="font-size: 0.82rem; color: #64748b; margin-bottom: 10px;">
     Showing stage changes <strong>{{ date_from }}</strong>
@@ -190,7 +270,7 @@
     · <strong>{{ grand_total }}</strong> total event{{ '' if grand_total == 1 else 's' }} · {{ owners|length }} owner{{ '' if owners|length == 1 else 's' }} · {{ stages|length }} stages
 </div>
 
-{# ── Matrix ──────────────────────────────────────────────────────────── #}
+{# ── Activity matrix (stage CHANGE events in the chosen date range) ─── #}
 <div class="al-matrix-card">
     {% if grand_total == 0 %}
     <div class="al-empty">

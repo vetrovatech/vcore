@@ -46,15 +46,44 @@ def _run_startup_migrations():
     """Run safe ADD COLUMN migrations on every cold start (idempotent — ignores duplicates)."""
     stmts = [
         "ALTER TABLE leads ADD COLUMN facebook_lead_id VARCHAR(50) NULL",
+        # WhatsApp Cloud API send-log. Created on cold start so a brand-new
+        # Lambda deploy works without a separate migration step.
+        """
+        CREATE TABLE IF NOT EXISTS whatsapp_messages (
+            id              SERIAL PRIMARY KEY,
+            lead_id         INTEGER REFERENCES leads(id)    ON DELETE SET NULL,
+            meeting_id      INTEGER REFERENCES meetings(id) ON DELETE SET NULL,
+            to_number       VARCHAR(20)  NOT NULL,
+            template_name   VARCHAR(100) NOT NULL,
+            language        VARCHAR(10)  NOT NULL DEFAULT 'en',
+            variables_json  TEXT,
+            wamid           VARCHAR(120) UNIQUE,
+            status          VARCHAR(20)  NOT NULL DEFAULT 'queued',
+            error_message   TEXT,
+            sent_by         INTEGER NOT NULL REFERENCES users(id),
+            sent_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_wa_lead_id    ON whatsapp_messages(lead_id)",
+        "CREATE INDEX IF NOT EXISTS idx_wa_meeting_id ON whatsapp_messages(meeting_id)",
+        "CREATE INDEX IF NOT EXISTS idx_wa_to_number  ON whatsapp_messages(to_number)",
+        "CREATE INDEX IF NOT EXISTS idx_wa_status     ON whatsapp_messages(status)",
     ]
+    # Each statement runs in its own transaction. Required because Postgres
+    # puts the connection into an "aborted transaction" state after ANY
+    # failed statement (e.g. ALTER TABLE on a column that already exists),
+    # and every subsequent statement on the same transaction silently fails
+    # until ROLLBACK. Without this isolation, a single duplicate-ADD-COLUMN
+    # blocks the rest of the migration list from running — which is exactly
+    # how the whatsapp_messages CREATE TABLE got swallowed on 2026-06-25.
     try:
-        with db.engine.connect() as conn:
-            for sql in stmts:
-                try:
+        for sql in stmts:
+            try:
+                with db.engine.begin() as conn:
                     conn.execute(text(sql))
-                    conn.commit()
-                except Exception:
-                    pass  # Column already exists
+            except Exception:
+                pass  # Idempotent — column/table/index already exists
     except Exception:
         pass  # DB not reachable yet (local dev before first request)
 
@@ -3185,6 +3214,48 @@ def leads_agent_log():
     owner_totals = {o.id: sum(matrix.get(o.id, {}).get(s, 0) for s in stages) for o in owners}
     grand_total = sum(owner_totals.values())
 
+    # ── Snapshot view ────────────────────────────────────────────────
+    # Activity events (above) vs current snapshot (below) measure
+    # different things — events answers "who moved which lead here this
+    # week" while snapshot answers "how many leads are in stage X right
+    # now". BD was getting confused because they ran a bulk-move that
+    # updated Lead.stage WITHOUT writing lead_history rows, so 70% of
+    # leads have no stage_change history at all → events matrix looked
+    # tiny vs /leads. Surface the snapshot directly so the agent-log
+    # page reconciles with /leads at a glance without losing the
+    # event-flow matrix below it.
+    #
+    # Snapshot is date-range-INDEPENDENT (it always reflects the current
+    # database state) — the date picker only affects the events matrix.
+    snapshot_rows = (db.session.query(
+                        Lead.owner_id.label('owner_id'),
+                        Lead.stage.label('stage'),
+                        func.count(Lead.id).label('cnt'))
+                     .group_by(Lead.owner_id, Lead.stage)
+                     .all())
+    snapshot_matrix = {}     # snapshot_matrix[owner_id|None][stage] = count
+    for r in snapshot_rows:
+        snapshot_matrix.setdefault(r.owner_id, {})[r.stage] = int(r.cnt)
+    snapshot_stage_totals = {
+        s: sum(om.get(s, 0) for om in snapshot_matrix.values()) for s in stages
+    }
+    snapshot_owner_totals = {
+        o.id: sum(snapshot_matrix.get(o.id, {}).get(s, 0) for s in stages) for o in owners
+    }
+    snapshot_grand_total = sum(snapshot_stage_totals.values())
+    # Leads with no owner assigned — surface as a single counter so they
+    # don't silently disappear from the snapshot's grand total.
+    snapshot_unowned = sum(snapshot_matrix.get(None, {}).get(s, 0) for s in stages)
+    # Leads whose `stage` value isn't in LEAD_STAGES_ALL (legacy free-text,
+    # custom funnels added by BD via direct SQL, etc). They count in the
+    # grand total but won't appear in any per-stage row of the matrix,
+    # so we expose the count separately too.
+    snapshot_other_stages_count = sum(
+        cnt for om in snapshot_matrix.values()
+            for s, cnt in om.items()
+            if s and s not in stages
+    )
+
     return render_template('leads/agent_log.html',
                            owners=owners,
                            stages=stages,
@@ -3192,6 +3263,13 @@ def leads_agent_log():
                            stage_totals=stage_totals,
                            owner_totals=owner_totals,
                            grand_total=grand_total,
+                           # Snapshot block (date-range-independent — matches /leads)
+                           snapshot_matrix=snapshot_matrix,
+                           snapshot_stage_totals=snapshot_stage_totals,
+                           snapshot_owner_totals=snapshot_owner_totals,
+                           snapshot_grand_total=snapshot_grand_total,
+                           snapshot_unowned=snapshot_unowned,
+                           snapshot_other_stages_count=snapshot_other_stages_count,
                            preset=preset,
                            # Display the inclusive end-of-range — what the
                            # user typed / what the preset label says — not
@@ -3943,6 +4021,53 @@ def lead_set_customer_type(id):
     return jsonify({'success': True, 'customer_type': lead.customer_type})
 
 
+@app.route('/leads/<int:id>/send-welcome', methods=['POST'])
+@login_required
+def lead_send_welcome(id):
+    """Send the approved 'welcome_new_lead' WhatsApp template to a lead."""
+    from models import Lead, WhatsAppMessage
+    from utils.whatsapp import send_template, normalize_phone
+
+    lead = Lead.query.get_or_404(id)
+    if not lead.contact:
+        return jsonify({'success': False, 'error': 'Lead has no phone number'}), 400
+
+    first_name = (lead.name or 'there').strip().split()[0]
+    variables = [first_name]
+
+    msg = WhatsAppMessage(
+        lead_id=lead.id,
+        to_number=normalize_phone(lead.contact) or lead.contact,
+        template_name='welcome_new_lead',
+        language='en',
+        variables_json=json.dumps(variables),
+        sent_by=current_user.id,
+        status='queued',
+    )
+    db.session.add(msg)
+    db.session.flush()  # get msg.id without committing the send-attempt yet
+
+    result = send_template(
+        to=lead.contact,
+        template_name='welcome_new_lead',
+        language='en',
+        variables=variables,
+    )
+
+    if result.get('success'):
+        msg.status = 'sent'
+        msg.wamid = result.get('wamid')
+    else:
+        msg.status = 'failed'
+        msg.error_message = result.get('error', 'Unknown error')
+
+    db.session.commit()
+
+    if result.get('success'):
+        return jsonify({'success': True, 'wamid': msg.wamid, 'to': msg.to_number})
+    return jsonify({'success': False, 'error': msg.error_message}), 502
+
+
 def _do_facebook_sync(created_by_id):
     """Fetch leads from all Lead Ad forms on the Facebook Page and save new ones.
     Returns (new_count, skipped_count, error_msg).
@@ -3995,7 +4120,18 @@ def _do_facebook_sync(created_by_id):
         url = f'https://graph.facebook.com/v19.0/{form_id}/leads'
         params = {
             'access_token': page_token,
-            'fields': 'id,created_time,field_data',
+            # Nested field expansion pulls campaign/adset/ad names in the
+            # same round trip. Same field list as facebook_webhook_receive
+            # below — keep them in sync so BD's campaign filter on /leads
+            # works for cron-ingested + manually-synced + webhook-ingested
+            # leads identically. NOTE: `form_name` is not a leadgen-edge
+            # field (Graph returns error #100); we capture form_name
+            # separately via the parent form metadata above.
+            'fields': (
+                'id,created_time,field_data,'
+                'ad_id,adset_id,campaign_id,'
+                'campaign_name,adset_name,ad_name'
+            ),
             'limit': 100,
         }
 
@@ -4042,6 +4178,12 @@ def _do_facebook_sync(created_by_id):
                 notes = f'Ad Form: {form_name}' if form_name else None
 
                 fb_created = _parse_fb_created_time(lead_entry.get('created_time'))
+
+                # Same ad-hierarchy capture as the webhook ingest.
+                # None-safe: missing legs (organic forms, archived ads)
+                # land as NULL columns and the lead falls into the
+                # "Unknown campaign" bucket on /leads filter dropdowns
+                # rather than blocking ingest.
                 lead = Lead(
                     name=name,
                     contact=phone,
@@ -4053,6 +4195,16 @@ def _do_facebook_sync(created_by_id):
                     stage='Untouched',
                     lead_type='Enquiry',
                     facebook_lead_id=fb_lead_id,
+                    fb_campaign_id   = lead_entry.get('campaign_id')   or None,
+                    fb_campaign_name = lead_entry.get('campaign_name') or None,
+                    fb_adset_id      = lead_entry.get('adset_id')      or None,
+                    fb_adset_name    = lead_entry.get('adset_name')    or None,
+                    fb_ad_id         = lead_entry.get('ad_id')         or None,
+                    fb_ad_name       = lead_entry.get('ad_name')       or None,
+                    # Form name comes from the parent loop (the Step-1
+                    # forms query already gave us form_name); promote it
+                    # off `notes` for filter use.
+                    fb_form_name     = form_name or None,
                     owner_id=None,
                     assigned_to_id=None,
                     created_by=created_by_id,
