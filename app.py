@@ -4026,7 +4026,18 @@ def lead_set_customer_type(id):
 @app.route('/leads/<int:id>/send-welcome', methods=['POST'])
 @login_required
 def lead_send_welcome(id):
-    """Send the approved 'welcome_new_lead' WhatsApp template to a lead."""
+    """Send the approved 'welcome' WhatsApp utility template to a lead.
+
+    Template name was 'welcome_new_lead' (marketing category) until BD
+    reprovisioned it as 'welcome' (utility category) on 2026-06-30.
+    Utility templates have laxer 24-hour-window rules than marketing —
+    they can go to any user without a prior conversation.
+
+    The template body may or may not have a `{{1}}` placeholder. We try
+    WITH first_name first; if Meta rejects with a "parameter structure"
+    error we retry WITHOUT variables so a static "welcome" template
+    still sends.
+    """
     from models import Lead, WhatsAppMessage
     from utils.whatsapp import send_template, normalize_phone
 
@@ -4040,7 +4051,7 @@ def lead_send_welcome(id):
     msg = WhatsAppMessage(
         lead_id=lead.id,
         to_number=normalize_phone(lead.contact) or lead.contact,
-        template_name='welcome_new_lead',
+        template_name='welcome',
         language='en',
         variables_json=json.dumps(variables),
         sent_by=current_user.id,
@@ -4051,10 +4062,20 @@ def lead_send_welcome(id):
 
     result = send_template(
         to=lead.contact,
-        template_name='welcome_new_lead',
+        template_name='welcome',
         language='en',
         variables=variables,
     )
+    # Auto-retry without variables if the template body has no {{1}}.
+    if not result.get('success') and 'parameter' in (result.get('error') or '').lower():
+        result = send_template(
+            to=lead.contact,
+            template_name='welcome',
+            language='en',
+            variables=None,
+        )
+        if result.get('success'):
+            msg.variables_json = json.dumps([])
 
     if result.get('success'):
         msg.status = 'sent'
