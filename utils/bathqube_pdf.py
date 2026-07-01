@@ -692,10 +692,24 @@ def _panel_dims_mm(panel, source_unit):
     """Convert a panel's (width, height) in source_unit to a "W × H mm"
     string. Workshop standard is mm; we always render in mm regardless of
     what the customer typed on the configurator so the cutter doesn't
-    have to convert."""
+    have to convert.
+
+    PROD bug fix (BSP-000190, 2026-06-30): when source_unit was 'ft' but
+    the panel values were actually mm (a bad legacy top-level unit hint
+    that wasn't per-enclosure-corrected), this multiplied 840mm × 304.8 →
+    256,032mm, printing garbage on the work order. Caller now passes a
+    per-enclosure-resolved unit; this function is defensive too — when
+    unit is 'mm' we short-circuit and skip the to_inches round-trip
+    (also handles the accidental values-already-in-mm case safely).
+    """
     from utils.bathqube_dimensions import to_inches
-    w_mm = to_inches(panel.get('width'),  source_unit or 'ft') * 25.4
-    h_mm = to_inches(panel.get('height'), source_unit or 'ft') * 25.4
+    unit = (source_unit or 'ft').lower()
+    if unit == 'mm':
+        w_mm = float(panel.get('width')  or 0)
+        h_mm = float(panel.get('height') or 0)
+    else:
+        w_mm = to_inches(panel.get('width'),  unit) * 25.4
+        h_mm = to_inches(panel.get('height'), unit) * 25.4
     return f"{w_mm:.0f} × {h_mm:.0f} mm"
 
 
@@ -979,6 +993,15 @@ def generate_bathqube_work_order_pdf(quote):
             qty = int(enc.get('quantity') or 1)
             qty_label = f"  ×{qty}" if qty > 1 else ""
 
+            # Per-enclosure unit resolution — matches the seed / revise
+            # priority chain: per-enc dimensionUnit > top-level > 'ft'.
+            # Fixes BSP-000190 where top-level said 'ft' but per-enc was
+            # 'mm'. Without this, _panel_dims_mm treated 840mm as 840ft
+            # and printed 256,032 × 667,512 mm.
+            enc_unit = (enc.get('dimensionUnit')
+                        or cfg.get('dimensionUnit')
+                        or 'ft').lower()
+
             # Title row (spans all 4 cols). Enclosure Type is BOLD per
             # manager's highlight list. Name stays regular.
             title = Paragraph(
@@ -1057,7 +1080,7 @@ def generate_bathqube_work_order_pdf(quote):
             # called out specifically for highlight by manager).
             panels = enc.get('glassPanels') or []
             for pi, p in enumerate(panels, start=1):
-                dims_text = _panel_dims_mm(p, src_unit)
+                dims_text = _panel_dims_mm(p, enc_unit)
                 rows.append([
                     Paragraph(f"P{pi}", cell_pnum),
                     Paragraph(dims_text, cell_dim),
