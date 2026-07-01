@@ -1,0 +1,440 @@
+{% extends "base.html" %}
+{% block title %}New Bathqube Quote{% endblock %}
+{% block content %}
+<h3 class="mb-3">
+    <i class="bi bi-plus-circle"></i> New Bathqube Quote
+    <small class="text-muted">— BD-created · saved as Draft</small>
+</h3>
+
+<div class="alert alert-info py-2 small">
+    <i class="bi bi-info-circle"></i> Options &amp; prices live-fetched from glassyplatform's
+    <code>shower-configurator-settings</code> global (so they always match the customer configurator).
+    A new estimate number (<code>BSP-NNNNNN</code>) is generated when you save.
+    Quote starts in <strong>Draft</strong> — review on the next screen, then click
+    <strong>Send to customer</strong> to email + flip to Quote Generated.
+</div>
+
+<form method="POST" action="{{ url_for('bathqube_quote_create') }}" id="bqNewForm">
+
+    {# ───────────── Customer ───────────── #}
+    <div class="card mb-3">
+        <div class="card-header"><strong><i class="bi bi-person"></i> Customer</strong></div>
+        <div class="card-body row g-3">
+            <div class="col-md-6">
+                <label class="form-label">Name <span class="text-danger">*</span></label>
+                <input class="form-control" name="customer_name" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Phone <span class="text-danger">*</span></label>
+                <input class="form-control" name="phone" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Pincode</label>
+                <input class="form-control" name="pincode">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Email <small class="text-muted">(needed to send PDF)</small></label>
+                <input class="form-control" name="email" type="email">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">GST %</label>
+                <input class="form-control" name="gst_percentage" type="number" min="0" max="100" step="0.01"
+                       value="{{ default_gst }}" id="gstInput">
+            </div>
+            <div class="col-md-12">
+                <label class="form-label">Site address</label>
+                <textarea class="form-control" name="site_address" rows="2"></textarea>
+            </div>
+        </div>
+    </div>
+
+    {# ───────────── Enclosures ───────────── #}
+    <div class="card mb-3 border-primary">
+        <div class="card-header bg-primary bg-opacity-10 d-flex justify-content-between align-items-center">
+            <span>
+                <strong><i class="bi bi-box"></i> Enclosures</strong>
+                <span class="small text-muted ms-2" id="encCount">0 enclosures</span>
+            </span>
+            <button type="button" class="btn btn-sm btn-primary" id="addEnclosureBtn">
+                <i class="bi bi-plus-circle"></i> Add enclosure
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <div id="enclosuresContainer"></div>
+        </div>
+        <input type="hidden" name="enclosures_json" id="enclosuresJson">
+    </div>
+
+    {# ───────────── Totals ───────────── #}
+    <div class="card mb-3">
+        <div class="card-header"><strong><i class="bi bi-calculator"></i> Live totals (preview)</strong></div>
+        <div class="card-body row g-2">
+            <div class="col-md-3 text-muted small">Subtotal (taxable)</div>
+            <div class="col-md-3 text-end fw-bold" id="previewSubtotal">₹0</div>
+            <div class="col-md-3 text-muted small">CGST <span id="cgstLabel">(9%)</span></div>
+            <div class="col-md-3 text-end" id="previewCgst">₹0</div>
+            <div class="col-md-3 text-muted small">Grand total</div>
+            <div class="col-md-3 text-end fw-bold" id="previewTotal">₹0</div>
+            <div class="col-md-3 text-muted small">SGST <span id="sgstLabel">(9%)</span></div>
+            <div class="col-md-3 text-end" id="previewSgst">₹0</div>
+            <div class="col-12 small text-muted mt-2">
+                Server recomputes on save using the same formula; this is just a live preview.
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex gap-2 mb-5">
+        <button type="submit" class="btn btn-success" id="saveBtn">
+            <i class="bi bi-check-circle"></i> Create draft
+        </button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('bathqube_quotes_list') }}">Cancel</a>
+    </div>
+</form>
+
+<script id="optionsJson" type="application/json">{{ options|tojson }}</script>
+<script id="unitsJson"   type="application/json">{{ dim_units|tojson }}</script>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    const OPTIONS = JSON.parse(document.getElementById('optionsJson').textContent || '{}');
+    const UNITS   = JSON.parse(document.getElementById('unitsJson').textContent || '["mm","cm","m","ft","in"]');
+
+    // Mirror the JS from bathqube_revise.js so a BD-create quote produces
+    // identical sqft numbers to the same quote opened via Revise after save.
+    const UNIT_TO_INCHES = { mm: 1/25.4, cm: 1/2.54, in: 1, m: 39.37007874015748, ft: 12 };
+    const MIN_BY_UNIT    = { mm: 100, cm: 10, in: 4, m: 0.1, ft: 0.5 };
+
+    function panelSqft(w, h, unit) {
+        const u = UNIT_TO_INCHES[unit] !== undefined ? unit : 'ft';
+        const min = MIN_BY_UNIT[u] || 0.5;
+        const wi = Math.max(min, Number(w) || 0) * UNIT_TO_INCHES[u];
+        const hi = Math.max(min, Number(h) || 0) * UNIT_TO_INCHES[u];
+        return (wi * hi) / 144;
+    }
+    function money(v) {
+        return '₹' + Math.round(Number(v) || 0).toLocaleString('en-IN');
+    }
+    function esc(s) {
+        if (s === null || s === undefined) return '';
+        return String(s).replace(/[&<>"']/g, c =>
+            ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function surchargeFor(list, label) {
+        if (!Array.isArray(list)) return 0;
+        for (const o of list) if (o.label === label) return Number(o.surcharge) || 0;
+        return 0;
+    }
+    function recomputePrice(enc) {
+        let p = Number(OPTIONS.basePricePerSqft) || 0;
+        p += surchargeFor(OPTIONS.types,         enc.typeLabel);
+        p += surchargeFor(OPTIONS.materials,     enc.materialLabel);
+        p += surchargeFor(OPTIONS.thicknesses,   enc.thicknessLabel);
+        p += surchargeFor(OPTIONS.fittings,      enc.fittingLabel);
+        p += surchargeFor(OPTIONS.hardwareTypes, enc.hardwareTypeLabel);
+        return Math.max(0, Math.round(p));
+    }
+
+    const bodyEl    = document.getElementById('enclosuresContainer');
+    const addBtn    = document.getElementById('addEnclosureBtn');
+    const countEl   = document.getElementById('encCount');
+    const gstInp    = document.getElementById('gstInput');
+    const subEl     = document.getElementById('previewSubtotal');
+    const cgstEl    = document.getElementById('previewCgst');
+    const sgstEl    = document.getElementById('previewSgst');
+    const totalEl   = document.getElementById('previewTotal');
+    const cgstLab   = document.getElementById('cgstLabel');
+    const sgstLab   = document.getElementById('sgstLabel');
+    const jsonEl    = document.getElementById('enclosuresJson');
+
+    let nextUid = 1;
+    const state = { enclosures: [] };
+
+    function defaultLabel(list) {
+        return (Array.isArray(list) && list.length) ? list[0].label : '';
+    }
+
+    function addEnclosure() {
+        const enc = {
+            _uid: nextUid++,
+            name: 'Enclosure ' + (state.enclosures.length + 1),
+            typeLabel:         defaultLabel(OPTIONS.types),
+            materialLabel:     defaultLabel(OPTIONS.materials),
+            thicknessLabel:    defaultLabel(OPTIONS.thicknesses),
+            fittingLabel:      defaultLabel(OPTIONS.fittings),
+            hardwareTypeLabel: defaultLabel(OPTIONS.hardwareTypes),
+            quantity: 1,
+            dimensionUnit: 'mm',
+            glassPanels: [{ width: 1200, height: 2100 }],
+        };
+        enc.pricePerSqft = recomputePrice(enc);
+        state.enclosures.push(enc);
+        rerender();
+    }
+
+    function selectHtml(list, current, cls) {
+        const opts = (list || []).map(o => {
+            const sur = Number(o.surcharge) || 0;
+            const suffix = sur > 0 ? ` (+₹${sur}/sqft)` : (sur < 0 ? ` (₹${sur}/sqft)` : '');
+            return `<option value="${esc(o.label)}"${o.label === current ? ' selected' : ''}>${esc(o.label)}${suffix}</option>`;
+        }).join('');
+        return `<select class="form-select form-select-sm ${cls}">${opts}</select>`;
+    }
+
+    function unitSelectHtml(current) {
+        const opts = UNITS.map(u => `<option value="${u}"${u === current ? ' selected' : ''}>${u}</option>`).join('');
+        return `<select class="form-select form-select-sm js-unit">${opts}</select>`;
+    }
+
+    function renderEnc(enc, idx) {
+        const sqft = enc.glassPanels.reduce((s, p) => s + panelSqft(p.width, p.height, enc.dimensionUnit), 0);
+        const subtotal = sqft * enc.pricePerSqft * Math.max(1, enc.quantity);
+
+        const card = document.createElement('div');
+        card.className = 'border-bottom';
+        card.dataset.uid = enc._uid;
+        card.innerHTML = `
+          <div class="px-3 py-2 bg-light d-flex justify-content-between align-items-center">
+            <div><span class="badge bg-primary me-2">#${idx+1}</span><strong class="enc-summary">${esc(enc.name)}</strong>
+              <span class="small text-muted ms-2">${esc(enc.typeLabel)} · ${esc(enc.materialLabel)} · ${enc.glassPanels.length} panel${enc.glassPanels.length===1?'':'s'} · ${sqft.toFixed(1)} sq.ft × ${enc.quantity}</span>
+            </div>
+            <div class="text-end">
+              <div class="fw-bold text-primary enc-sub">${money(subtotal)}</div>
+            </div>
+          </div>
+          <div class="p-3" style="background:#f8fbfd;">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label small">Enclosure name</label>
+                <input class="form-control form-control-sm js-name" value="${esc(enc.name)}">
+              </div>
+              <div class="col-md-6 text-end">
+                <button type="button" class="btn btn-sm btn-outline-danger js-remove"><i class="bi bi-trash"></i> Remove</button>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label small">Enclosure type</label>
+                ${selectHtml(OPTIONS.types, enc.typeLabel, 'js-type')}
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small">Material</label>
+                ${selectHtml(OPTIONS.materials, enc.materialLabel, 'js-material')}
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small">Thickness</label>
+                ${selectHtml(OPTIONS.thicknesses, enc.thicknessLabel, 'js-thickness')}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small">Hardware colour (fitting)</label>
+                ${selectHtml(OPTIONS.fittings, enc.fittingLabel, 'js-fitting')}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small">Hardware type</label>
+                ${selectHtml(OPTIONS.hardwareTypes, enc.hardwareTypeLabel, 'js-hardware')}
+              </div>
+
+              <div class="col-md-3">
+                <label class="form-label small">Price per sq.ft (₹)</label>
+                <input class="form-control form-control-sm js-price" type="number" min="0" step="1" value="${enc.pricePerSqft}">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small">Quantity</label>
+                <input class="form-control form-control-sm js-qty" type="number" min="1" step="1" value="${enc.quantity}">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small">Dim. unit</label>
+                ${unitSelectHtml(enc.dimensionUnit)}
+              </div>
+              <div class="col-md-5 d-flex align-items-end">
+                <div class="text-end w-100 small">
+                  <div>Sqft: <strong class="js-sqft">${sqft.toFixed(2)}</strong></div>
+                  <div>Subtotal: <strong class="text-primary js-encsub">${money(subtotal)}</strong></div>
+                </div>
+              </div>
+
+              <div class="col-12">
+                <label class="form-label small">Glass panels</label>
+                <div class="panels-container border rounded p-2 bg-white"></div>
+                <button type="button" class="btn btn-sm btn-outline-primary mt-2 js-add-panel">
+                  <i class="bi bi-plus"></i> Add panel
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+        return card;
+    }
+
+    function renderPanel(p, pIdx, total, unit) {
+        const sqft = panelSqft(p.width, p.height, unit);
+        const row = document.createElement('div');
+        row.className = 'row g-2 align-items-end mb-2 panel-row';
+        row.innerHTML = `
+          <div class="col-1 text-muted small">Panel ${pIdx+1}</div>
+          <div class="col-3">
+            <label class="form-label small mb-0">Width (${unit})</label>
+            <input class="form-control form-control-sm js-w" type="number" step="any" value="${p.width}">
+          </div>
+          <div class="col-3">
+            <label class="form-label small mb-0">Height (${unit})</label>
+            <input class="form-control form-control-sm js-h" type="number" step="any" value="${p.height}">
+          </div>
+          <div class="col-3 text-end small">
+            <span class="text-muted">Sqft:</span> <strong class="js-panel-sqft">${sqft.toFixed(2)}</strong>
+          </div>
+          <div class="col-2 text-end">
+            ${total > 1 ? '<button type="button" class="btn btn-sm btn-link text-danger js-remove-panel"><i class="bi bi-x-lg"></i></button>' : ''}
+          </div>
+        `;
+        return row;
+    }
+
+    function rerender() {
+        bodyEl.innerHTML = '';
+        if (!state.enclosures.length) {
+            bodyEl.innerHTML = '<p class="text-muted text-center p-3 mb-0">No enclosures yet. Click <strong>Add enclosure</strong> to start.</p>';
+        }
+        state.enclosures.forEach((enc, idx) => {
+            const card = renderEnc(enc, idx);
+            bodyEl.appendChild(card);
+            const panelsBox = card.querySelector('.panels-container');
+            enc.glassPanels.forEach((p, pIdx) => {
+                panelsBox.appendChild(renderPanel(p, pIdx, enc.glassPanels.length, enc.dimensionUnit));
+            });
+            wireCard(card, enc);
+        });
+        recomputeTotals();
+    }
+
+    function wireCard(card, enc) {
+        const update = () => {
+            enc.name           = card.querySelector('.js-name').value;
+            enc.typeLabel      = card.querySelector('.js-type').value;
+            enc.materialLabel  = card.querySelector('.js-material').value;
+            enc.thicknessLabel = card.querySelector('.js-thickness').value;
+            enc.fittingLabel   = card.querySelector('.js-fitting').value;
+            enc.hardwareTypeLabel = card.querySelector('.js-hardware').value;
+            enc.quantity       = Math.max(1, parseInt(card.querySelector('.js-qty').value || 1));
+            enc.dimensionUnit  = card.querySelector('.js-unit').value;
+            // Recompute auto-price unless BD overrode it
+            const newAutoPrice = recomputePrice(enc);
+            const priceEl = card.querySelector('.js-price');
+            if (parseInt(priceEl.dataset.userTouched || 0) !== 1) {
+                enc.pricePerSqft = newAutoPrice;
+                priceEl.value = newAutoPrice;
+            } else {
+                enc.pricePerSqft = Math.max(0, parseFloat(priceEl.value || 0));
+            }
+            redrawSummary(card, enc);
+        };
+        card.querySelector('.js-name').addEventListener('input', update);
+        ['.js-type','.js-material','.js-thickness','.js-fitting','.js-hardware'].forEach(sel =>
+            card.querySelector(sel).addEventListener('change', update));
+        card.querySelector('.js-qty').addEventListener('input', update);
+        card.querySelector('.js-unit').addEventListener('change', () => {
+            // Unit change → re-render panels (labels update + sqft recomputes)
+            enc.dimensionUnit = card.querySelector('.js-unit').value;
+            rerender();
+        });
+        const priceEl = card.querySelector('.js-price');
+        priceEl.addEventListener('input', () => {
+            priceEl.dataset.userTouched = '1';
+            enc.pricePerSqft = Math.max(0, parseFloat(priceEl.value || 0));
+            redrawSummary(card, enc);
+        });
+        card.querySelector('.js-remove').addEventListener('click', () => {
+            if (!confirm('Remove "' + enc.name + '"?')) return;
+            state.enclosures = state.enclosures.filter(e => e._uid !== enc._uid);
+            rerender();
+        });
+        card.querySelector('.js-add-panel').addEventListener('click', () => {
+            enc.glassPanels.push({ width: 1200, height: 2100 });
+            rerender();
+        });
+        card.querySelectorAll('.panel-row').forEach((row, pIdx) => {
+            const wInp = row.querySelector('.js-w');
+            const hInp = row.querySelector('.js-h');
+            const sqftEl = row.querySelector('.js-panel-sqft');
+            const upd = () => {
+                enc.glassPanels[pIdx].width = parseFloat(wInp.value || 0);
+                enc.glassPanels[pIdx].height = parseFloat(hInp.value || 0);
+                sqftEl.textContent = panelSqft(enc.glassPanels[pIdx].width, enc.glassPanels[pIdx].height, enc.dimensionUnit).toFixed(2);
+                redrawSummary(card, enc);
+            };
+            wInp.addEventListener('input', upd);
+            hInp.addEventListener('input', upd);
+            const removeBtn = row.querySelector('.js-remove-panel');
+            if (removeBtn) removeBtn.addEventListener('click', () => {
+                enc.glassPanels.splice(pIdx, 1);
+                rerender();
+            });
+        });
+    }
+
+    function redrawSummary(card, enc) {
+        const sqft = enc.glassPanels.reduce((s, p) => s + panelSqft(p.width, p.height, enc.dimensionUnit), 0);
+        const subtotal = sqft * enc.pricePerSqft * Math.max(1, enc.quantity);
+        card.querySelector('.enc-summary').textContent = enc.name;
+        card.querySelector('.js-sqft').textContent = sqft.toFixed(2);
+        card.querySelector('.js-encsub').textContent = money(subtotal);
+        card.querySelector('.enc-sub').textContent = money(subtotal);
+        recomputeTotals();
+    }
+
+    function recomputeTotals() {
+        let subtotal = 0;
+        for (const enc of state.enclosures) {
+            const sqft = enc.glassPanels.reduce((s, p) => s + panelSqft(p.width, p.height, enc.dimensionUnit), 0);
+            subtotal += sqft * enc.pricePerSqft * Math.max(1, enc.quantity);
+        }
+        const gst = parseFloat(gstInp.value) || 0;
+        const half = (gst / 2);
+        const cgst = subtotal * half / 100;
+        const sgst = cgst;
+        cgstLab.textContent = '(' + (half % 1 === 0 ? half.toFixed(0) : half.toFixed(2)) + '%)';
+        sgstLab.textContent = cgstLab.textContent;
+        subEl.textContent   = money(subtotal);
+        cgstEl.textContent  = money(cgst);
+        sgstEl.textContent  = money(sgst);
+        totalEl.textContent = money(subtotal + cgst + sgst);
+        const n = state.enclosures.length;
+        countEl.textContent = `${n} enclosure${n === 1 ? '' : 's'}`;
+    }
+
+    document.getElementById('bqNewForm').addEventListener('submit', (ev) => {
+        if (!state.enclosures.length) {
+            ev.preventDefault();
+            alert('Add at least one enclosure before saving.');
+            return;
+        }
+        // Serialize enclosures into the shape the server expects (mirror
+        // of bathqube_revise.js submit: each enclosure is independent +
+        // carries its own dimensionUnit).
+        const clean = state.enclosures.map(e => ({
+            name: e.name || '',
+            typeLabel: e.typeLabel || '',
+            materialLabel: e.materialLabel || '',
+            thicknessLabel: e.thicknessLabel || '',
+            fittingLabel: e.fittingLabel || '',
+            hardwareTypeLabel: e.hardwareTypeLabel || '',
+            pricePerSqft: e.pricePerSqft || 0,
+            quantity: Math.max(1, parseInt(e.quantity || 1)),
+            dimensionUnit: e.dimensionUnit || 'ft',
+            glassPanels: e.glassPanels.map(p => ({
+                width: Number(p.width) || 0,
+                height: Number(p.height) || 0,
+                sqft: panelSqft(p.width, p.height, e.dimensionUnit),
+            })),
+        }));
+        jsonEl.value = JSON.stringify(clean);
+    });
+
+    addBtn.addEventListener('click', addEnclosure);
+    gstInp.addEventListener('input', recomputeTotals);
+
+    // Seed one enclosure on load so BD sees the form populated.
+    addEnclosure();
+})();
+</script>
+{% endblock %}

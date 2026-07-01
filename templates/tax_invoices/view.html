@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}{{ invoice.invoice_number }} — Tax Invoice{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h3 class="mb-1">
+            <i class="bi bi-receipt"></i>
+            {{ invoice.invoice_number }}
+            <span class="text-muted">— {{ invoice.buyer_name }}</span>
+        </h3>
+        {% if invoice.status == 'draft' %}
+            <span class="badge bg-warning text-dark">Draft</span>
+            <span class="text-muted small ms-2">Review and edit before issuing.</span>
+        {% elif invoice.status == 'issued' %}
+            <span class="badge bg-success">Issued</span>
+            <span class="text-muted small ms-2">Issued {{ invoice.issued_at.strftime('%d %b %Y') if invoice.issued_at else '' }}</span>
+        {% elif invoice.status == 'cancelled' %}
+            <span class="badge bg-secondary">Cancelled</span>
+            {% if invoice.cancelled_reason %}<span class="text-muted small ms-2">— {{ invoice.cancelled_reason }}</span>{% endif %}
+        {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('tax_invoice_list') }}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> All invoices
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-7">
+        <div class="card mb-3 border-primary">
+            <div class="card-header bg-primary text-white">
+                <strong><i class="bi bi-lightning"></i> Actions</strong>
+            </div>
+            <div class="card-body">
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <a href="{{ url_for('tax_invoice_pdf', id=invoice.id) }}" target="_blank"
+                           class="btn btn-outline-primary w-100 text-start">
+                            <i class="bi bi-file-earmark-pdf"></i> <strong>Download PDF</strong>
+                            <div class="small text-muted">GST tax-invoice PDF.</div>
+                        </a>
+                    </div>
+                    {% if invoice.status != 'cancelled' %}
+                    <div class="col-md-6">
+                        <a href="{{ url_for('tax_invoice_edit', id=invoice.id) }}"
+                           class="btn btn-outline-warning w-100 text-start">
+                            <i class="bi bi-pencil-square"></i>
+                            <strong>{% if invoice.status == 'draft' %}Edit draft{% else %}Edit soft fields{% endif %}</strong>
+                            <div class="small text-muted">
+                                {% if invoice.status == 'draft' %}All fields editable.
+                                {% else %}Vehicle no, IRN, etc. (money locked).
+                                {% endif %}
+                            </div>
+                        </a>
+                    </div>
+                    {% endif %}
+                    {% if invoice.status == 'draft' %}
+                    <div class="col-md-12">
+                        <form method="POST" action="{{ url_for('tax_invoice_issue', id=invoice.id) }}"
+                              onsubmit="return confirm('Issue invoice {{ invoice.invoice_number }}? Line items + amounts will be locked after this.');">
+                            <button type="submit" class="btn btn-success w-100 text-start">
+                                <i class="bi bi-check2-circle"></i> <strong>Issue invoice</strong>
+                                <div class="small">Lock the amounts. Print + send to customer.</div>
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
+                    {% if invoice.status == 'issued' %}
+                    <div class="col-md-12">
+                        <form method="POST" action="{{ url_for('tax_invoice_gate_pass_new', id=invoice.id) }}">
+                            <button type="submit" class="btn btn-outline-success w-100 text-start">
+                                <i class="bi bi-truck"></i> <strong>Generate Gate Pass</strong>
+                                <div class="small text-muted">Raise a dispatch / packing slip against this invoice.</div>
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
+                    {% if invoice.status != 'cancelled' %}
+                    <div class="col-md-12">
+                        <form method="POST" action="{{ url_for('tax_invoice_cancel', id=invoice.id) }}"
+                              onsubmit="return confirm('Cancel invoice {{ invoice.invoice_number }}?\n\nA cancelled invoice cannot be un-cancelled. The source quote becomes eligible for re-invoicing.');">
+                            <input type="hidden" name="reason" value="Cancelled from invoice view">
+                            <button type="submit" class="btn btn-outline-danger w-100 text-start">
+                                <i class="bi bi-x-circle"></i> <strong>Cancel invoice</strong>
+                                <div class="small text-muted">Frees the source quote for re-invoicing.</div>
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {# Line items #}
+        <div class="card mb-3">
+            <div class="card-header"><strong>Line items ({{ invoice.items|length }})</strong></div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>Description</th>
+                            <th>HSN/SAC</th>
+                            <th class="text-end">Qty</th>
+                            <th>Unit</th>
+                            <th class="text-end">Rate (₹)</th>
+                            <th class="text-end">Amount (₹)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for it in invoice.items %}
+                        <tr {% if it.is_extra %}class="text-muted"{% endif %}>
+                            <td>{{ loop.index }}</td>
+                            <td>{{ it.description }}</td>
+                            <td>{{ it.hsn_code or '—' }}</td>
+                            <td class="text-end">{{ '%g'|format(it.quantity|float) }}</td>
+                            <td>{{ it.unit }}</td>
+                            <td class="text-end">{{ '{:,.2f}'.format(it.rate or 0) }}</td>
+                            <td class="text-end">{{ '{:,.2f}'.format(it.amount or 0) }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        {# Totals #}
+        <div class="card mb-3">
+            <div class="card-header"><strong>Totals</strong></div>
+            <div class="card-body row g-2">
+                <div class="col-7 text-muted">Subtotal (taxable)</div>
+                <div class="col-5 text-end fw-bold">₹{{ '{:,.2f}'.format(invoice.subtotal or 0) }}</div>
+                {% if invoice.is_inter_state %}
+                <div class="col-7 text-muted">IGST (18%)</div>
+                <div class="col-5 text-end">₹{{ '{:,.2f}'.format(invoice.igst or 0) }}</div>
+                {% else %}
+                <div class="col-7 text-muted">CGST (9%)</div>
+                <div class="col-5 text-end">₹{{ '{:,.2f}'.format(invoice.cgst or 0) }}</div>
+                <div class="col-7 text-muted">SGST (9%)</div>
+                <div class="col-5 text-end">₹{{ '{:,.2f}'.format(invoice.sgst or 0) }}</div>
+                {% endif %}
+                {% if invoice.round_off %}
+                <div class="col-7 text-muted">Round off</div>
+                <div class="col-5 text-end">{{ '{:+,.2f}'.format(invoice.round_off|float) }}</div>
+                {% endif %}
+                <div class="col-7"><strong>Grand total</strong></div>
+                <div class="col-5 text-end"><strong>₹{{ '{:,.2f}'.format(invoice.total or 0) }}</strong></div>
+                {% if invoice.amount_in_words %}
+                <div class="col-12 small text-muted mt-2"><em>{{ invoice.amount_in_words }}</em></div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-5">
+        <div class="card mb-3">
+            <div class="card-header"><strong>Buyer (Bill to)</strong></div>
+            <div class="card-body small">
+                <p class="mb-1"><strong>{{ invoice.buyer_name }}</strong></p>
+                <p class="mb-1" style="white-space:pre-line;">{{ invoice.buyer_address }}</p>
+                {% if invoice.buyer_gstin %}<p class="mb-1 text-muted">GSTIN: {{ invoice.buyer_gstin }}</p>{% endif %}
+                {% if invoice.buyer_pan %}<p class="mb-1 text-muted">PAN: {{ invoice.buyer_pan }}</p>{% endif %}
+                {% if invoice.buyer_state %}<p class="mb-0 text-muted">State: {{ invoice.buyer_state }} ({{ invoice.buyer_state_code }})</p>{% endif %}
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><strong>Consignee (Ship to)</strong></div>
+            <div class="card-body small">
+                <p class="mb-1"><strong>{{ invoice.consignee_name }}</strong></p>
+                <p class="mb-1" style="white-space:pre-line;">{{ invoice.consignee_address }}</p>
+                {% if invoice.consignee_gstin %}<p class="mb-1 text-muted">GSTIN: {{ invoice.consignee_gstin }}</p>{% endif %}
+                {% if invoice.consignee_state %}<p class="mb-0 text-muted">State: {{ invoice.consignee_state }} ({{ invoice.consignee_state_code }})</p>{% endif %}
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><strong>Invoice metadata</strong></div>
+            <div class="card-body small">
+                <div class="row g-1">
+                    <div class="col-6 text-muted">Date</div>
+                    <div class="col-6">{{ invoice.invoice_date.strftime('%d %b %Y') if invoice.invoice_date else '—' }}</div>
+                    <div class="col-6 text-muted">Mode of payment</div>
+                    <div class="col-6">{{ invoice.mode_of_payment or '—' }}</div>
+                    {% if invoice.motor_vehicle_no %}
+                    <div class="col-6 text-muted">Motor Vehicle</div>
+                    <div class="col-6">{{ invoice.motor_vehicle_no }}</div>
+                    {% endif %}
+                    {% if invoice.ewaybill_no %}
+                    <div class="col-6 text-muted">e-Way Bill</div>
+                    <div class="col-6">{{ invoice.ewaybill_no }}</div>
+                    {% endif %}
+                    {% if invoice.dispatched_through %}
+                    <div class="col-6 text-muted">Dispatched</div>
+                    <div class="col-6">{{ invoice.dispatched_through }}</div>
+                    {% endif %}
+                    {% if invoice.destination %}
+                    <div class="col-6 text-muted">Destination</div>
+                    <div class="col-6">{{ invoice.destination }}</div>
+                    {% endif %}
+                    {% if invoice.terms_of_delivery %}
+                    <div class="col-6 text-muted">Terms of delivery</div>
+                    <div class="col-6">{{ invoice.terms_of_delivery }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {% if invoice.irn %}
+        <div class="card mb-3">
+            <div class="card-header"><strong>e-Invoice (IRN)</strong></div>
+            <div class="card-body small" style="word-break:break-all;">
+                <p class="mb-1 text-muted">IRN: {{ invoice.irn }}</p>
+                {% if invoice.ack_no %}<p class="mb-1 text-muted">Ack No: {{ invoice.ack_no }}</p>{% endif %}
+                {% if invoice.ack_date %}<p class="mb-0 text-muted">Ack Date: {{ invoice.ack_date.strftime('%d-%b-%Y') }}</p>{% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

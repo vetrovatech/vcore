@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% block title %}{{ quote.estimate_number or quote.id }} — UPVC Quote{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h3 class="mb-1">
+            <i class="bi bi-window"></i>
+            {{ quote.estimate_number or ('VI-UPVC-' ~ quote.id) }}
+            <span class="text-muted">— {{ quote.customer_name }}</span>
+        </h3>
+        {% set bcls = stage_badges.get(quote.stage, 'info') %}
+        <span class="badge bg-{{ bcls }} {% if bcls in ['warning','light','info'] %}text-dark{% endif %}">
+            Current stage: {{ stage_labels.get(quote.stage, quote.stage) }}
+        </span>
+        {% if quote.revision_count > 0 %}
+            <span class="badge bg-warning text-dark ms-1">Revisions: {{ quote.revision_count }}</span>
+        {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+        {% if current_user.is_admin() %}
+        <form method="POST" action="{{ url_for('upvc_quote_delete', id=quote.id) }}"
+              onsubmit="return confirm('Delete quote {{ quote.estimate_number or ('VI-UPVC-' ~ quote.id) }} ({{ quote.customer_name }})?\n\nThis permanently removes the quote, all revisions, all line items, and the audit trail. Cannot be undone.');">
+            <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete this quote (admin only)">
+                <i class="bi bi-trash"></i> Delete
+            </button>
+        </form>
+        {% endif %}
+        <a href="{{ url_for('upvc_quotes_list') }}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to list
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    {# ───────────── LEFT: actions + items + totals ───────────── #}
+    <div class="col-md-7">
+        <div class="card mb-3 border-primary">
+            <div class="card-header bg-primary text-white">
+                <strong><i class="bi bi-send"></i> Actions</strong>
+            </div>
+            <div class="card-body">
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <a href="{{ url_for('upvc_quote_edit', id=quote.id) }}" class="btn btn-outline-warning w-100 text-start">
+                            <i class="bi bi-pencil-square"></i> <strong>Edit</strong>
+                            <div class="small">Fix typos or data-entry mistakes. Silent — does NOT bump revision history.</div>
+                        </a>
+                    </div>
+                    <div class="col-md-6">
+                        <a href="{{ url_for('upvc_quote_revise', id=quote.id) }}" class="btn btn-warning w-100 text-start">
+                            <i class="bi bi-clock-history"></i> <strong>Revise (#{{ (quote.revision_count or 0) + 1 }})</strong>
+                            <div class="small">Customer asked for changes. Save = new revision row in history.</div>
+                        </a>
+                    </div>
+                    <div class="col-md-6">
+                        <form method="POST" action="{{ url_for('upvc_quote_send', id=quote.id) }}">
+                            <button type="submit" class="btn btn-success w-100 text-start"
+                                    {% if not quote.email %}disabled title="Add email on the quote first."{% endif %}>
+                                <i class="bi bi-envelope-paper"></i> <strong>Email PDF to customer</strong>
+                                <div class="small">{% if quote.email %}Sends to {{ quote.email }}.{% else %}Add an email first.{% endif %}</div>
+                            </button>
+                        </form>
+                    </div>
+                    <div class="col-md-6">
+                        <a href="{{ url_for('upvc_quote_pdf', id=quote.id) }}" class="btn btn-outline-primary w-100 text-start" target="_blank">
+                            <i class="bi bi-file-earmark-pdf"></i> <strong>Download PDF</strong>
+                            <div class="small text-muted">Save a local copy.</div>
+                        </a>
+                    </div>
+
+                    {# Single-click stage transitions (no email) #}
+                    {% for s in stage_transitions %}
+                    <div class="col-md-6">
+                        <form method="POST" action="{{ url_for('upvc_quote_set_stage', id=quote.id, stage=s) }}">
+                            <button type="submit"
+                                    class="btn w-100 text-start
+                                           {% if s == 'closed_won' %}btn-success
+                                           {% elif s in ('junk','rejected') %}btn-outline-danger
+                                           {% else %}btn-outline-primary{% endif %}"
+                                    {% if quote.stage == s %}disabled{% endif %}>
+                                <i class="bi bi-arrow-right-circle"></i> <strong>Move to {{ stage_labels.get(s, s) }}</strong>
+                            </button>
+                        </form>
+                    </div>
+                    {% endfor %}
+
+                    {# Generate Tax Invoice — only when closed_won #}
+                    {% if quote.stage == 'closed_won' %}
+                    <div class="col-md-12">
+                        <form method="POST" action="{{ url_for('upvc_tax_invoice_new', id=quote.id) }}">
+                            <button type="submit" class="btn btn-outline-success w-100 text-start">
+                                <i class="bi bi-receipt"></i> <strong>Generate Tax Invoice</strong>
+                                <div class="small text-muted">Draft GST invoice (VTS/2627/NNNN). BD reviews + issues.</div>
+                            </button>
+                        </form>
+                    </div>
+                    <div class="col-md-12">
+                        <form method="POST" action="{{ url_for('upvc_gate_pass_new', id=quote.id) }}">
+                            <button type="submit" class="btn btn-outline-dark w-100 text-start">
+                                <i class="bi bi-truck"></i> <strong>Generate Gate Pass</strong>
+                                <div class="small text-muted">Dispatch / packing slip for material leaving the factory.</div>
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {# Openings list #}
+        <div class="card mb-3">
+            <div class="card-header"><strong><i class="bi bi-window"></i> Openings ({{ quote.items|length }})</strong></div>
+            <div class="card-body p-0">
+                {% if quote.items %}
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>#</th>
+                                <th>Label</th>
+                                <th>Type</th>
+                                <th>System / Sub-type</th>
+                                <th>Dimensions</th>
+                                <th>Colour</th>
+                                <th class="text-end">Qty</th>
+                                <th class="text-end">Sqft</th>
+                                <th class="text-end">Rate (₹/sqft)</th>
+                                <th class="text-end">Amount (₹)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for it in quote.items %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td>{{ it.label or '—' }}</td>
+                                <td>{{ it.track_type|capitalize }}</td>
+                                <td>{{ it.track_system|capitalize if it.track_system else '—' }}</td>
+                                <td>
+                                    {% if it.width and it.height %}
+                                        {{ '%g'|format(it.width|float) }} × {{ '%g'|format(it.height|float) }} {{ it.unit }}
+                                    {% else %}—{% endif %}
+                                </td>
+                                <td>{{ it.colour|capitalize }}</td>
+                                <td class="text-end">{{ '%g'|format(it.quantity|float) }}</td>
+                                <td class="text-end">{{ '{:,.2f}'.format(it.sqft|float) }}</td>
+                                <td class="text-end">₹{{ '{:,.2f}'.format(it.rate or 0) }}</td>
+                                <td class="text-end">₹{{ '{:,.2f}'.format(it.amount or 0) }}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted text-center p-3 mb-0">No openings yet. <a href="{{ url_for('upvc_quote_edit', id=quote.id) }}">Add some.</a></p>
+                {% endif %}
+            </div>
+        </div>
+
+        {# Totals #}
+        <div class="card mb-3">
+            <div class="card-header"><strong><i class="bi bi-calculator"></i> Totals</strong></div>
+            <div class="card-body">
+                {# Qty-weighted total sqft across all openings (computed
+                   inline since it's a simple sum and shouldn't drift from
+                   what the items table shows). #}
+                {% set total_sqft = (quote.items | map(attribute='sqft') | map('float') | list) %}
+                {% set total_sqft_weighted = [] %}
+                {% for it in quote.items %}
+                    {% set _ = total_sqft_weighted.append( (it.sqft or 0)|float * (it.quantity or 1)|float ) %}
+                {% endfor %}
+                {% set total_sqft_sum = total_sqft_weighted | sum %}
+                <div class="row g-2">
+                    <div class="col-7 text-muted">Total sqft <small>(qty-weighted)</small></div>
+                    <div class="col-5 text-end fw-bold">{{ '{:,.2f}'.format(total_sqft_sum) }}</div>
+
+                    <div class="col-7 text-muted">Subtotal (taxable)</div>
+                    <div class="col-5 text-end fw-bold">₹{{ '{:,.2f}'.format(quote.subtotal or 0) }}</div>
+
+                    <div class="col-7 text-muted">CGST ({{ '%g'|format(((quote.gst_percentage or 0)|float)/2) }}%)</div>
+                    <div class="col-5 text-end">₹{{ '{:,.2f}'.format(quote.cgst or 0) }}</div>
+
+                    <div class="col-7 text-muted">SGST ({{ '%g'|format(((quote.gst_percentage or 0)|float)/2) }}%)</div>
+                    <div class="col-5 text-end">₹{{ '{:,.2f}'.format(quote.sgst or 0) }}</div>
+
+                    <div class="col-7"><strong>Grand total</strong></div>
+                    <div class="col-5 text-end"><strong>₹{{ '{:,.2f}'.format(quote.total or 0) }}</strong></div>
+
+                    <div class="col-12 mt-2 small text-muted">
+                        Valid {{ quote.validity_days }} days from create date
+                        ({{ quote.valid_until.strftime('%d %b %Y') if quote.valid_until else '—' }}).
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# ───────────── RIGHT: customer + activity ───────────── #}
+    <div class="col-md-5">
+        <div class="card mb-3">
+            <div class="card-header"><strong><i class="bi bi-person"></i> Customer</strong></div>
+            <div class="card-body">
+                <p class="mb-1"><strong>{{ quote.customer_name }}</strong></p>
+                <p class="mb-1 small text-muted">{{ quote.phone }}</p>
+                {% if quote.email %}<p class="mb-1 small text-muted">{{ quote.email }}</p>{% endif %}
+                {% if quote.pincode %}<p class="mb-1 small text-muted">PIN: {{ quote.pincode }}</p>{% endif %}
+                {% if quote.site_address %}<p class="mb-0 small">{{ quote.site_address }}</p>{% endif %}
+            </div>
+        </div>
+
+        {% if quote.notes %}
+        <div class="card mb-3">
+            <div class="card-header"><strong><i class="bi bi-card-text"></i> Internal notes</strong></div>
+            <div class="card-body small" style="white-space: pre-line;">{{ quote.notes }}</div>
+        </div>
+        {% endif %}
+
+        <div class="card mb-3">
+            <div class="card-header"><strong><i class="bi bi-clock-history"></i> Activity</strong></div>
+            <div class="card-body p-0">
+                {% if quote.events %}
+                <ul class="list-group list-group-flush small">
+                {% for ev in quote.events %}
+                    <li class="list-group-item">
+                        <div class="d-flex justify-content-between">
+                            <strong>
+                                {% if ev.from_stage %}{{ stage_labels.get(ev.from_stage, ev.from_stage) }} → {% endif %}
+                                {{ stage_labels.get(ev.to_stage, ev.to_stage) }}
+                            </strong>
+                            <span class="text-muted">{{ ev.created_at.strftime('%d %b %H:%M') }}</span>
+                        </div>
+                        {% if ev.channel == 'email' %}
+                        <div class="text-muted">
+                            <i class="bi bi-envelope"></i> {{ ev.send_status }}
+                            {% if ev.send_error %}<span class="text-danger">— {{ ev.send_error }}</span>{% endif %}
+                        </div>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted text-center p-3 mb-0">No activity yet.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if quote.revisions %}
+        <div class="card mb-3">
+            <div class="card-header"><strong><i class="bi bi-list-ol"></i> Revision history</strong></div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush small">
+                {% for rv in quote.revisions %}
+                    <li class="list-group-item">
+                        <div class="d-flex justify-content-between">
+                            <strong>#{{ rv.revision_number }}</strong>
+                            <span class="text-muted">{{ rv.created_at.strftime('%d %b %H:%M') }}</span>
+                        </div>
+                        <div class="small text-muted">
+                            ₹{{ '{:,.0f}'.format(rv.prev_total or 0) }} →
+                            ₹{{ '{:,.0f}'.format(rv.new_total or 0) }}
+                            {% set d = rv.total_delta %}
+                            {% if d > 0 %}<span class="text-danger">(+₹{{ '{:,.0f}'.format(d) }})</span>
+                            {% elif d < 0 %}<span class="text-success">(−₹{{ '{:,.0f}'.format(-d) }})</span>{% endif %}
+                        </div>
+                    </li>
+                {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

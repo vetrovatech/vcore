@@ -1,0 +1,383 @@
+{% extends "base.html" %}
+{% set is_draft = invoice.status == 'draft' %}
+{% block title %}Edit Invoice — {{ invoice.invoice_number }}{% endblock %}
+{% block content %}
+<h3 class="mb-3">
+    <i class="bi bi-pencil-square"></i>
+    {% if is_draft %}Edit Draft Invoice{% else %}Edit Soft Fields{% endif %}
+    <small class="text-muted">— {{ invoice.invoice_number }}</small>
+    {% if invoice.status == 'issued' %}
+        <span class="badge bg-success ms-2">Issued</span>
+    {% elif invoice.status == 'draft' %}
+        <span class="badge bg-warning text-dark ms-2">Draft</span>
+    {% endif %}
+</h3>
+
+{% if not is_draft %}
+<div class="alert alert-info py-2 small">
+    <i class="bi bi-info-circle"></i> This invoice has been <strong>issued</strong> —
+    line items + money fields are locked. Only invoice metadata (vehicle no, dispatched-through,
+    IRN paste, etc.) can be edited from here.
+</div>
+{% endif %}
+
+<form method="POST" action="{{ url_for('tax_invoice_edit', id=invoice.id) }}" id="invForm">
+
+    {# ───────────── Buyer (Bill-to) ───────────── #}
+    <div class="card mb-3">
+        <div class="card-header"><strong><i class="bi bi-person"></i> Buyer (Bill-to)</strong></div>
+        <div class="card-body row g-3">
+            <div class="col-md-6">
+                <label class="form-label">Name</label>
+                <input class="form-control" name="buyer_name" value="{{ invoice.buyer_name or '' }}" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">GSTIN <small class="text-muted">(B2B)</small></label>
+                <input class="form-control" name="buyer_gstin" value="{{ invoice.buyer_gstin or '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">PAN <small class="text-muted">(B2C)</small></label>
+                <input class="form-control" name="buyer_pan" value="{{ invoice.buyer_pan or '' }}"
+                       placeholder="ABCDE1234F" maxlength="15">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">State</label>
+                <input class="form-control" name="buyer_state" value="{{ invoice.buyer_state or 'Karnataka' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">State code</label>
+                <input class="form-control" name="buyer_state_code" value="{{ invoice.buyer_state_code or '29' }}">
+            </div>
+            <div class="col-md-12">
+                <label class="form-label">Address</label>
+                <textarea class="form-control" name="buyer_address" rows="2" required>{{ invoice.buyer_address or '' }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    {# ───────────── Consignee (Ship-to) ───────────── #}
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong><i class="bi bi-geo"></i> Consignee (Ship-to)</strong>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="copyBuyerBtn">
+                <i class="bi bi-arrow-up"></i> Same as buyer
+            </button>
+        </div>
+        <div class="card-body row g-3">
+            <div class="col-md-6">
+                <label class="form-label">Name</label>
+                <input class="form-control" name="consignee_name" value="{{ invoice.consignee_name or '' }}" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">GSTIN</label>
+                <input class="form-control" name="consignee_gstin" value="{{ invoice.consignee_gstin or '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">State (code)</label>
+                <div class="d-flex gap-1">
+                    <input class="form-control" name="consignee_state" value="{{ invoice.consignee_state or 'Karnataka' }}">
+                    <input class="form-control" name="consignee_state_code" value="{{ invoice.consignee_state_code or '29' }}" style="width:80px;">
+                </div>
+            </div>
+            <div class="col-md-12">
+                <label class="form-label">Address</label>
+                <textarea class="form-control" name="consignee_address" rows="2" required>{{ invoice.consignee_address or '' }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    {# ───────────── Invoice metadata ───────────── #}
+    <div class="card mb-3">
+        <div class="card-header"><strong><i class="bi bi-card-list"></i> Invoice metadata</strong></div>
+        <div class="card-body row g-3">
+            <div class="col-md-3">
+                <label class="form-label">Buyer's Order No.</label>
+                <input class="form-control" name="buyers_order_no" value="{{ invoice.buyers_order_no or '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Buyer's Order Date</label>
+                <input type="date" class="form-control" name="buyers_order_date"
+                       value="{{ invoice.buyers_order_date.strftime('%Y-%m-%d') if invoice.buyers_order_date else '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Delivery Note No.</label>
+                <input class="form-control" name="delivery_note" value="{{ invoice.delivery_note or '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Delivery Note Date</label>
+                <input type="date" class="form-control" name="delivery_note_date"
+                       value="{{ invoice.delivery_note_date.strftime('%Y-%m-%d') if invoice.delivery_note_date else '' }}">
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label">Mode of Payment</label>
+                <input class="form-control" name="mode_of_payment" value="{{ invoice.mode_of_payment or 'PROMPT' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Dispatched through</label>
+                <input class="form-control" name="dispatched_through" value="{{ invoice.dispatched_through or 'ROAD' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Destination</label>
+                <input class="form-control" name="destination" value="{{ invoice.destination or '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Terms of Delivery</label>
+                <input class="form-control" name="terms_of_delivery" value="{{ invoice.terms_of_delivery or 'EX OUR SITE' }}">
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label">Motor Vehicle No.</label>
+                <input class="form-control" name="motor_vehicle_no" value="{{ invoice.motor_vehicle_no or '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">e-Way Bill No.</label>
+                <input class="form-control" name="ewaybill_no" value="{{ invoice.ewaybill_no or '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Bill of Lading/LR No.</label>
+                <input class="form-control" name="bill_of_lading" value="{{ invoice.bill_of_lading or '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Bill of Lading Date</label>
+                <input type="date" class="form-control" name="bill_of_lading_date"
+                       value="{{ invoice.bill_of_lading_date.strftime('%Y-%m-%d') if invoice.bill_of_lading_date else '' }}">
+            </div>
+
+            <div class="col-md-12">
+                <label class="form-label">Other References</label>
+                <input class="form-control" name="other_references" value="{{ invoice.other_references or '' }}">
+            </div>
+        </div>
+    </div>
+
+    {# ───────────── e-Invoice IRN block (BD pastes manually) ───────────── #}
+    <div class="card mb-3">
+        <div class="card-header">
+            <strong><i class="bi bi-shield-check"></i> e-Invoice (IRN) — paste after generating on the IRP portal</strong>
+            <small class="text-muted ms-2">Optional. The IRN block is printed on the PDF only when filled.</small>
+        </div>
+        <div class="card-body row g-3">
+            <div class="col-md-6">
+                <label class="form-label">IRN</label>
+                <input class="form-control" name="irn" value="{{ invoice.irn or '' }}" placeholder="64-char IRN from IRP">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Ack No.</label>
+                <input class="form-control" name="ack_no" value="{{ invoice.ack_no or '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Ack Date</label>
+                <input type="date" class="form-control" name="ack_date"
+                       value="{{ invoice.ack_date.strftime('%Y-%m-%d') if invoice.ack_date else '' }}">
+            </div>
+        </div>
+    </div>
+
+    {# ───────────── Line items (draft only) ───────────── #}
+    {% if is_draft %}
+    <div class="card mb-3 border-primary">
+        <div class="card-header bg-primary bg-opacity-10 d-flex justify-content-between align-items-center">
+            <strong><i class="bi bi-list-ol"></i> Line items</strong>
+            <button type="button" class="btn btn-sm btn-primary" id="addItemBtn">
+                <i class="bi bi-plus"></i> Add line
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-sm mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:35%;">Description</th>
+                        <th style="width:11%;">HSN/SAC</th>
+                        <th style="width:10%;">Qty</th>
+                        <th style="width:8%;">Unit</th>
+                        <th style="width:11%;">Rate (₹)</th>
+                        <th style="width:14%;" class="text-end">Amount (₹)</th>
+                        <th style="width:7%;">Extra?</th>
+                        <th style="width:4%;"></th>
+                    </tr>
+                </thead>
+                <tbody id="itemsBody"></tbody>
+            </table>
+        </div>
+        <input type="hidden" name="items_json" id="itemsJson">
+    </div>
+
+    <div class="card mb-3 bg-light">
+        <div class="card-body row g-2">
+            <div class="col-md-3 text-muted small">Subtotal</div>
+            <div class="col-md-3 text-end fw-bold" id="liveSubtotal">₹{{ '{:,.2f}'.format(invoice.subtotal or 0) }}</div>
+            <div class="col-md-3 text-muted small">CGST + SGST (18%)</div>
+            <div class="col-md-3 text-end" id="liveGst">₹{{ '{:,.2f}'.format((invoice.cgst or 0) + (invoice.sgst or 0)) }}</div>
+            <div class="col-md-3"><strong>Grand total</strong></div>
+            <div class="col-md-3 text-end"><strong id="liveTotal">₹{{ '{:,.2f}'.format(invoice.total or 0) }}</strong></div>
+            <div class="col-12 small text-muted">Live preview — server recomputes on save using the same formula.</div>
+        </div>
+    </div>
+    {% else %}
+    <div class="card mb-3">
+        <div class="card-header"><strong>Line items <span class="text-muted small">(locked — invoice is issued)</span></strong></div>
+        <div class="card-body p-0">
+            <table class="table table-sm mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Description</th>
+                        <th>HSN/SAC</th>
+                        <th class="text-end">Qty</th>
+                        <th>Unit</th>
+                        <th class="text-end">Rate</th>
+                        <th class="text-end">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for it in invoice.items %}
+                    <tr>
+                        <td>{{ it.description }}</td>
+                        <td>{{ it.hsn_code or '—' }}</td>
+                        <td class="text-end">{{ '%g'|format(it.quantity|float) }}</td>
+                        <td>{{ it.unit }}</td>
+                        <td class="text-end">₹{{ '{:,.2f}'.format(it.rate or 0) }}</td>
+                        <td class="text-end">₹{{ '{:,.2f}'.format(it.amount or 0) }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="d-flex gap-2 mb-5">
+        <button type="submit" class="btn btn-success">
+            <i class="bi bi-check-circle"></i>
+            {% if is_draft %}Save draft{% else %}Save soft fields{% endif %}
+        </button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('tax_invoice_view', id=invoice.id) }}">Cancel</a>
+    </div>
+</form>
+
+{% if is_draft %}
+<script id="invoiceInitialItems" type="application/json">
+[
+{%- for it in invoice.items -%}
+    {
+        "description": {{ (it.description or '')|tojson }},
+        "hsn_code":    {{ (it.hsn_code or '')|tojson }},
+        "quantity":    {{ (it.quantity|float)|tojson }},
+        "unit":        {{ (it.unit or 'nos')|tojson }},
+        "rate":        {{ (it.rate|float)|tojson }},
+        "is_extra":    {{ ('true' if it.is_extra else 'false') }}
+    }{{ "," if not loop.last else "" }}
+{%- endfor -%}
+]
+</script>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    // Copy-buyer-to-consignee handler — runs on both draft + issued forms
+    document.getElementById('copyBuyerBtn').addEventListener('click', () => {
+        ['name','address','gstin','state','state_code'].forEach(k => {
+            const buy = document.querySelector(`[name="buyer_${k}"]`);
+            const con = document.querySelector(`[name="consignee_${k}"]`);
+            if (buy && con) con.value = buy.value;
+        });
+    });
+})();
+</script>
+
+{% if is_draft %}
+<script>
+(function() {
+    const HSN_DEFAULTS = {{ hsn_defaults|tojson }};
+
+    const bodyEl  = document.getElementById('itemsBody');
+    const addBtn  = document.getElementById('addItemBtn');
+    const subEl   = document.getElementById('liveSubtotal');
+    const gstEl   = document.getElementById('liveGst');
+    const totEl   = document.getElementById('liveTotal');
+    const jsonEl  = document.getElementById('itemsJson');
+
+    let rowIdx = 0;
+
+    function money(v) {
+        return '₹' + (Number(v||0)).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+
+    function buildRow(init) {
+        const i = rowIdx++;
+        init = init || {};
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><input class="form-control form-control-sm js-desc" placeholder="Item description" value="${(init.description||'').replace(/"/g,'&quot;')}"></td>
+            <td><input class="form-control form-control-sm js-hsn" placeholder="e.g. 70071900" value="${init.hsn_code||''}"></td>
+            <td><input class="form-control form-control-sm js-qty" type="number" step="any" min="0" value="${init.quantity!=null?init.quantity:1}"></td>
+            <td><input class="form-control form-control-sm js-unit" value="${init.unit||'nos'}"></td>
+            <td><input class="form-control form-control-sm js-rate" type="number" step="any" min="0" value="${init.rate!=null?init.rate:0}"></td>
+            <td class="text-end js-amount fw-bold">₹0</td>
+            <td class="text-center">
+                <input type="checkbox" class="form-check-input js-extra" ${init.is_extra?'checked':''}>
+            </td>
+            <td><button type="button" class="btn btn-sm btn-outline-danger js-remove"><i class="bi bi-x-lg"></i></button></td>
+        `;
+        bodyEl.appendChild(tr);
+
+        const qty = tr.querySelector('.js-qty');
+        const rate = tr.querySelector('.js-rate');
+        const amt = tr.querySelector('.js-amount');
+        const update = () => {
+            const a = (parseFloat(qty.value)||0) * (parseFloat(rate.value)||0);
+            amt.textContent = money(a);
+            recomputeTotals();
+        };
+        qty.addEventListener('input', update);
+        rate.addEventListener('input', update);
+        tr.querySelector('.js-remove').addEventListener('click', () => {
+            tr.remove();
+            recomputeTotals();
+        });
+        update();
+    }
+
+    function recomputeTotals() {
+        let sub = 0;
+        bodyEl.querySelectorAll('tr').forEach(tr => {
+            sub += (parseFloat(tr.querySelector('.js-qty').value)||0)
+                 * (parseFloat(tr.querySelector('.js-rate').value)||0);
+        });
+        const gst = sub * 0.18;
+        const total = Math.round(sub + gst);
+        subEl.textContent = money(sub);
+        gstEl.textContent = money(gst);
+        totEl.textContent = money(total);
+    }
+
+    addBtn.addEventListener('click', () => buildRow());
+
+    // Serialize on submit
+    document.getElementById('invForm').addEventListener('submit', () => {
+        const rows = [];
+        bodyEl.querySelectorAll('tr').forEach(tr => {
+            rows.push({
+                description: tr.querySelector('.js-desc').value,
+                hsn_code:    tr.querySelector('.js-hsn').value,
+                quantity:    parseFloat(tr.querySelector('.js-qty').value)||0,
+                unit:        tr.querySelector('.js-unit').value || 'nos',
+                rate:        parseFloat(tr.querySelector('.js-rate').value)||0,
+                is_extra:    tr.querySelector('.js-extra').checked,
+            });
+        });
+        jsonEl.value = JSON.stringify(rows);
+    });
+
+    // Seed
+    let initial = [];
+    try { initial = JSON.parse(document.getElementById('invoiceInitialItems').textContent || '[]'); } catch(e) {}
+    if (initial.length === 0) buildRow();
+    else initial.forEach(buildRow);
+    recomputeTotals();
+})();
+</script>
+{% endif %}
+{% endblock %}

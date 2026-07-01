@@ -28,6 +28,13 @@
                 <label class="form-label">Email</label>
                 <input class="form-control" name="email" type="email" value="{{ quote.email or '' }}">
             </div>
+            <div class="col-md-6">
+                <label class="form-label">PAN <small class="text-muted">(printed on the tax invoice when customer wants it)</small></label>
+                <input class="form-control" name="customer_pan"
+                       value="{{ quote.customer_pan or '' }}"
+                       placeholder="ABCDE1234F" maxlength="15"
+                       style="text-transform:uppercase;">
+            </div>
             <div class="col-md-12">
                 <label class="form-label">Site address</label>
                 <textarea class="form-control" name="site_address" rows="2">{{ quote.site_address or '' }}</textarea>

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Gate Pass {{ gp.gp_number }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h3 class="mb-1"><i class="bi bi-truck"></i> {{ gp.gp_number }}</h3>
+        <div class="small text-muted">
+            {{ gp.gp_date.strftime('%d %b %Y') if gp.gp_date else '—' }}
+            · Source: {{ gp.source_label }}
+            · Status:
+            {% if gp.status == 'draft' %}<span class="badge bg-warning text-dark">Draft</span>
+            {% elif gp.status == 'issued' %}<span class="badge bg-success">Issued</span>
+            {% elif gp.status == 'cancelled' %}<span class="badge bg-secondary">Cancelled</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('gate_pass_list') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+        <a href="{{ url_for('gate_pass_pdf', id=gp.id) }}" target="_blank" class="btn btn-outline-primary">
+            <i class="bi bi-file-earmark-pdf"></i> PDF
+        </a>
+        {% if gp.status != 'cancelled' %}
+        <a href="{{ url_for('gate_pass_edit', id=gp.id) }}" class="btn btn-primary">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+        {% endif %}
+        {% if gp.status == 'draft' %}
+        <form method="POST" action="{{ url_for('gate_pass_issue', id=gp.id) }}" class="d-inline"
+              onsubmit="return confirm('Issue this gate pass? Qty will be locked after.');">
+            <button type="submit" class="btn btn-success"><i class="bi bi-check2-circle"></i> Issue</button>
+        </form>
+        {% endif %}
+        {% if gp.status != 'cancelled' %}
+        <form method="POST" action="{{ url_for('gate_pass_cancel', id=gp.id) }}" class="d-inline"
+              onsubmit="return confirm('Cancel this gate pass? This cannot be undone.');">
+            <input type="hidden" name="reason" value="">
+            <button type="submit" class="btn btn-outline-danger"><i class="bi bi-x-circle"></i> Cancel</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header">Customer</div>
+            <div class="card-body">
+                <div><strong>{{ gp.customer_name }}</strong></div>
+                {% if gp.delivery_address %}<div class="small text-muted">{{ gp.delivery_address }}</div>{% endif %}
+                {% if gp.customer_gstin %}<div class="small">GSTIN: {{ gp.customer_gstin }}</div>{% endif %}
+                {% if gp.ref_invoice_no %}
+                <hr class="my-2">
+                <div class="small">Invoice: {{ gp.ref_invoice_no }}
+                    {% if gp.ref_invoice_date %} · {{ gp.ref_invoice_date.strftime('%d %b %Y') }}{% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header">Logistics</div>
+            <div class="card-body">
+                <div class="row small">
+                    <div class="col-6">Vehicle No</div><div class="col-6"><strong>{{ gp.vehicle_no or '—' }}</strong></div>
+                    <div class="col-6">Transporter</div><div class="col-6">{{ gp.transporter_name or '—' }}</div>
+                    <div class="col-6">Driver</div><div class="col-6">{{ gp.driver_name or '—' }} {% if gp.driver_phone %}({{ gp.driver_phone }}){% endif %}</div>
+                    <div class="col-6">LR No</div><div class="col-6">{{ gp.lr_number or '—' }}</div>
+                    <div class="col-6">e-Way Bill</div><div class="col-6">{{ gp.eway_bill_no or '—' }}</div>
+                    <div class="col-6">Place of Supply</div><div class="col-6">{{ gp.place_of_supply or '—' }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header"><strong>Items dispatched</strong></div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:40px">#</th>
+                        <th>Description</th>
+                        <th class="text-end" style="width:100px">Width (mm)</th>
+                        <th class="text-end" style="width:100px">Height (mm)</th>
+                        <th class="text-end" style="width:90px">Qty</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for it in gp.items %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>{{ it.material_spec or '—' }}</td>
+                        <td class="text-end">{{ '%g'|format(it.width_mm) if it.width_mm else '—' }}</td>
+                        <td class="text-end">{{ '%g'|format(it.height_mm) if it.height_mm else '—' }}</td>
+                        <td class="text-end"><strong>{{ '%g'|format(it.qty_this_pass) }}</strong></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-success">
+                    <tr>
+                        <td colspan="4" class="text-end"><strong>TOTAL ITEMS LEAVING GODOWN</strong></td>
+                        <td class="text-end"><strong style="font-size:1.15em">{{ '%g'|format(gp.total_qty) }}</strong></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% if gp.remarks %}
+<div class="card mt-3">
+    <div class="card-header">Remarks</div>
+    <div class="card-body"><pre class="mb-0 small">{{ gp.remarks }}</pre></div>
+</div>
+{% endif %}
+
+{% if gp.status == 'cancelled' and gp.cancelled_reason %}
+<div class="alert alert-secondary mt-3">
+    <strong>Cancelled:</strong> {{ gp.cancelled_reason }}
+    {% if gp.cancelled_at %}<span class="small text-muted">· {{ gp.cancelled_at.strftime('%d %b %Y %H:%M') }}</span>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

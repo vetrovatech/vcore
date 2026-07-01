@@ -368,6 +368,10 @@ class Quote(db.Model):
     customer_phone = db.Column(db.String(20), nullable=True)
     customer_email = db.Column(db.String(120), nullable=True)
     customer_gst = db.Column(db.String(20), nullable=True)
+    # Customer PAN — captured only for B2C quotes (quote_type='B2C').
+    # B2B customers use the customer_gst column instead; B2C have no
+    # GSTIN so PAN is the only printable tax-ID on the invoice.
+    customer_pan = db.Column(db.String(15), nullable=True)
     
     # Billing and shipping
     invoice_to = db.Column(db.Text, nullable=True)  # Billing address if different
@@ -925,6 +929,10 @@ class Lead(db.Model):
 
     # Facebook Lead Ads integration
     facebook_lead_id = db.Column(db.String(50), nullable=True, unique=True, index=True)
+    # Which Page the lead came from — BathQube vs Glassy.in vs future Pages.
+    # NULL on legacy rows imported before multi-Page support landed; the
+    # webhook + cron sync stamp it on every new ingest now.
+    fb_page_id       = db.Column(db.String(50),  nullable=True, index=True)
 
     # FB ad-hierarchy metadata — captured from the Graph API on webhook
     # ingest (see facebook_webhook_receive in app.py). Powers the
@@ -1188,6 +1196,38 @@ class MeetingPhoto(db.Model):
         return f'<MeetingPhoto {self.id} for meeting {self.meeting_id}>'
 
 
+class WhatsAppMessage(db.Model):
+    """Audit log of every WhatsApp template message sent via the Cloud API.
+
+    One row per send attempt — `wamid` is Meta's message id (populated on
+    success) and `status` is updated by the webhook receiver as delivery
+    events arrive (sent → delivered → read, or failed).
+    """
+    __tablename__ = 'whatsapp_messages'
+
+    id              = db.Column(db.Integer, primary_key=True)
+    lead_id         = db.Column(db.Integer, db.ForeignKey('leads.id', ondelete='SET NULL'), nullable=True, index=True)
+    meeting_id      = db.Column(db.Integer, db.ForeignKey('meetings.id', ondelete='SET NULL'), nullable=True, index=True)
+    to_number       = db.Column(db.String(20),  nullable=False, index=True)
+    template_name   = db.Column(db.String(100), nullable=False)
+    language        = db.Column(db.String(10),  nullable=False, default='en')
+    variables_json  = db.Column(db.Text,        nullable=True)  # JSON-encoded list of body params
+    wamid           = db.Column(db.String(120), nullable=True, unique=True, index=True)
+    status          = db.Column(db.String(20),  nullable=False, default='queued', index=True)
+                                                                 # queued | sent | delivered | read | failed
+    error_message   = db.Column(db.Text,        nullable=True)
+    sent_by         = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    sent_at         = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at      = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    lead    = db.relationship('Lead',    foreign_keys=[lead_id],    backref='whatsapp_messages')
+    meeting = db.relationship('Meeting', foreign_keys=[meeting_id], backref='whatsapp_messages')
+    sender  = db.relationship('User',    foreign_keys=[sent_by])
+
+    def __repr__(self):
+        return f'<WhatsAppMessage {self.id} {self.template_name} → {self.to_number} [{self.status}]>'
+
+
 class Client(db.Model):
     """Saved client/customer details for quote autocomplete"""
     __tablename__ = 'clients'
@@ -1288,7 +1328,8 @@ class Reminder(db.Model):
 # ============================================================================
 
 BATHQUBE_STAGES = (
-    'quote_generated',       # default — quote just landed via webhook
+    'draft',                 # BD-created via vcore /quotes/bathqube/new — not yet sent to customer
+    'quote_generated',       # quote landed via configurator webhook OR draft flipped after Send
     'in_pipeline',           # actively working with the customer
     'revision',              # bill revised + revised PDF emailed to customer
     'awaiting_payment',      # order ready / waiting for the customer to pay
@@ -1299,7 +1340,8 @@ BATHQUBE_STAGES = (
 
 # Stages that are "active" (shown by default in the list view). Junk + rejected
 # are disposition states that get filtered out unless the user explicitly opts in.
-BATHQUBE_ACTIVE_STAGES = ('quote_generated', 'in_pipeline', 'revision', 'awaiting_payment', 'closed_won')
+# Draft is included so BD can see their in-progress drafts in the main list.
+BATHQUBE_ACTIVE_STAGES = ('draft', 'quote_generated', 'in_pipeline', 'revision', 'awaiting_payment', 'closed_won')
 
 # Ops/fulfillment stages — run AFTER closed_won. Sales hands the order off to
 # the ops team who drives the order through manufacturing + installation.
@@ -1356,6 +1398,10 @@ class BathqubeQuote(db.Model):
     email = db.Column(db.String(200), nullable=True, index=True)
     pincode = db.Column(db.String(12), nullable=True)
     site_address = db.Column(db.Text, nullable=True)
+    # Bathqube is B2C — customer doesn't have GSTIN, so PAN is the only
+    # tax-ID we can print on the invoice. BD captures it during the
+    # revise step (or later when invoicing).
+    customer_pan = db.Column(db.String(15), nullable=True)
 
     # Where the quote came from on bathqube.com
     source_path = db.Column(db.String(255), nullable=True)
@@ -1702,4 +1748,548 @@ class BathqubePaymentReceipt(db.Model):
 
     def __repr__(self):
         return f'<BathqubePaymentReceipt {self.receipt_number} q={self.quote_id} amt={self.amount}>'
+
+
+# ============================================================================
+# VETROVA INTERNI · UPVC QUOTES (KAN-67)
+# ============================================================================
+# UPVC quotation flow for Vetrova Interni. Mirrors the Bathqube model shape
+# but leaner — no public configurator (BD types each line), no workshop
+# work-order (vendor fabricates), no UPI/receipts table yet. BD picks track
+# type + system + dimensions + colour per line and writes the price himself;
+# the price is the TAXABLE amount, GST is added on top. Invoice issues
+# under "Vetrova Tech Services Private Limited" with Vetrova Interni
+# masthead + a prominent 20-year warranty highlight strip.
+
+# Sales lifecycle. Shorter than Bathqube because there's no public
+# configurator entry point (no `quote_generated` from a webhook). BD
+# manually creates the quote in vcore, then walks it through the funnel.
+UPVC_STAGES = (
+    'draft',              # being built — not yet sent to customer
+    'sent',               # estimate PDF emailed to the customer
+    'revision',           # bill revised + revised PDF re-emailed
+    'awaiting_payment',   # customer has accepted; waiting on money
+    'closed_won',         # paid in full
+    'rejected',           # customer declined
+    'junk',               # bad lead / spam
+)
+UPVC_ACTIVE_STAGES = ('draft', 'sent', 'revision', 'awaiting_payment', 'closed_won')
+
+
+class UpvcQuote(db.Model):
+    """Vetrova Interni UPVC quote (KAN-67).
+
+    BD-created, mirrors `BathqubeQuote` shape but simpler — no
+    configurator snapshot, no work-order, no receipts table yet (will
+    reuse the same payment-receipt pattern when needed). Each line is a
+    track/opening configured + priced by the BD.
+    """
+    __tablename__ = 'vetrova_upvc_quotes'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Human-readable estimate number stamped on the PDF, e.g. "VI-UPVC-2026-0042".
+    # Auto-assigned at create time; unique so it can be the printed
+    # reference the customer quotes back.
+    estimate_number = db.Column(db.String(32), unique=True, nullable=True, index=True)
+
+    # Customer — typed by BD on the create form. No upstream Lead FK yet
+    # (UPVC enquiries currently come through phone / referral, not a form);
+    # if/when we wire UPVC to a lead funnel we'll add lead_id here.
+    customer_name = db.Column(db.String(200), nullable=False)
+    phone = db.Column(db.String(32), nullable=False, index=True)
+    email = db.Column(db.String(200), nullable=True, index=True)
+    pincode = db.Column(db.String(12), nullable=True)
+    site_address = db.Column(db.Text, nullable=True)
+    # UPVC is B2C — PAN captured for tax invoice rendering.
+    customer_pan = db.Column(db.String(15), nullable=True)
+
+    # Money. BD's per-line price is the TAXABLE amount; subtotal is the
+    # sum of line amounts; GST applies on top per the directive that
+    # "whatever he writes is taxable, tax is calculated after that value".
+    subtotal = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    cgst = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    sgst = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    total = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    gst_percentage = db.Column(db.Numeric(5, 2), default=18, nullable=False)
+    amount_received = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+
+    # Validity in days (KAN-67 answer #4 — fixed at 10). Stored per-row
+    # so a future BD-typed override per quote is a config change, not a
+    # schema change.
+    validity_days = db.Column(db.Integer, default=10, nullable=False)
+
+    # Bumped on every successful save in the revise UI. 0 = the original
+    # quote BD typed; revisions[0] is the FIRST revise; etc.
+    revision_count = db.Column(db.Integer, default=0, nullable=False)
+
+    # Lifecycle (UPVC_STAGES above)
+    stage = db.Column(db.String(32), nullable=False, default='draft', index=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    # Audit
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    purchased_at = db.Column(db.DateTime, nullable=True)
+
+    # Backrefs
+    items = db.relationship('UpvcQuoteItem', backref='quote', lazy=True,
+                            cascade='all, delete-orphan',
+                            order_by='UpvcQuoteItem.sort_order')
+    events = db.relationship('UpvcStatusEvent', backref='quote', lazy=True,
+                             cascade='all, delete-orphan',
+                             order_by='UpvcStatusEvent.created_at.desc()')
+    revisions = db.relationship('UpvcQuoteRevision', backref='quote', lazy=True,
+                                cascade='all, delete-orphan',
+                                order_by='UpvcQuoteRevision.revision_number.desc()')
+    creator = db.relationship('User', foreign_keys=[created_by])
+
+    @property
+    def balance_payable(self):
+        return max(0.0, float(self.total or 0) - float(self.amount_received or 0))
+
+    @property
+    def valid_until(self):
+        """created_at + validity_days. Used by the PDF + email template."""
+        from datetime import timedelta
+        if not self.created_at:
+            return None
+        return self.created_at + timedelta(days=int(self.validity_days or 10))
+
+    def __repr__(self):
+        return f'<UpvcQuote {self.estimate_number or self.id} {self.customer_name} {self.stage}>'
+
+
+class UpvcQuoteItem(db.Model):
+    """One opening / track on a UPVC quote.
+
+    BD configures: track type, sliding-system (if applicable), dimensions
+    (W × H + unit), colour, optional label, and a free-typed price. The
+    price is the line-level taxable amount; GST is added at the quote
+    level. Quantity is implicit (1 per row) — if BD wants two identical
+    openings he adds two rows so the line item table stays scannable
+    on the PDF.
+    """
+    __tablename__ = 'vetrova_upvc_quote_items'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('vetrova_upvc_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+
+    sort_order = db.Column(db.Integer, default=0, nullable=False)
+
+    # Optional human label — "Master bedroom — North window" etc. Helps
+    # the customer identify which opening is which in the PDF.
+    label = db.Column(db.String(200), nullable=True)
+
+    # Configurator fields (KAN-67)
+    track_type = db.Column(db.String(20), nullable=False)              # 'swing' | 'sliding'
+    track_system = db.Column(db.String(20), nullable=True)             # '2-track' | '2.5-track' | '3-track' — NULL for swing
+    width = db.Column(db.Numeric(10, 2), nullable=True)
+    height = db.Column(db.Numeric(10, 2), nullable=True)
+    unit = db.Column(db.String(8), nullable=False, default='ft')       # mm | cm | m | ft | in — KAN-34
+    colour = db.Column(db.String(20), nullable=False)                  # 'white' | 'black' | 'wooden'
+
+    # Quantity of this opening at the given spec/price. Defaults to 1.
+    # BD bumps it when the customer wants N identical openings without
+    # duplicating the row (e.g. two identical bedroom windows).
+    quantity = db.Column(db.Numeric(10, 2), default=1, nullable=False)
+    # Square-feet computed from width × height using the unit-aware
+    # to_inches() table (mirrors the Bathqube formula). Persisted so the
+    # audit trail captures what was computed at save time even if the
+    # to_inches table ever changes. NUMERIC(10,4) keeps 4dp precision
+    # which is sufficient for any realistic opening.
+    sqft = db.Column(db.Numeric(10, 4), default=0, nullable=False)
+    # BD-typed PER-SQUARE-FOOT price (taxable). The semantics shift was
+    # made on 2026-06-27 — earlier rows had `rate` as a flat per-line
+    # price, but those rows were wiped before the migration. From now on
+    # rate is ALWAYS ₹/sqft.
+    rate = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    # Snapshot of quantity*sqft*rate at save time. The recompute helper
+    # always rewrites this so divergence between (qty, sqft, rate) and
+    # amount can only come from a bug.
+    amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+
+    def __repr__(self):
+        dim = f'{self.width}x{self.height}{self.unit}' if self.width and self.height else 'no-dim'
+        return f'<UpvcQuoteItem q={self.quote_id} {self.track_type}/{self.colour} {dim} {self.amount}>'
+
+
+class UpvcQuoteRevision(db.Model):
+    """One row per Save in the UPVC revise UI. Internal audit log."""
+    __tablename__ = 'vetrova_upvc_quote_revisions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('vetrova_upvc_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+    revision_number = db.Column(db.Integer, nullable=False)
+    prev_subtotal = db.Column(db.Numeric(12, 2), nullable=True)
+    new_subtotal = db.Column(db.Numeric(12, 2), nullable=True)
+    prev_total = db.Column(db.Numeric(12, 2), nullable=True)
+    new_total = db.Column(db.Numeric(12, 2), nullable=True)
+    snapshot = db.Column(db.Text, nullable=True)  # JSON: {items, customer}
+    triggered_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = db.relationship('User', foreign_keys=[triggered_by])
+
+    @property
+    def total_delta(self):
+        try:
+            return float(self.new_total or 0) - float(self.prev_total or 0)
+        except Exception:
+            return 0
+
+    def __repr__(self):
+        return f'<UpvcQuoteRevision q={self.quote_id} #{self.revision_number} {self.prev_total}->{self.new_total}>'
+
+
+class UpvcStatusEvent(db.Model):
+    """Audit log of stage transitions + emails sent for a UPVC quote.
+    Same shape as BathqubeStatusEvent so the view template can re-use
+    the same activity-timeline component."""
+    __tablename__ = 'vetrova_upvc_status_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('vetrova_upvc_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+
+    from_stage = db.Column(db.String(32), nullable=True)
+    to_stage = db.Column(db.String(32), nullable=False)
+
+    channel = db.Column(db.String(20), nullable=False, default='email')  # email | none
+    subject = db.Column(db.String(255), nullable=True)
+    message = db.Column(db.Text, nullable=True)
+
+    send_status = db.Column(db.String(20), nullable=False, default='pending')  # pending|sent|failed|skipped
+    send_error = db.Column(db.Text, nullable=True)
+    provider_message_id = db.Column(db.String(128), nullable=True)
+
+    triggered_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = db.relationship('User', foreign_keys=[triggered_by])
+
+    def __repr__(self):
+        return f'<UpvcStatusEvent q={self.quote_id} {self.from_stage}->{self.to_stage} {self.send_status}>'
+
+
+# ============================================================================
+# TAX INVOICES — GST-compliant invoice generation
+# ============================================================================
+# When a quote reaches `closed_won` and BD pushes it through Tally, they
+# can "Generate Tax Invoice" to produce a properly-formatted GST invoice.
+# The invoice freezes a snapshot of the line items at gen time — the
+# source quote stays mutable but the invoice does not.
+
+# Statuses for the invoice lifecycle
+TAX_INVOICE_STATUSES = ('draft', 'issued', 'cancelled')
+
+
+class TaxInvoice(db.Model):
+    """GST tax invoice issued by Vetrova Tech Services to a customer.
+
+    Polymorphic source: exactly one of (`bathqube_quote_id`,
+    `upvc_quote_id`, `lead_quote_id`) is set per row — mirrors the
+    `PurchaseInvoice` pattern already in this codebase.
+
+    Once `status='issued'`, money fields + line items are immutable
+    (the route layer enforces this); only soft fields (vehicle no,
+    e-Way Bill no, IRN paste-in, terms of delivery, etc.) may still
+    be edited. Cancellation creates a credit-note flow in a future
+    phase — for now we just mark `status='cancelled'`.
+    """
+    __tablename__ = 'tax_invoices'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Sequential per-FY: e.g. VTS/2627/0001
+    invoice_number  = db.Column(db.String(40), unique=True, nullable=False, index=True)
+    financial_year  = db.Column(db.String(8),  nullable=False, index=True)
+    invoice_date    = db.Column(db.Date,       nullable=False, default=datetime.utcnow, index=True)
+
+    # Source quote — exactly one set
+    bathqube_quote_id = db.Column(db.Integer, db.ForeignKey('bathqube_quotes.id'),     nullable=True, index=True)
+    upvc_quote_id     = db.Column(db.Integer, db.ForeignKey('vetrova_upvc_quotes.id'), nullable=True, index=True)
+    lead_quote_id     = db.Column(db.Integer, db.ForeignKey('quotes.id'),              nullable=True, index=True)
+
+    # Seller snapshot (frozen — changing global settings later doesn't
+    # rewrite historical invoices)
+    seller_name        = db.Column(db.String(200), nullable=False)
+    seller_address     = db.Column(db.Text,        nullable=False)
+    seller_gstin       = db.Column(db.String(20),  nullable=False)
+    seller_state       = db.Column(db.String(50),  nullable=False)
+    seller_state_code  = db.Column(db.String(4),   nullable=False)
+    seller_pan         = db.Column(db.String(20),  nullable=True)
+    seller_udyam       = db.Column(db.String(40),  nullable=True)
+    seller_email       = db.Column(db.String(200), nullable=True)
+    seller_cin         = db.Column(db.String(40),  nullable=True)
+
+    # Buyer (Bill-to)
+    buyer_name         = db.Column(db.String(200), nullable=False)
+    buyer_address      = db.Column(db.Text,        nullable=False)
+    buyer_gstin        = db.Column(db.String(20),  nullable=True)
+    # Buyer PAN — printed on the invoice for B2C customers who don't
+    # carry a GSTIN. Either buyer_gstin or buyer_pan (or neither) is
+    # typically filled; both can coexist if the customer is B2B with a
+    # voluntarily-shared PAN.
+    buyer_pan          = db.Column(db.String(15),  nullable=True)
+    buyer_state        = db.Column(db.String(50),  nullable=True)
+    buyer_state_code   = db.Column(db.String(4),   nullable=True)
+
+    # Consignee (Ship-to). Defaults to buyer when same site.
+    consignee_name        = db.Column(db.String(200), nullable=False)
+    consignee_address     = db.Column(db.Text,        nullable=False)
+    consignee_gstin       = db.Column(db.String(20),  nullable=True)
+    consignee_state       = db.Column(db.String(50),  nullable=True)
+    consignee_state_code  = db.Column(db.String(4),   nullable=True)
+
+    # Invoice metadata — BD enters these on the "generate invoice" form.
+    # Some have sensible defaults applied at row-create time.
+    buyers_order_no    = db.Column(db.String(100), nullable=True)
+    buyers_order_date  = db.Column(db.Date,        nullable=True)
+    delivery_note      = db.Column(db.String(100), nullable=True)
+    delivery_note_date = db.Column(db.Date,        nullable=True)
+    dispatch_doc_no    = db.Column(db.String(100), nullable=True)
+    mode_of_payment    = db.Column(db.String(50),  default='PROMPT')
+    other_references   = db.Column(db.String(255), nullable=True)
+    dispatched_through = db.Column(db.String(50),  default='ROAD')
+    destination        = db.Column(db.String(200), nullable=True)
+    terms_of_delivery  = db.Column(db.String(255), default='EX OUR SITE')
+    bill_of_lading     = db.Column(db.String(100), nullable=True)
+    bill_of_lading_date = db.Column(db.Date,       nullable=True)
+    motor_vehicle_no   = db.Column(db.String(20),  nullable=True)
+    ewaybill_no        = db.Column(db.String(50),  nullable=True)
+
+    # e-Invoice fields — BD pastes manually after generating on the IRP
+    # portal. PDF renders the IRN block only when irn is set; otherwise
+    # the block is omitted entirely so a non-e-invoice document still
+    # prints clean.
+    irn      = db.Column(db.String(80), nullable=True)
+    ack_no   = db.Column(db.String(40), nullable=True)
+    ack_date = db.Column(db.Date,       nullable=True)
+
+    # Computed totals
+    subtotal        = db.Column(db.Numeric(14, 2), nullable=False, default=0)
+    cgst            = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    sgst            = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    igst            = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    round_off       = db.Column(db.Numeric(6, 2),  nullable=False, default=0)
+    total           = db.Column(db.Numeric(14, 2), nullable=False, default=0)
+    amount_in_words = db.Column(db.String(500),    nullable=True)
+
+    # Bank snapshot (so changing the global bank later doesn't rewrite
+    # what was printed on a past invoice)
+    bank_account_name = db.Column(db.String(200), nullable=True)
+    bank_name         = db.Column(db.String(100), nullable=True)
+    bank_account_no   = db.Column(db.String(40),  nullable=True)
+    bank_ifsc         = db.Column(db.String(20),  nullable=True)
+    bank_branch       = db.Column(db.String(100), nullable=True)
+    upi_id            = db.Column(db.String(60),  nullable=True)
+
+    declaration = db.Column(db.Text, nullable=True)
+
+    status         = db.Column(db.String(20), nullable=False, default='draft', index=True)
+    created_by     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    issued_at      = db.Column(db.DateTime, nullable=True)
+    cancelled_at   = db.Column(db.DateTime, nullable=True)
+    cancelled_reason = db.Column(db.Text, nullable=True)
+
+    # Relationships
+    items = db.relationship('TaxInvoiceItem', backref='invoice', lazy=True,
+                            cascade='all, delete-orphan',
+                            order_by='TaxInvoiceItem.sort_order')
+    bathqube_quote = db.relationship('BathqubeQuote', foreign_keys=[bathqube_quote_id])
+    upvc_quote     = db.relationship('UpvcQuote',     foreign_keys=[upvc_quote_id])
+    lead_quote     = db.relationship('Quote',         foreign_keys=[lead_quote_id])
+    creator        = db.relationship('User',          foreign_keys=[created_by])
+
+    @property
+    def is_inter_state(self):
+        """True when buyer's state differs from seller's — drives
+        IGST vs CGST+SGST treatment."""
+        if not self.buyer_state_code or not self.seller_state_code:
+            return False
+        return self.buyer_state_code != self.seller_state_code
+
+    @property
+    def is_editable(self):
+        """Soft-edit gate: status='issued' invoices lock money fields +
+        line items (the route enforces this; this property is for the
+        view template's button visibility)."""
+        return self.status == 'draft'
+
+    def __repr__(self):
+        return f'<TaxInvoice {self.invoice_number} {self.buyer_name} {self.status} ₹{self.total}>'
+
+
+class TaxInvoiceItem(db.Model):
+    """One line on a tax invoice — frozen at issue time."""
+    __tablename__ = 'tax_invoice_items'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    invoice_id = db.Column(db.Integer, db.ForeignKey('tax_invoices.id', ondelete='CASCADE'),
+                           nullable=False, index=True)
+    sort_order = db.Column(db.Integer, nullable=False, default=0)
+
+    description = db.Column(db.String(500), nullable=False)
+    hsn_code    = db.Column(db.String(10),  nullable=True, index=True)
+    quantity    = db.Column(db.Numeric(12, 4), nullable=False, default=1)
+    unit        = db.Column(db.String(20),  nullable=False, default='nos')
+    rate        = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    amount      = db.Column(db.Numeric(14, 2), nullable=False, default=0)
+
+    # Transportation / installation / discount lines — PDF places these
+    # after the product rows for visual grouping.
+    is_extra = db.Column(db.Boolean, nullable=False, default=False)
+
+    def __repr__(self):
+        return f'<TaxInvoiceItem inv={self.invoice_id} HSN={self.hsn_code} {self.description[:30]} {self.amount}>'
+
+
+class GatePass(db.Model):
+    """Dispatch document — tracks material physically leaving the
+    factory. Modelled on the Arihant packing slip: customer + invoice
+    + vehicle + transporter on top, line items (qty + dimensions +
+    process flags) in the middle, totals + signatures at the bottom.
+
+    Polymorphic source: exactly one of `tax_invoice_id`,
+    `bathqube_quote_id`, `upvc_quote_id`, `lead_quote_id` is set per
+    row. Multiple gate passes per source are allowed — supports
+    partial dispatches across multiple trips.
+
+    Once `status='issued'`, qty fields are immutable (the route layer
+    enforces this); only logistics fields (vehicle, driver, LR, e-Way
+    Bill no) stay editable so BD can keep the document fresh without
+    breaking dispatch reconciliation.
+    """
+    __tablename__ = 'gate_passes'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Sequential per-FY: VTS/GP/2627/0001
+    gp_number       = db.Column(db.String(40), unique=True, nullable=False, index=True)
+    financial_year  = db.Column(db.String(8),  nullable=False, index=True)
+    gp_date         = db.Column(db.Date,       nullable=False, default=datetime.utcnow, index=True)
+
+    # Source — exactly one set
+    tax_invoice_id    = db.Column(db.Integer, db.ForeignKey('tax_invoices.id'),         nullable=True, index=True)
+    bathqube_quote_id = db.Column(db.Integer, db.ForeignKey('bathqube_quotes.id'),      nullable=True, index=True)
+    upvc_quote_id     = db.Column(db.Integer, db.ForeignKey('vetrova_upvc_quotes.id'),  nullable=True, index=True)
+    lead_quote_id     = db.Column(db.Integer, db.ForeignKey('quotes.id'),               nullable=True, index=True)
+
+    # Customer / delivery snapshot
+    customer_name    = db.Column(db.String(200), nullable=False)
+    delivery_address = db.Column(db.Text,        nullable=True)
+    customer_gstin   = db.Column(db.String(20),  nullable=True)
+
+    # Reference back to source invoice/quote (printed on PDF)
+    ref_invoice_no   = db.Column(db.String(60), nullable=True)
+    ref_invoice_date = db.Column(db.Date,       nullable=True)
+
+    # Logistics
+    vehicle_no       = db.Column(db.String(30),  nullable=True)
+    transporter_name = db.Column(db.String(150), nullable=True)
+    driver_name      = db.Column(db.String(150), nullable=True)
+    driver_phone     = db.Column(db.String(30),  nullable=True)
+    lr_number        = db.Column(db.String(60),  nullable=True)
+    eway_bill_no     = db.Column(db.String(50),  nullable=True)
+    place_of_supply  = db.Column(db.String(200), nullable=True)
+
+    remarks = db.Column(db.Text, nullable=True)
+
+    status         = db.Column(db.String(20), nullable=False, default='draft', index=True)
+    prepared_by    = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    issued_at      = db.Column(db.DateTime, nullable=True)
+    cancelled_at   = db.Column(db.DateTime, nullable=True)
+    cancelled_reason = db.Column(db.Text, nullable=True)
+
+    # Relationships
+    items = db.relationship('GatePassItem', backref='gate_pass', lazy=True,
+                            cascade='all, delete-orphan',
+                            order_by='GatePassItem.sort_order')
+    tax_invoice    = db.relationship('TaxInvoice',    foreign_keys=[tax_invoice_id])
+    bathqube_quote = db.relationship('BathqubeQuote', foreign_keys=[bathqube_quote_id])
+    upvc_quote     = db.relationship('UpvcQuote',     foreign_keys=[upvc_quote_id])
+    lead_quote     = db.relationship('Quote',         foreign_keys=[lead_quote_id])
+    preparer       = db.relationship('User',          foreign_keys=[prepared_by])
+
+    @property
+    def is_editable(self):
+        """Qty fields are mutable only while draft."""
+        return self.status == 'draft'
+
+    @property
+    def total_qty(self):
+        return sum(float(it.qty_this_pass or 0) for it in self.items)
+
+    @property
+    def total_sqft(self):
+        return sum(float(it.sqft or 0) for it in self.items)
+
+    @property
+    def total_sqm(self):
+        return sum(float(it.sqm or 0) for it in self.items)
+
+    @property
+    def source_label(self):
+        if self.tax_invoice_id:
+            return f'Tax Invoice #{self.tax_invoice_id}'
+        if self.bathqube_quote_id:
+            return f'Bathqube #{self.bathqube_quote_id}'
+        if self.upvc_quote_id:
+            return f'UPVC #{self.upvc_quote_id}'
+        if self.lead_quote_id:
+            return f'Quote #{self.lead_quote_id}'
+        return '—'
+
+    def __repr__(self):
+        return f'<GatePass {self.gp_number} {self.customer_name} {self.status}>'
+
+
+class GatePassItem(db.Model):
+    """One dispatched line. Mirrors a row in the Arihant packing slip."""
+    __tablename__ = 'gate_pass_items'
+
+    id           = db.Column(db.Integer, primary_key=True)
+    gate_pass_id = db.Column(db.Integer, db.ForeignKey('gate_passes.id', ondelete='CASCADE'),
+                             nullable=False, index=True)
+    sort_order   = db.Column(db.Integer, nullable=False, default=0)
+
+    material_spec     = db.Column(db.String(200), nullable=True)
+    ref_code          = db.Column(db.String(60),  nullable=True)
+    work_order_no     = db.Column(db.String(60),  nullable=True)
+
+    width_mm          = db.Column(db.Numeric(10, 2), nullable=True)
+    height_mm         = db.Column(db.Numeric(10, 2), nullable=True)
+    width_in_display  = db.Column(db.String(20),  nullable=True)
+    height_in_display = db.Column(db.String(20),  nullable=True)
+
+    qty_ordered           = db.Column(db.Numeric(10, 2), nullable=False, default=0)
+    qty_dispatched_before = db.Column(db.Numeric(10, 2), nullable=False, default=0)
+    qty_this_pass         = db.Column(db.Numeric(10, 2), nullable=False, default=0)
+
+    sqft = db.Column(db.Numeric(12, 4), nullable=False, default=0)
+    sqm  = db.Column(db.Numeric(12, 4), nullable=False, default=0)
+
+    # Process flags — mirror Arihant H/C/SP/BH/CSK columns
+    # H=Heat-soaked, C=Coated, SP=Polished, BH=Bevel/Hole, CSK=Countersink
+    flag_h   = db.Column(db.Boolean, nullable=False, default=False)
+    flag_c   = db.Column(db.Boolean, nullable=False, default=False)
+    flag_sp  = db.Column(db.Boolean, nullable=False, default=False)
+    flag_bh  = db.Column(db.Boolean, nullable=False, default=False)
+    flag_csk = db.Column(db.Boolean, nullable=False, default=False)
+
+    source_kind    = db.Column(db.String(20), nullable=True)
+    source_item_id = db.Column(db.Integer, nullable=True)
+
+    remarks = db.Column(db.String(200), nullable=True)
+
+    def __repr__(self):
+        return f'<GatePassItem gp={self.gate_pass_id} ref={self.ref_code} qty={self.qty_this_pass}>'
 

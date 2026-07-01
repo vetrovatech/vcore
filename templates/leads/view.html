@@ -29,6 +29,9 @@
     .btn-call:hover   { background:#2563eb;color:white; }
     .btn-wa    { border-color:#bbf7d0;background:#f0fdf4;color:#16a34a; }
     .btn-wa:hover     { background:#16a34a;color:white; }
+    .btn-wa-send { border-color:#16a34a;background:#16a34a;color:white; }
+    .btn-wa-send:hover { background:#15803d;border-color:#15803d;color:white; }
+    .btn-wa-send:disabled { opacity:0.6;cursor:not-allowed; }
     .btn-email { border-color:#e2e8f0;background:#f8fafc;color:#475569; }
     .btn-email:hover  { background:#475569;color:white; }
     .btn-edit  { border-color:#e2e8f0;background:#f8fafc;color:#475569; }
@@ -203,6 +206,10 @@
                target="_blank" class="action-btn btn-wa">
                 <i class="bi bi-whatsapp"></i> WhatsApp
             </a>
+            <button type="button" class="action-btn btn-wa-send" id="sendWelcomeBtn"
+                    onclick="sendWelcome()">
+                <i class="bi bi-send-fill"></i> Send Welcome
+            </button>
             {% endif %}
             {% if lead.email %}
             <a href="mailto:{{ lead.email }}" class="action-btn btn-email">
@@ -509,6 +516,32 @@ function saveNote() {
     fetch('{{ url_for("lead_save_note", id=lead.id) }}', { method:'POST', body:fd })
         .then(r => r.json())
         .then(d => { if (d.success) { input.value = ''; location.reload(); } });
+}
+
+function sendWelcome() {
+    const btn = document.getElementById('sendWelcomeBtn');
+    if (!btn) return;
+    if (!confirm('Send the Welcome WhatsApp message to {{ lead.name or "this lead" }}?')) return;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Sending...';
+    fetch('{{ url_for("lead_send_welcome", id=lead.id) }}', { method: 'POST' })
+        .then(r => r.json().then(d => ({ ok: r.ok, body: d })))
+        .then(({ ok, body }) => {
+            if (ok && body.success) {
+                btn.innerHTML = '<i class="bi bi-check-lg"></i> Sent';
+                setTimeout(() => { btn.disabled = false; btn.innerHTML = original; }, 3000);
+            } else {
+                alert('Send failed: ' + (body.error || 'Unknown error'));
+                btn.disabled = false;
+                btn.innerHTML = original;
+            }
+        })
+        .catch(err => {
+            alert('Network error: ' + err);
+            btn.disabled = false;
+            btn.innerHTML = original;
+        });
 }
 
 function setCustomerType(type) {

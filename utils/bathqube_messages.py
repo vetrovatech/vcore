@@ -145,6 +145,7 @@ _BUILDERS = {
 }
 
 STAGE_LABELS = {
+    'draft':              'Draft',
     'quote_generated':    'Quote Generated',
     'in_pipeline':        'In Pipeline',
     'revision':           'Revision',

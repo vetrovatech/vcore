@@ -1,19 +1,19 @@
 {% extends "base.html" %}
-{% block title %}Bathqube Quotations - VCore{% endblock %}
+{% block title %}Vetrova Interni — UPVC Quotations{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h2 class="mb-1"><i class="bi bi-droplet-half"></i> Bathqube Quotations</h2>
-        <span class="text-muted small">Auto-ingested from bathqube.com configurator &mdash; BD can also create from scratch &rarr;</span>
+        <h2 class="mb-1"><i class="bi bi-window"></i> Vetrova Interni — UPVC Quotations</h2>
+        <span class="text-muted small">BD-created — Swing / Sliding / mesh-less openings priced per row</span>
     </div>
-    <a href="{{ url_for('bathqube_quote_create') }}" class="btn btn-primary">
-        <i class="bi bi-plus-circle"></i> New Bathqube Quote
+    <a href="{{ url_for('upvc_quote_create') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> New Quote
     </a>
 </div>
 
 <div class="card mb-4">
     <div class="card-body">
-        <form method="GET" action="{{ url_for('bathqube_quotes_list') }}" class="row g-3">
+        <form method="GET" action="{{ url_for('upvc_quotes_list') }}" class="row g-3">
             <div class="col-md-4">
                 <input type="text" class="form-control" name="search"
                        placeholder="Search name, phone, email or estimate #"
@@ -21,7 +21,7 @@
             </div>
             <div class="col-md-3">
                 <select class="form-select" name="stage">
-                    <option value="">All stages</option>
+                    <option value="">All active stages</option>
                     {% for s in stages %}
                     <option value="{{ s }}" {% if stage==s %}selected{% endif %}>{{ stage_labels[s] }}</option>
                     {% endfor %}
@@ -29,7 +29,7 @@
             </div>
             <div class="col-md-5 d-flex align-items-center gap-2 flex-wrap">
                 <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
-                <a href="{{ url_for('bathqube_quotes_list') }}" class="btn btn-secondary js-clear-filters">
+                <a href="{{ url_for('upvc_quotes_list') }}" class="btn btn-secondary js-clear-filters">
                     <i class="bi bi-x-circle"></i> Clear
                 </a>
                 <div class="form-check ms-2">
@@ -54,9 +54,10 @@
                 <thead>
                     <tr>
                         <th>Estimate #</th>
-                        <th>Received</th>
+                        <th>Created</th>
                         <th>Customer</th>
                         <th>Phone</th>
+                        <th>Openings</th>
                         <th>Total</th>
                         <th>Stage</th>
                         <th>Actions</th>
@@ -65,25 +66,30 @@
                 <tbody>
                     {% for q in quotes %}
                     <tr>
-                        <td><strong>{{ q.estimate_number or ('BQ-' ~ q.id) }}</strong></td>
+                        <td><strong>{{ q.estimate_number or ('VI-UPVC-' ~ q.id) }}</strong></td>
                         <td>{{ q.created_at.strftime('%d %b %Y') }}</td>
                         <td>{{ q.customer_name }}</td>
                         <td>{{ q.phone }}</td>
-                        <td>₹{{ '{:,.0f}'.format(q.revised_total or q.total or 0) }}</td>
-                        <td><span class="badge bg-info text-dark">{{ stage_labels.get(q.stage, q.stage) }}</span></td>
+                        <td><span class="badge bg-light text-dark">{{ q.items|length }}</span></td>
+                        <td>₹{{ '{:,.0f}'.format(q.total or 0) }}</td>
+                        <td>
+                            {% set bcls = stage_badges.get(q.stage, 'info') %}
+                            <span class="badge bg-{{ bcls }} {% if bcls in ['warning','light','info'] %}text-dark{% endif %}">
+                                {{ stage_labels.get(q.stage, q.stage) }}
+                            </span>
+                        </td>
                         <td class="d-flex gap-1">
-                            <a href="{{ url_for('bathqube_quote_view', id=q.id) }}" class="btn btn-sm btn-outline-primary">
+                            <a href="{{ url_for('upvc_quote_view', id=q.id) }}" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-eye"></i> View
                             </a>
-                            {% if current_user.is_admin() %}
-                            <form method="POST" action="{{ url_for('bathqube_quote_delete', id=q.id) }}"
-                                  onsubmit="return confirm('Delete quote {{ q.estimate_number or ('BQ-' ~ q.id) }} ({{ q.customer_name }})? This cannot be undone.');"
-                                  style="display:inline;">
-                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete (admin only)">
-                                    <i class="bi bi-trash"></i>
-                                </button>
-                            </form>
-                            {% endif %}
+                            <a href="{{ url_for('upvc_quote_edit', id=q.id) }}" class="btn btn-sm btn-outline-warning"
+                               title="Edit customer / openings / prices">
+                                <i class="bi bi-pencil-square"></i> Edit
+                            </a>
+                            <a href="{{ url_for('upvc_quote_pdf', id=q.id) }}" class="btn btn-sm btn-outline-secondary"
+                               target="_blank" title="Download PDF">
+                                <i class="bi bi-file-earmark-pdf"></i>
+                            </a>
                         </td>
                     </tr>
                     {% endfor %}
@@ -91,7 +97,7 @@
             </table>
         </div>
         {% else %}
-        <p class="text-muted text-center my-4">No Bathqube quotations yet.</p>
+        <p class="text-muted text-center my-4">No UPVC quotations yet. <a href="{{ url_for('upvc_quote_create') }}">Create the first one.</a></p>
         {% endif %}
     </div>
 </div>
@@ -99,5 +105,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/list_filter_persistence.js') }}"></script>
-<script>ListFilterPersist.init({ key: 'bathqube_quotes_filter_params' });</script>
+<script>ListFilterPersist.init({ key: 'upvc_quotes_filter_params' });</script>
 {% endblock %}

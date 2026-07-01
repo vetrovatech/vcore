@@ -1,0 +1,395 @@
+{% extends "base.html" %}
+{% set is_edit = quote is not none %}
+{% set mode = mode|default('edit') %}
+{% set is_revise = is_edit and mode == 'revise' %}
+{% block title %}
+    {%- if not is_edit -%}New UPVC Quote
+    {%- elif is_revise -%}Revise — {{ quote.estimate_number or quote.id }}
+    {%- else -%}Edit — {{ quote.estimate_number or quote.id }}
+    {%- endif -%}
+{% endblock %}
+{% block content %}
+<h3 class="mb-3">
+    {% if not is_edit %}
+        <i class="bi bi-plus-circle"></i> New UPVC Quote
+    {% elif is_revise %}
+        <i class="bi bi-clock-history"></i> Revise <small class="text-muted">— {{ quote.estimate_number or quote.id }} {{ quote.customer_name }} (next: revision #{{ (quote.revision_count or 0) + 1 }})</small>
+    {% else %}
+        <i class="bi bi-pencil-square"></i> Edit <small class="text-muted">— {{ quote.estimate_number or quote.id }} {{ quote.customer_name }}</small>
+    {% endif %}
+</h3>
+
+{% if is_revise %}
+<div class="alert alert-info py-2 small">
+    <i class="bi bi-info-circle"></i> <strong>Revision mode.</strong>
+    Saving here writes <strong>Revision #{{ (quote.revision_count or 0) + 1 }}</strong> to the audit log
+    + (if the quote was Sent) flips the stage to <strong>Revision</strong>.
+    For a silent typo fix that doesn't bump revision history,
+    <a href="{{ url_for('upvc_quote_edit', id=quote.id) }}">use Edit instead</a>.
+</div>
+{% endif %}
+
+<form method="POST"
+      action="{% if not is_edit %}{{ url_for('upvc_quote_create') }}
+              {%- elif is_revise %}{{ url_for('upvc_quote_revise', id=quote.id) }}
+              {%- else %}{{ url_for('upvc_quote_edit', id=quote.id) }}{%- endif %}"
+      id="upvcForm">
+
+    {# ───────────── Customer ───────────── #}
+    <div class="card mb-3">
+        <div class="card-header"><strong><i class="bi bi-person"></i> Customer</strong></div>
+        <div class="card-body row g-3">
+            <div class="col-md-6">
+                <label class="form-label">Name <span class="text-danger">*</span></label>
+                <input class="form-control" name="customer_name" required
+                       value="{{ quote.customer_name if quote else '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Phone <span class="text-danger">*</span></label>
+                <input class="form-control" name="phone" required
+                       value="{{ quote.phone if quote else '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Pincode</label>
+                <input class="form-control" name="pincode"
+                       value="{{ quote.pincode if quote else '' }}">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Email <small class="text-muted">(needed to send PDF)</small></label>
+                <input class="form-control" name="email" type="email"
+                       value="{{ quote.email if quote else '' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">PAN <small class="text-muted">(B2C)</small></label>
+                <input class="form-control" name="customer_pan"
+                       value="{{ quote.customer_pan if quote else '' }}"
+                       placeholder="ABCDE1234F" maxlength="15"
+                       style="text-transform:uppercase;">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Validity (days)</label>
+                <input class="form-control" name="validity_days" type="number" min="1" max="365"
+                       value="{{ default_validity_days }}">
+            </div>
+            <div class="col-md-12">
+                <label class="form-label">Site address</label>
+                <textarea class="form-control" name="site_address" rows="2">{{ quote.site_address if quote else '' }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    {# ───────────── Openings / tracks ───────────── #}
+    <div class="card mb-3 border-primary">
+        <div class="card-header bg-primary bg-opacity-10 d-flex justify-content-between align-items-center">
+            <span>
+                <strong><i class="bi bi-window"></i> Openings</strong>
+                <span class="small text-muted ms-2" id="rowCount">0 openings</span>
+                <span class="small text-muted ms-3">Whatever rate you type is TAXABLE — GST is added below.</span>
+            </span>
+            <button type="button" class="btn btn-sm btn-primary" id="addRowBtn">
+                <i class="bi bi-plus-circle"></i> Add opening
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0" id="itemsTable">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 11%;">Label <small class="text-muted">(optional)</small></th>
+                            <th style="width: 8%;">Track type</th>
+                            <th style="width: 10%;">System / Sub-type</th>
+                            <th style="width: 7%;">W</th>
+                            <th style="width: 7%;">H</th>
+                            <th style="width: 6%;">Unit</th>
+                            <th style="width: 8%;">Colour</th>
+                            <th style="width: 5%;">Qty</th>
+                            <th style="width: 7%;" class="text-end">Sqft</th>
+                            <th style="width: 11%;">Rate (₹/sqft)</th>
+                            <th style="width: 16%;" class="text-end">Amount (₹)</th>
+                            <th style="width: 4%;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="itemsBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    {# ───────────── Totals ───────────── #}
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header"><strong><i class="bi bi-card-text"></i> Notes</strong></div>
+                <div class="card-body">
+                    <textarea class="form-control" name="notes" rows="3"
+                              placeholder="Internal notes (not shown on the customer PDF).">{{ quote.notes if quote else '' }}</textarea>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header"><strong><i class="bi bi-calculator"></i> Totals</strong></div>
+                <div class="card-body">
+                    <div class="row g-2 align-items-center">
+                        <div class="col-7"><label class="form-label mb-0">GST %</label></div>
+                        <div class="col-5">
+                            <input type="number" step="0.01" min="0" max="100"
+                                   class="form-control form-control-sm"
+                                   name="gst_percentage" id="gstInput"
+                                   value="{{ default_gst }}">
+                        </div>
+
+                        <div class="col-7 text-muted small">Total sqft <small>(across all openings, qty-weighted)</small></div>
+                        <div class="col-5 text-end fw-bold" id="totalSqftCell">0.00</div>
+
+                        <div class="col-7 text-muted small">Subtotal (taxable)</div>
+                        <div class="col-5 text-end fw-bold" id="subtotalCell">₹0</div>
+
+                        <div class="col-7 text-muted small">CGST <span id="halfGstLabel">(9%)</span></div>
+                        <div class="col-5 text-end" id="cgstCell">₹0</div>
+
+                        <div class="col-7 text-muted small">SGST <span id="halfGstLabel2">(9%)</span></div>
+                        <div class="col-5 text-end" id="sgstCell">₹0</div>
+
+                        <div class="col-7"><strong>Grand total</strong></div>
+                        <div class="col-5 text-end"><strong id="grandTotalCell">₹0</strong></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex gap-2 mb-5">
+        <button type="submit" class="btn btn-success">
+            <i class="bi bi-check-circle"></i>
+            {% if not is_edit %}Create draft
+            {% elif is_revise %}Save as revision #{{ (quote.revision_count or 0) + 1 }}
+            {% else %}Save changes
+            {% endif %}
+        </button>
+        <a class="btn btn-outline-secondary"
+           href="{% if is_edit %}{{ url_for('upvc_quote_view', id=quote.id) }}{% else %}{{ url_for('upvc_quotes_list') }}{% endif %}">
+            Cancel
+        </a>
+    </div>
+</form>
+
+{# ───────────── Existing items (JSON for JS) ───────────── #}
+{# Server hands the existing items to the editor as a JSON blob. Empty list = empty editor (one starter row added by JS). #}
+<script id="upvcInitialItems" type="application/json">
+[
+{%- for it in items -%}
+    {
+        "label":        {{ (it.label or '')|tojson }},
+        "track_type":   {{ (it.track_type or '')|tojson }},
+        "track_system": {{ (it.track_system or '')|tojson }},
+        "width":        {{ (it.width|float if it.width is not none else None)|tojson }},
+        "height":       {{ (it.height|float if it.height is not none else None)|tojson }},
+        "unit":         {{ (it.unit or 'ft')|tojson }},
+        "colour":       {{ (it.colour or 'white')|tojson }},
+        "quantity":     {{ (it.quantity|float if it.quantity is not none else 1)|tojson }},
+        "rate":         {{ (it.rate|float if it.rate is not none else 0)|tojson }}
+    }{{ "," if not loop.last else "" }}
+{%- endfor -%}
+]
+</script>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    const TRACK_TYPES      = {{ track_types|tojson }};
+    const TRACK_SYSTEMS    = {{ track_systems|tojson }};   // sliding sub-types
+    const LOUVER_SUBTYPES  = {{ louver_subtypes|tojson }}; // louvers sub-types
+    const COLOURS          = {{ colours|tojson }};
+    const UNITS            = {{ units|tojson }};
+
+    // Same unit-aware conversion table the server uses (utils/bathqube_dimensions.py).
+    // Keep these two in lockstep — mismatched constants cause silent
+    // client/server drift on totals.
+    const UNIT_TO_INCHES = {
+        mm: 1 / 25.4,
+        cm: 1 / 2.54,
+        in: 1,
+        m:  39.37007874015748,
+        ft: 12,
+    };
+
+    // Sub-type list per track type. Sliding → 2-track/2.5-track/3-track,
+    // Louvers → fixed/movable, Swing → no sub-type.
+    function subtypesFor(trackType) {
+        if (trackType === 'sliding') return TRACK_SYSTEMS;
+        if (trackType === 'louvers') return LOUVER_SUBTYPES;
+        return [];
+    }
+
+    function panelSqft(w, h, unit) {
+        const f = UNIT_TO_INCHES[unit] || UNIT_TO_INCHES.ft;
+        const wi = Math.max(0, Number(w) || 0) * f;
+        const hi = Math.max(0, Number(h) || 0) * f;
+        return (wi * hi) / 144;
+    }
+
+    const bodyEl   = document.getElementById('itemsBody');
+    const addBtn   = document.getElementById('addRowBtn');
+    const totalSqftEl = document.getElementById('totalSqftCell');
+    const subEl    = document.getElementById('subtotalCell');
+    const cgstEl   = document.getElementById('cgstCell');
+    const sgstEl   = document.getElementById('sgstCell');
+    const grandEl  = document.getElementById('grandTotalCell');
+    const gstInput = document.getElementById('gstInput');
+    const halfL1   = document.getElementById('halfGstLabel');
+    const halfL2   = document.getElementById('halfGstLabel2');
+    const countEl  = document.getElementById('rowCount');
+
+    let rowIdx = 0;
+
+    function money(v) {
+        return '₹' + Number(v||0).toLocaleString('en-IN', {maximumFractionDigits: 0});
+    }
+
+    function buildRow(initial) {
+        const i = rowIdx++;
+        initial = initial || {};
+        const tr = document.createElement('tr');
+        tr.dataset.idx = i;
+
+        const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+        const opts = (arr, sel) => arr.map(v =>
+            `<option value="${v}" ${v === sel ? 'selected' : ''}>${cap(v)}</option>`).join('');
+
+        const initialTrackType = initial.track_type || 'swing';
+        const initialSubtypes = subtypesFor(initialTrackType);
+
+        tr.innerHTML = `
+            <td><input class="form-control form-control-sm" name="items[${i}][label]" placeholder="e.g. Master BR"
+                       value="${(initial.label||'').replace(/"/g,'&quot;')}"></td>
+            <td>
+                <select class="form-select form-select-sm js-track-type" name="items[${i}][track_type]" required>
+                    ${opts(TRACK_TYPES, initialTrackType)}
+                </select>
+            </td>
+            <td>
+                <select class="form-select form-select-sm js-track-system" name="items[${i}][track_system]"
+                        ${initialSubtypes.length ? '' : 'disabled'}>
+                    ${opts(initialSubtypes, initial.track_system || (initialSubtypes[0] || ''))}
+                </select>
+            </td>
+            <td><input class="form-control form-control-sm js-w" name="items[${i}][width]"
+                       type="number" step="0.01" min="0.01" required
+                       value="${initial.width != null ? initial.width : ''}"></td>
+            <td><input class="form-control form-control-sm js-h" name="items[${i}][height]"
+                       type="number" step="0.01" min="0.01" required
+                       value="${initial.height != null ? initial.height : ''}"></td>
+            <td>
+                <select class="form-select form-select-sm js-unit" name="items[${i}][unit]">
+                    ${opts(UNITS, initial.unit || 'ft')}
+                </select>
+            </td>
+            <td>
+                <select class="form-select form-select-sm" name="items[${i}][colour]" required>
+                    ${opts(COLOURS, initial.colour || 'white')}
+                </select>
+            </td>
+            <td><input class="form-control form-control-sm js-qty" name="items[${i}][quantity]"
+                       type="number" step="1" min="1"
+                       value="${initial.quantity != null ? initial.quantity : 1}"></td>
+            <td class="text-end js-sqft text-muted small">0.00</td>
+            <td><input class="form-control form-control-sm js-rate" name="items[${i}][rate]"
+                       type="number" step="0.01" min="0" required
+                       value="${initial.rate != null ? initial.rate : ''}"></td>
+            <td class="text-end js-amount fw-bold">₹0</td>
+            <td><button type="button" class="btn btn-sm btn-outline-danger js-remove" title="Remove row">
+                <i class="bi bi-trash"></i>
+            </button></td>
+        `;
+        bodyEl.appendChild(tr);
+
+        // Hook up handlers
+        const ttSel  = tr.querySelector('.js-track-type');
+        const tsSel  = tr.querySelector('.js-track-system');
+        const wInp   = tr.querySelector('.js-w');
+        const hInp   = tr.querySelector('.js-h');
+        const uSel   = tr.querySelector('.js-unit');
+        const qtyInp = tr.querySelector('.js-qty');
+        const rateInp = tr.querySelector('.js-rate');
+        const sqftCell = tr.querySelector('.js-sqft');
+        const amtCell  = tr.querySelector('.js-amount');
+        const removeBtn = tr.querySelector('.js-remove');
+
+        function syncSubtype() {
+            const sub = subtypesFor(ttSel.value);
+            // Repopulate sub-type dropdown with the right list. Preserve
+            // the BD's current pick if it still belongs to the new set
+            // (e.g. switching swing → louvers shouldn't try to keep
+            // a sliding-only "2-track" selection).
+            const cur = sub.includes(tsSel.value) ? tsSel.value : (sub[0] || '');
+            tsSel.innerHTML = opts(sub, cur);
+            tsSel.disabled = sub.length === 0;
+            if (sub.length === 0) tsSel.value = '';
+        }
+        function syncSqftAndAmount() {
+            const q = parseFloat(qtyInp.value) || 0;
+            const r = parseFloat(rateInp.value) || 0;
+            const sqft = panelSqft(wInp.value, hInp.value, uSel.value);
+            sqftCell.textContent = sqft.toFixed(2);
+            amtCell.textContent = money(q * sqft * r);
+            recomputeTotals();
+        }
+        ttSel.addEventListener('change', syncSubtype);
+        [wInp, hInp, qtyInp, rateInp].forEach(el => el.addEventListener('input', syncSqftAndAmount));
+        uSel.addEventListener('change', syncSqftAndAmount);
+        removeBtn.addEventListener('click', () => {
+            tr.remove();
+            recomputeTotals();
+        });
+
+        // Initial sync
+        syncSubtype();
+        syncSqftAndAmount();
+    }
+
+    function recomputeTotals() {
+        let subtotal = 0;
+        let totalSqft = 0;   // qty-weighted across all openings — drives the "Total sqft" totals row
+        bodyEl.querySelectorAll('tr').forEach(tr => {
+            const q = parseFloat(tr.querySelector('.js-qty').value) || 0;
+            const r = parseFloat(tr.querySelector('.js-rate').value) || 0;
+            const w = parseFloat(tr.querySelector('.js-w').value) || 0;
+            const h = parseFloat(tr.querySelector('.js-h').value) || 0;
+            const u = tr.querySelector('.js-unit').value;
+            const sqft = panelSqft(w, h, u);
+            totalSqft += q * sqft;
+            subtotal += q * sqft * r;
+        });
+        totalSqftEl.textContent = totalSqft.toFixed(2);
+        const gstPct = parseFloat(gstInput.value) || 0;
+        const halfPct = (gstPct / 2).toFixed(2).replace(/\.?0+$/, '');
+        halfL1.textContent = `(${halfPct}%)`;
+        halfL2.textContent = `(${halfPct}%)`;
+        const cgst = subtotal * gstPct / 200;
+        const sgst = cgst;
+        const total = subtotal + cgst + sgst;
+        subEl.textContent   = money(subtotal);
+        cgstEl.textContent  = money(cgst);
+        sgstEl.textContent  = money(sgst);
+        grandEl.textContent = money(total);
+        const n = bodyEl.children.length;
+        countEl.textContent = `${n} opening${n === 1 ? '' : 's'}`;
+    }
+
+    addBtn.addEventListener('click', () => { buildRow(); });
+    gstInput.addEventListener('input', recomputeTotals);
+
+    // Seed rows
+    let initial = [];
+    try { initial = JSON.parse(document.getElementById('upvcInitialItems').textContent || '[]'); } catch(e) {}
+    if (initial.length === 0) {
+        buildRow();   // one starter row for new quotes
+    } else {
+        initial.forEach(buildRow);
+    }
+    recomputeTotals();
+})();
+</script>
+{% endblock %}

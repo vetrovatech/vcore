@@ -2,11 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies. `fonts-dejavu-core` ships DejaVuSans.ttf
+# + DejaVuSans-Bold.ttf into /usr/share/fonts — needed because the
+# default ReportLab Helvetica font has no rupee-symbol glyph (₹ renders
+# as a black square box). The tax-invoice PDF registers DejaVu at
+# import time and uses it for the total-row to print ₹ correctly.
 RUN apt-get update && apt-get install -y \
     gcc \
     libpq-dev \
     pkg-config \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install

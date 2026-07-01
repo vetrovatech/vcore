@@ -7,6 +7,13 @@ COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4@sha256:9c44f6379a923
 # Set working directory
 WORKDIR /app
 
+# Install DejaVu fonts so the tax-invoice PDF can render the ₹ glyph
+# (the default ReportLab Helvetica font lacks U+20B9 and renders it as
+# a missing-glyph square). Slim package, ~3MB.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends fonts-dejavu-core \
+ && rm -rf /var/lib/apt/lists/*
+
 # Copy requirements and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt gunicorn

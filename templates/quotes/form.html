@@ -57,11 +57,17 @@
                         <input type="email" class="form-control" name="customer_email"
                             value="{{ quote.customer_email if quote else '' }}">
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">GST Number</label>
+                    <div class="mb-3" id="customerGstWrap">
+                        <label class="form-label">GST Number <small class="text-muted">(B2B)</small></label>
                         <input type="text" class="form-control" name="customer_gst"
                             value="{{ quote.customer_gst if quote else '' }}" placeholder="e.g. 22AAAAA0000A1Z5"
                             maxlength="20">
+                    </div>
+                    <div class="mb-3" id="customerPanWrap">
+                        <label class="form-label">PAN <small class="text-muted">(B2C)</small></label>
+                        <input type="text" class="form-control" name="customer_pan"
+                            value="{{ quote.customer_pan if quote else '' }}" placeholder="e.g. ABCDE1234F"
+                            maxlength="15" style="text-transform:uppercase;">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Dispatch To</label>
@@ -771,6 +777,14 @@
 
     function applyMode(type) {
         const isB2C = (type === 'B2C');
+
+        // GST/PAN visibility — B2B shows GSTIN field, B2C shows PAN field.
+        // Mutually exclusive at the form level (BD can still paste either
+        // onto the tax invoice later if needed).
+        const gstWrap = document.getElementById('customerGstWrap');
+        const panWrap = document.getElementById('customerPanWrap');
+        if (gstWrap) gstWrap.style.display = isB2C ? 'none' : '';
+        if (panWrap) panWrap.style.display = isB2C ? ''     : 'none';
 
         document.getElementById('b2bItemsSection').style.display = isB2C ? 'none' : '';
         document.getElementById('b2cItemsSection').style.display = isB2C ? ''     : 'none';

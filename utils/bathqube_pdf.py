@@ -97,182 +97,438 @@ def _money_in_words(amount):
     return words + ' only'
 
 
+def _bq_parse_item_desc(desc):
+    """Parse a Bathqube line-item description back into structured pieces.
+
+    Item descriptions are seeded by `_bathqube_seed_items_from_config` as:
+        "{enc_name} — {type_label} ({spec}) · Panel {N}: {size_str} [{sqft} sq.ft @ ₹{rate}/sq.ft]"
+
+    We need three things for the grouped-enclosure layout:
+      - enc_name           — to group panels together under an enclosure header
+      - type_label + spec  — to render the enclosure header card
+      - panel_no, size_str — for the per-row description
+      - sqft, rate         — for the dedicated columns
+
+    For free-form extras (added by BD during revise — discounts,
+    installation lines, etc.) none of this matches; we return None for
+    the structured fields and the caller renders the row as a flat
+    extra at the end of the items table.
+    """
+    import re as _re
+    if not desc:
+        return None
+    # Enclosure header pattern: "<name> — <type_label>(?: (<spec>))? · Panel <N>: <size> [...sqft...]"
+    rx = _re.compile(
+        r'^(?P<enc>.+?) — (?P<type>.+?)(?: \((?P<spec>[^)]*)\))? · Panel (?P<panel>\d+): '
+        r'(?P<size>.+?) \[\s*(?P<sqft>[\d.,]+)\s*sq\.ft(?:\s*@\s*₹\s*(?P<rate>[\d.,]+)/sq\.ft)?\s*\]\s*$'
+    )
+    m = rx.match(desc)
+    if not m:
+        return None
+    return {
+        'enc_name':  m.group('enc').strip(),
+        'type_label': m.group('type').strip(),
+        'spec':      (m.group('spec') or '').strip(),
+        'panel_no':  int(m.group('panel')),
+        'size_str':  m.group('size').strip(),
+        'sqft':      float(m.group('sqft').replace(',', '')),
+        'rate':      float(m.group('rate').replace(',', '')) if m.group('rate') else None,
+    }
+
+
+def _bq_group_items_by_enclosure(items):
+    """Group BathqubeQuoteItem rows by enclosure, preserving order.
+
+    Returns: (groups, extras)
+      groups = [{ 'enc_name': str, 'type_label': str, 'spec': str,
+                  'items': [(it, parsed), ...], 'subtotal': float }, ...]
+      extras = [it, ...] — rows whose description didn't parse as a
+                            panel (BD-added free-form lines)
+    """
+    groups = []
+    extras = []
+    by_name = {}
+    for it in items:
+        parsed = _bq_parse_item_desc(it.description or '')
+        if parsed is None:
+            extras.append(it)
+            continue
+        key = parsed['enc_name']
+        if key not in by_name:
+            g = {
+                'enc_name':   parsed['enc_name'],
+                'type_label': parsed['type_label'],
+                'spec':       parsed['spec'],
+                'items':      [],
+                'subtotal':   0.0,
+            }
+            by_name[key] = g
+            groups.append(g)
+        by_name[key]['items'].append((it, parsed))
+        by_name[key]['subtotal'] += float(it.amount or 0)
+    return groups, extras
+
+
 def generate_bathqube_pdf(quote):
-    """Render revised estimate PDF, returns bytes."""
+    """Render the revised customer estimate PDF.
+
+    Layout mirrors the configurator-generated fresh quote
+    (`glassyplatform/src/lib/estimatePdf.tsx`) so customers see a
+    consistent document whether the bill came off the website or was
+    revised in vcore — header company block, big estimate badge, meta
+    strip, Bill To, subject line, enclosure-grouped items, totals with
+    amount in words, signature, then page 2 with notes / T&Cs / bank
+    details + UPI QR.
+
+    Calculation logic is NOT touched here — totals come from whatever
+    `_bathqube_recompute_totals` already wrote to the quote row (KAN-60
+    constraint).
+    """
     cfg = quote.config or {}
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
         leftMargin=18 * mm, rightMargin=18 * mm,
-        topMargin=18 * mm, bottomMargin=18 * mm,
+        topMargin=16 * mm, bottomMargin=16 * mm,
         title=f"Bathqube Revised Estimate {quote.estimate_number or quote.id}",
     )
 
     styles = getSampleStyleSheet()
-    h_brand = ParagraphStyle('brand', parent=styles['Heading1'], textColor=BRAND_BLUE,
-                             fontSize=22, leading=24, spaceAfter=2)
-    h_sub = ParagraphStyle('sub', parent=styles['Normal'], textColor=MUTED, fontSize=9)
+    h_brand   = ParagraphStyle('brand', parent=styles['Heading1'], textColor=BRAND_BLUE,
+                               fontSize=18, leading=20, spaceAfter=2)
+    h_sub     = ParagraphStyle('sub', parent=styles['Normal'], textColor=MUTED, fontSize=8.5, leading=11)
     h_section = ParagraphStyle('section', parent=styles['Heading3'], textColor=BRAND_BLUE,
                                fontSize=9, spaceBefore=14, spaceAfter=4,
                                textTransform='uppercase')
     body = ParagraphStyle('body', parent=styles['Normal'], fontSize=10, leading=14)
-    revised_tag = ParagraphStyle('tag', parent=styles['Normal'], textColor=ACCENT_AMBER,
-                                 fontSize=9, alignment=TA_RIGHT, backColor=colors.HexColor('#FEF3C7'))
+    revised_label = ParagraphStyle(
+        'rl', parent=styles['Normal'], textColor=ACCENT_AMBER,
+        fontSize=8.5, alignment=TA_RIGHT, fontName='Helvetica-Bold',
+    )
 
     story = []
 
-    # Header
-    header_data = [[
-        [Paragraph("<b>Bathqube</b>", h_brand),
-         Paragraph("Premium Shower Enclosures · Bengaluru, India", h_sub)],
-        [Paragraph("<b>REVISED ESTIMATE</b>", revised_tag),
-         Paragraph(f"<font size=12><b>{quote.estimate_number or ('BQ-' + str(quote.id))}</b></font>",
-                   ParagraphStyle('en', parent=styles['Normal'], alignment=TA_RIGHT)),
-         Paragraph(f"Issued {(quote.updated_at or quote.created_at).strftime('%d %b %Y')}",
-                   ParagraphStyle('iss', parent=h_sub, alignment=TA_RIGHT))],
-    ]]
-    header_tbl = Table(header_data, colWidths=[100 * mm, 70 * mm])
+    # ─── HEADER: company block | giant "REVISED ESTIMATE" badge ───
+    # Full company block (name + tagline + address + GSTIN + URL + phone)
+    # mirrors the fresh estimatePdf.tsx exactly.
+    company_para = ParagraphStyle('co', parent=h_sub, fontSize=8.5, leading=11.5)
+    header_left = [
+        Paragraph("<b>Bathqube</b>", h_brand),
+        Paragraph("Shower Enclosures &amp; Bathroom Fittings", company_para),
+        Paragraph("Bengaluru, Karnataka 560034, India", company_para),
+        Paragraph("GSTIN: 29AALCV4455A1Z7", company_para),
+        Paragraph("bathqube.com &nbsp;·&nbsp; +91 85500 11196", company_para),
+    ]
+    # Two-line giant badge so the "REVISED" qualifier reads clearly at
+    # the top-right (per BD: "still a revise quote, that tag should be
+    # shown") without losing the visual prominence of the fresh quote's
+    # 36pt ESTIMATE marque.
+    badge_style = ParagraphStyle(
+        'bdg', parent=styles['Normal'],
+        textColor=colors.HexColor('#0F4C81'),
+        fontSize=30, leading=32, alignment=TA_RIGHT, fontName='Helvetica-Bold',
+    )
+    sub_badge = ParagraphStyle(
+        'sbdg', parent=styles['Normal'],
+        textColor=ACCENT_AMBER, fontSize=10, alignment=TA_RIGHT,
+        fontName='Helvetica-Bold', spaceBefore=2,
+    )
+    header_right = [
+        Paragraph(
+            # Faded background-style "ESTIMATE" with opacity ~12% — using
+            # a light blue equivalent since ReportLab Paragraph can't take
+            # CSS opacity. Visual result is the same wash effect.
+            '<font color="#CFDDEA">Estimate</font>',
+            badge_style,
+        ),
+        Paragraph("REVISED", sub_badge),
+    ]
+    header_tbl = Table([[header_left, header_right]], colWidths=[100 * mm, 70 * mm])
     header_tbl.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('LINEBELOW', (0, 0), (-1, -1), 1.5, BRAND_BLUE),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
     ]))
     story.append(header_tbl)
 
-    # Customer
-    story.append(Paragraph("CUSTOMER", h_section))
-    cust = [
-        ['Name', quote.customer_name or '—'],
-        ['Phone', quote.phone or '—'],
-    ]
-    if quote.email: cust.append(['Email', quote.email])
-    if quote.pincode: cust.append(['Pincode', quote.pincode])
-    if quote.site_address: cust.append(['Site address', quote.site_address])
-    t = Table(cust, colWidths=[35 * mm, 130 * mm])
-    t.setStyle(TableStyle([
-        ('TEXTCOLOR', (0, 0), (0, -1), MUTED),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
+    # ─── META STRIP: estimate # | date | valid 15 days | place of supply ───
+    meta_label = ParagraphStyle('ml', parent=h_sub, fontSize=7,
+                                textColor=MUTED, textTransform='uppercase',
+                                leading=9)
+    meta_value = ParagraphStyle('mv', parent=body, fontSize=10,
+                                fontName='Helvetica-Bold', leading=12)
+    issued = (quote.updated_at or quote.created_at).strftime('%d %b %Y')
+    meta_cells = [[
+        [Paragraph("Estimate No.", meta_label),
+         Paragraph(quote.estimate_number or f'BQ-{quote.id}', meta_value)],
+        [Paragraph("Estimate Date", meta_label),
+         Paragraph(issued, meta_value)],
+        [Paragraph("Valid For", meta_label),
+         Paragraph("15 days", meta_value)],
+        [Paragraph("Place of Supply", meta_label),
+         Paragraph("Karnataka (29)", meta_value)],
+    ]]
+    meta_tbl = Table(meta_cells, colWidths=[42 * mm, 42 * mm, 42 * mm, 48 * mm])
+    meta_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F0F5FA')),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
     ]))
-    story.append(t)
+    story.append(Spacer(1, 12))
+    story.append(meta_tbl)
 
-    # Dimensions submitted — only for quotes that have a dimensionUnit on
-    # configData (post-feature). Legacy quotes skip this block so existing
-    # PDFs reissued for old quotes look unchanged. Always in the customer's
-    # original unit (NOT inches) so the PDF mirrors what they typed.
-    from utils.bathqube_dimensions import get_dimension_unit, format_enclosures_email
-    dim_unit = get_dimension_unit(cfg)
-    if dim_unit:
-        enclosures_for_dims = cfg.get('enclosures') or []
-        if enclosures_for_dims:
-            story.append(Paragraph(f"DIMENSIONS SUBMITTED ({dim_unit})", h_section))
-            dims_text = format_enclosures_email(enclosures_for_dims, dim_unit)
-            # Render line-by-line so each panel sits on its own row.
-            dims_body = ParagraphStyle('dimsbody', parent=body, fontSize=9, leading=12)
-            for line in dims_text.split('\n'):
-                # Replace leading spaces with non-breaking spaces so Paragraph
-                # preserves the indent on the "Panel N:" rows.
-                rendered = line.replace('   ', '&nbsp;&nbsp;&nbsp;')
-                story.append(Paragraph(rendered or '&nbsp;', dims_body))
+    # ─── BILL TO ───
+    bill_label = ParagraphStyle('bll', parent=h_sub, fontSize=7.5,
+                                textColor=MUTED, textTransform='uppercase',
+                                spaceBefore=14, spaceAfter=4, leading=9)
+    bill_name  = ParagraphStyle('bln', parent=styles['Normal'], fontSize=13,
+                                fontName='Helvetica-Bold', leading=15, spaceAfter=2)
+    bill_line  = ParagraphStyle('blr', parent=h_sub, fontSize=9, leading=12)
+    story.append(Paragraph("Bill To", bill_label))
+    story.append(Paragraph(quote.customer_name or '—', bill_name))
+    if quote.email:
+        story.append(Paragraph(f"Email: {quote.email}", bill_line))
+    story.append(Paragraph(f"Phone: {quote.phone or '—'}", bill_line))
+    if quote.site_address:
+        addr_full = quote.site_address + (f" — {quote.pincode}" if quote.pincode else '')
+        story.append(Paragraph(f"Address: {addr_full}", bill_line))
+    elif quote.pincode:
+        story.append(Paragraph(f"Pincode: {quote.pincode}", bill_line))
 
-    # Line items
-    story.append(Paragraph("ITEMS", h_section))
+    # ─── ITEMS (grouped by enclosure) ───
+    from utils.bathqube_dimensions import get_dimension_unit  # noqa
     items = list(quote.items) if quote.items else []
-    if items:
-        # KAN-45: column structure mirrors the original Bathqube estimate
-        # PDF — a dedicated Sq.ft column and a per-sqft Rate column.
-        # For seeded panel items, we parse the trailing "[N sq.ft @ ₹X/sq.ft]"
-        # bracket out of the description and surface those values in their
-        # own columns (cleaner than embedding them as a sub-line). For
-        # free-form extras (added by staff during revise — no bracket on
-        # their description) we show "—" in Sq.ft and use the stored rate
-        # as a per-unit number, matching the existing semantics.
-        import re as _re
-        SQFT_RX = _re.compile(r'^(.*?)\s*\[\s*([\d.,]+)\s*sq\.ft(?:\s*@\s*₹\s*([\d.,]+)/sq\.ft)?\s*\]\s*$')
-        # Header text uses no rupee glyph because the default Helvetica
-        # ReportLab uses for table cells lacks ₹ and renders it as a
-        # "missing glyph" box. The Amount column header makes the
-        # currency clear from context.
-        rows = [['Description', 'Sq.ft', 'Rate / sq.ft', 'Qty', 'Amount (INR)']]
-        for it in items:
-            desc_text = it.description or ''
-            match = SQFT_RX.search(desc_text)
-            if match:
-                main_desc = match.group(1)
-                sqft_val = match.group(2)
-                ppsft_val = match.group(3)  # may be None for legacy items
-                sqft_cell = sqft_val
-                rate_cell = f"{float(ppsft_val.replace(',', '')):,.0f}" if ppsft_val else '—'
-            else:
-                # Extras / legacy / free-form lines — no sqft block
-                main_desc = desc_text
-                sqft_cell = '—'
-                rate_cell = f"{float(it.rate):,.2f}"
-            rows.append([
-                Paragraph(main_desc, body),
-                sqft_cell,
-                rate_cell,
-                f"{float(it.quantity):g}",
-                f"{float(it.amount):,.2f}",
-            ])
-        items_tbl = Table(
-            rows,
-            colWidths=[80 * mm, 18 * mm, 22 * mm, 15 * mm, 30 * mm],
-            repeatRows=1,
+    groups, extras = _bq_group_items_by_enclosure(items)
+
+    # Compute subject-line stats
+    total_panels = sum(len(g['items']) for g in groups)
+    total_sqft   = sum(p['sqft'] for g in groups for (_it, p) in g['items'])
+
+    # Subject row — short summary of the bill in human terms
+    subj_label = ParagraphStyle('sjl', parent=h_sub, fontSize=9, textColor=MUTED)
+    subj_value = ParagraphStyle('sjv', parent=styles['Normal'], fontSize=9,
+                                fontName='Helvetica-Bold')
+    if groups:
+        subject_text = (
+            f"Shower Enclosure Estimate — {len(groups)} enclosure"
+            f"{'s' if len(groups) != 1 else ''}, "
+            f"{total_panels} panel{'s' if total_panels != 1 else ''}, "
+            f"{total_sqft:.2f} sq.ft total"
         )
-        items_style = [
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F9FAFB')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), MUTED),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
-            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('LINEBELOW', (0, 0), (-1, -1), 0.5, LIGHT_GREY),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ]
-        # Highlight discount/negative rows
-        for i, it in enumerate(items, start=1):
-            if float(it.amount or 0) < 0:
-                items_style.append(('TEXTCOLOR', (0, i), (-1, i), colors.HexColor('#B45309')))
-        items_tbl.setStyle(TableStyle(items_style))
-        story.append(items_tbl)
     else:
-        # No items yet (shouldn't happen post-revision) — fall back to config summary
+        subject_text = "Shower Enclosure Estimate — revised"
+    subj_tbl = Table([[
+        Paragraph("Subject:", subj_label),
+        Paragraph(subject_text, subj_value),
+    ]], colWidths=[20 * mm, 154 * mm])
+    subj_tbl.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LINEBELOW', (0, 0), (-1, -1), 1, colors.HexColor('#D8E4ED')),
+        ('TOPPADDING', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    story.append(subj_tbl)
+
+    # ─── ITEMS TABLE — enclosure-grouped (mirrors fresh layout) ───
+    desc_title = ParagraphStyle('dt', parent=body, fontSize=9.5,
+                                fontName='Helvetica-Bold', leading=12)
+    desc_line  = ParagraphStyle('dl', parent=body, fontSize=8.5,
+                                textColor=MUTED, leading=10.5)
+    grp_name   = ParagraphStyle('gn', parent=body, fontSize=10,
+                                fontName='Helvetica-Bold', textColor=BRAND_BLUE, leading=12)
+    grp_lbl    = ParagraphStyle('gl', parent=h_sub, fontSize=7,
+                                textColor=MUTED, textTransform='uppercase', leading=9)
+    grp_spec   = ParagraphStyle('gs', parent=h_sub, fontSize=8.5,
+                                textColor=MUTED, leading=11)
+
+    if groups:
+        # Header row only (groups are rendered as separate tables so
+        # the group-header card sits between rows visually).
+        col_widths = [10 * mm, 86 * mm, 18 * mm, 22 * mm, 38 * mm]
+        # Column header strip — own one-row table that sits above all groups
+        header_row = [['#', 'Item & Description', 'Sq ft', 'Rate', 'Amount (INR)']]
+        col_header_tbl = Table(header_row, colWidths=col_widths)
+        col_header_tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BRAND_BLUE),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+            ('ALIGN', (2, 0), (-1, 0), 'RIGHT'),
+            ('ALIGN', (1, 0), (1, 0), 'LEFT'),
+            ('TOPPADDING', (0, 0), (-1, 0), 7),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 7),
+            ('LEFTPADDING', (0, 0), (-1, 0), 10),
+            ('RIGHTPADDING', (0, 0), (-1, 0), 10),
+        ]))
+        story.append(Spacer(1, 12))
+        story.append(col_header_tbl)
+
+        global_idx = 0
+        for g_idx, g in enumerate(groups, start=1):
+            # Group header card (Enclosure N + name/type + spec line)
+            spec_line = g['spec'] or ''
+            grp_card = Table([[
+                [Paragraph(f"Enclosure {g_idx}", grp_lbl),
+                 Paragraph(f"{g['enc_name']} — {g['type_label']}", grp_name),
+                 Paragraph(spec_line, grp_spec) if spec_line else Paragraph('', grp_spec)],
+            ]], colWidths=[sum(col_widths)])
+            grp_card.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F0F5FA')),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+            ]))
+            story.append(grp_card)
+
+            # Panel rows
+            rows = []
+            for (it, p) in g['items']:
+                global_idx += 1
+                # Description column — bold title + muted material/spec/size lines
+                desc_block = [
+                    Paragraph(f"{g['type_label']} — Panel {p['panel_no']}", desc_title),
+                ]
+                if g['spec']:
+                    desc_block.append(Paragraph(g['spec'], desc_line))
+                desc_block.append(Paragraph(f"Size: {p['size_str']}", desc_line))
+
+                rate_cell = f"{p['rate']:,.0f}" if p['rate'] is not None else '—'
+                rows.append([
+                    str(global_idx),
+                    desc_block,
+                    f"{p['sqft']:.2f}",
+                    rate_cell,
+                    f"{float(it.amount or 0):,.2f}",
+                ])
+            panel_tbl = Table(rows, colWidths=col_widths)
+            panel_style = [
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+                ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+                ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('FONTNAME', (-1, 0), (-1, -1), 'Helvetica-Bold'),
+                ('LINEBELOW', (0, 0), (-1, -1), 0.5, LIGHT_GREY),
+                ('TEXTCOLOR', (0, 0), (0, -1), MUTED),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+            ]
+            # Alternating row tint, like the fresh PDF
+            for ri in range(0, len(rows), 2):
+                panel_style.append(
+                    ('BACKGROUND', (0, ri), (-1, ri), colors.HexColor('#FAFCFE'))
+                )
+            panel_tbl.setStyle(TableStyle(panel_style))
+            story.append(panel_tbl)
+
+            # Per-enclosure subtotal strip
+            sub_tbl = Table(
+                [['', Paragraph(f"<font color='#666'>Subtotal — {g['enc_name']}</font>",
+                                ParagraphStyle('grpsub', parent=body, fontSize=9, alignment=TA_RIGHT)),
+                  f"{g['subtotal']:,.2f}"]],
+                colWidths=[col_widths[0] + col_widths[1] + col_widths[2], col_widths[3], col_widths[4]],
+            )
+            sub_tbl.setStyle(TableStyle([
+                ('ALIGN', (-1, 0), (-1, 0), 'RIGHT'),
+                ('FONTNAME', (-1, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (-1, 0), (-1, 0), 9.5),
+                ('LINEABOVE', (1, 0), (-1, 0), 0.5, MUTED),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('LEFTPADDING', (0, 0), (-1, 0), 10),
+                ('RIGHTPADDING', (0, 0), (-1, 0), 10),
+            ]))
+            story.append(sub_tbl)
+
+        # Extras (BD-added free-form rows — installation, manual discount, etc.)
+        if extras:
+            ex_header = Table(
+                [[Paragraph("Additional charges", grp_lbl)]],
+                colWidths=[sum(col_widths)],
+            )
+            ex_header.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#FDF7E7')),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+            ]))
+            story.append(ex_header)
+
+            ex_rows = []
+            for it in extras:
+                global_idx += 1
+                ex_rows.append([
+                    str(global_idx),
+                    Paragraph(it.description or '', desc_title),
+                    '—',
+                    f"{float(it.rate or 0):,.2f}",
+                    f"{float(it.amount or 0):,.2f}",
+                ])
+            ex_tbl = Table(ex_rows, colWidths=col_widths)
+            ex_style = [
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+                ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('FONTNAME', (-1, 0), (-1, -1), 'Helvetica-Bold'),
+                ('LINEBELOW', (0, 0), (-1, -1), 0.5, LIGHT_GREY),
+                ('TEXTCOLOR', (0, 0), (0, -1), MUTED),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+            ]
+            # Highlight negative-amount rows (manual discount)
+            for ri, it in enumerate(extras):
+                if float(it.amount or 0) < 0:
+                    ex_style.append(('TEXTCOLOR', (0, ri), (-1, ri), colors.HexColor('#B45309')))
+            ex_tbl.setStyle(TableStyle(ex_style))
+            story.append(ex_tbl)
+    else:
+        # No items + no enclosures parsed — fall back to a single-line
+        # summary so the PDF still renders something meaningful for the
+        # rare legacy quote that has neither config data nor items.
         story.append(Paragraph(
             f"<b>{cfg.get('typeLabel') or 'Shower Enclosure'}</b> — "
             f"{cfg.get('materialLabel') or ''}, {cfg.get('thicknessLabel') or ''}, "
             f"{cfg.get('fittingLabel') or ''}", body))
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 6))
 
-    # Totals (right-aligned block) — discount applies BEFORE GST.
-    gst_half = (float(quote.gst_percentage or 18)) / 2
+    # ─── TOTALS BLOCK — right-aligned, mirrors fresh quote layout ───
+    # Calculation values are read straight off the quote row (already
+    # recomputed by _bathqube_recompute_totals). We do NOT recompute
+    # anything here — only present.
+    gst_half     = (float(quote.gst_percentage or 18)) / 2
     discount_pct = float(quote.discount_percent or 0)
     discount_amt = float(quote.discount_amount or 0)
-    totals_rows = [
-        ['Subtotal', _money(quote.subtotal)],
-    ]
+    subtotal     = float(quote.subtotal or 0)
+    taxable      = max(0.0, subtotal - discount_amt)
+
+    totals_rows = [['Sub Total', _money(subtotal)]]
     if discount_amt > 0:
         totals_rows.append([f'Discount ({discount_pct:g}%)', f'-{_money(discount_amt)}'])
-        taxable = max(0.0, float(quote.subtotal or 0) - discount_amt)
-        totals_rows.append(['Taxable', _money(taxable)])
+    totals_rows.append(['Total Taxable Amount', _money(taxable)])
     totals_rows += [
         [f'CGST ({gst_half:g}%)', _money(quote.cgst)],
         [f'SGST ({gst_half:g}%)', _money(quote.sgst)],
     ]
-    # The customer should see ONE clean total — not the history of revisions.
-    # When this bill has been revised, the revised_total IS the current total;
-    # we don't show what it used to be (that's in the internal audit log on the
-    # vcore view page).
-    final_total = quote.revised_total if (quote.has_revision and quote.revised_total is not None) else quote.total
-    totals_rows.append(['Total payable', _money(final_total)])
+    # Final total — when revised, revised_total IS the current total.
+    final_total = float(quote.revised_total or 0) if (quote.has_revision and quote.revised_total is not None) else float(quote.total or 0)
+    totals_rows.append(['Total', _money(final_total)])
     if quote.amount_received and float(quote.amount_received) > 0:
         totals_rows.append(['Received', _money(quote.amount_received)])
         totals_rows.append(['Balance payable', _money(quote.balance_payable)])
 
-    totals_tbl = Table(totals_rows, colWidths=[40 * mm, 40 * mm], hAlign='RIGHT')
+    totals_tbl = Table(totals_rows, colWidths=[44 * mm, 44 * mm], hAlign='RIGHT')
     style_cmds = [
         ('TEXTCOLOR', (0, 0), (0, -1), MUTED),
         ('FONTSIZE', (0, 0), (-1, -1), 10),
@@ -280,32 +536,73 @@ def generate_bathqube_pdf(quote):
         ('TOPPADDING', (0, 0), (-1, -1), 5),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
     ]
-    # Find special rows and emphasise
     for i, row in enumerate(totals_rows):
-        if row[0] == 'Total payable':
+        if row[0] == 'Total':
             style_cmds += [
-                ('TEXTCOLOR', (0, i), (-1, i), BRAND_BLUE),
+                ('BACKGROUND', (0, i), (-1, i), BRAND_BLUE),
+                ('TEXTCOLOR', (0, i), (-1, i), colors.white),
                 ('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'),
                 ('FONTSIZE', (0, i), (-1, i), 12),
-                ('LINEABOVE', (0, i), (-1, i), 1, colors.black),
+                ('TOPPADDING', (0, i), (-1, i), 8),
+                ('BOTTOMPADDING', (0, i), (-1, i), 8),
+                ('LEFTPADDING', (0, i), (-1, i), 10),
+                ('RIGHTPADDING', (0, i), (-1, i), 10),
             ]
-        if row[0] == 'Balance payable':
+        elif row[0] == 'Total Taxable Amount':
+            style_cmds += [
+                ('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'),
+                ('TEXTCOLOR', (0, i), (-1, i), colors.HexColor('#1A1A1A')),
+                ('LINEABOVE', (0, i), (-1, i), 0.5, LIGHT_GREY),
+            ]
+        elif row[0] == 'Balance payable':
             style_cmds += [
                 ('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'),
             ]
-        # Discount row — green tint so it's visually distinct (savings shown as positive thing)
-        if row[0].startswith('Discount '):
+        elif row[0].startswith('Discount '):
             style_cmds += [
                 ('TEXTCOLOR', (0, i), (-1, i), colors.HexColor('#065F46')),
                 ('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'),
             ]
     totals_tbl.setStyle(TableStyle(style_cmds))
+    story.append(Spacer(1, 8))
     story.append(totals_tbl)
 
-    # Footer
-    story.append(Spacer(1, 40))
+    # Amount in words — formatted like the fresh quote ("Rupees ... only")
+    story.append(Spacer(1, 8))
+    words = _money_in_words(final_total)
+    words_para = ParagraphStyle('words', parent=body, fontSize=9.5,
+                                fontName='Helvetica-Bold',
+                                textColor=colors.HexColor('#1A1A1A'))
+    words_lbl  = ParagraphStyle('wlbl', parent=h_sub, fontSize=8,
+                                textColor=MUTED, textTransform='uppercase')
+    story.append(Paragraph("Total in Words", words_lbl))
+    story.append(Paragraph(words, words_para))
+
+    # ─── Signature block (mirrors fresh quote layout) ───
+    story.append(Spacer(1, 26))
+    sig_label = ParagraphStyle('sgl', parent=h_sub, fontSize=8, textColor=MUTED)
+    sig_name  = ParagraphStyle('sgn', parent=body, fontSize=9,
+                               fontName='Helvetica-Bold',
+                               textColor=colors.HexColor('#1A1A1A'),
+                               alignment=TA_RIGHT)
+    sig_role  = ParagraphStyle('sgr', parent=h_sub, fontSize=8,
+                               textColor=MUTED, alignment=TA_RIGHT)
+    sig_tbl = Table([[
+        '',
+        [Paragraph("For Vetrova Tech Services Pvt Ltd", sig_role),
+         Spacer(1, 22),
+         Paragraph("Authorised Signatory", sig_name)],
+    ]], colWidths=[88 * mm, 86 * mm])
+    sig_tbl.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+    ]))
+    story.append(sig_tbl)
+
+    # Page-bottom validity strip
+    story.append(Spacer(1, 14))
     story.append(Paragraph(
-        "<font color='#9CA3AF' size='8'>Estimate validity: 30 days from issue · "
+        "<font color='#9CA3AF' size='8'>Estimate validity: 15 days from issue · "
         "For any questions WhatsApp +91 85500 11196</font>",
         styles['Normal'],
     ))

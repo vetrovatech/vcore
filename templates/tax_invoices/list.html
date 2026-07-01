@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Tax Invoices{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="mb-1"><i class="bi bi-receipt"></i> Tax Invoices</h2>
+        <span class="text-muted small">GST invoices issued by Vetrova Tech Services. Sequential numbering per FY.</span>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('tax_invoice_list') }}" class="row g-3">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="search"
+                       placeholder="Search invoice # or buyer name"
+                       value="{{ search }}">
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" name="status">
+                    <option value="">All statuses</option>
+                    <option value="draft" {% if status_filter=='draft' %}selected{% endif %}>Draft</option>
+                    <option value="issued" {% if status_filter=='issued' %}selected{% endif %}>Issued</option>
+                    <option value="cancelled" {% if status_filter=='cancelled' %}selected{% endif %}>Cancelled</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <input type="text" class="form-control" name="fy" placeholder="FY e.g. 2627"
+                       value="{{ fy_filter }}">
+            </div>
+            <div class="col-md-2 d-flex gap-2">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Filter</button>
+                <a href="{{ url_for('tax_invoice_list') }}" class="btn btn-outline-secondary">Clear</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if invoices %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Invoice #</th>
+                        <th>Date</th>
+                        <th>Buyer</th>
+                        <th>Source</th>
+                        <th class="text-end">Subtotal</th>
+                        <th class="text-end">Total</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for inv in invoices %}
+                    <tr>
+                        <td><strong>{{ inv.invoice_number }}</strong></td>
+                        <td>{{ inv.invoice_date.strftime('%d %b %Y') if inv.invoice_date else '—' }}</td>
+                        <td>{{ inv.buyer_name }}</td>
+                        <td class="small text-muted">
+                            {% if inv.bathqube_quote_id %}Bathqube #{{ inv.bathqube_quote_id }}
+                            {% elif inv.upvc_quote_id %}UPVC #{{ inv.upvc_quote_id }}
+                            {% elif inv.lead_quote_id %}Lead #{{ inv.lead_quote_id }}
+                            {% else %}—{% endif %}
+                        </td>
+                        <td class="text-end">₹{{ '{:,.2f}'.format(inv.subtotal or 0) }}</td>
+                        <td class="text-end"><strong>₹{{ '{:,.2f}'.format(inv.total or 0) }}</strong></td>
+                        <td>
+                            {% if inv.status == 'draft' %}<span class="badge bg-warning text-dark">Draft</span>
+                            {% elif inv.status == 'issued' %}<span class="badge bg-success">Issued</span>
+                            {% elif inv.status == 'cancelled' %}<span class="badge bg-secondary">Cancelled</span>
+                            {% endif %}
+                        </td>
+                        <td class="d-flex gap-1">
+                            <a href="{{ url_for('tax_invoice_view', id=inv.id) }}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                            <a href="{{ url_for('tax_invoice_pdf', id=inv.id) }}" target="_blank"
+                               class="btn btn-sm btn-outline-secondary" title="Download PDF">
+                                <i class="bi bi-file-earmark-pdf"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted text-center my-4">No tax invoices yet. Generate one from a Closed-Won Bathqube or UPVC quote.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

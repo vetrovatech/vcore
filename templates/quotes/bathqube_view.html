@@ -37,6 +37,19 @@
             </div>
             <div class="card-body">
                 <div class="row g-2">
+                    {% if quote.stage == 'draft' %}
+                    {# Draft-only: BD-created quote needs to be sent before going through the regular pipeline. #}
+                    <div class="col-md-12">
+                        <form method="POST" action="{{ url_for('bathqube_send_draft', id=quote.id) }}"
+                              onsubmit="return confirm('Email this estimate PDF to {{ quote.email or quote.customer_name }} now? This also moves the quote out of Draft to Quote Generated.');">
+                            <button type="submit" class="btn btn-success w-100 text-start"
+                                    {% if not quote.email %}disabled title="Add an email on this quote first (via Revise) to enable Send."{% endif %}>
+                                <i class="bi bi-envelope-paper"></i> <strong>Send to customer &amp; flip to Quote Generated</strong>
+                                <div class="small">{% if quote.email %}Emails PDF to {{ quote.email }}.{% else %}Add email via Revise first.{% endif %}</div>
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
                     <!-- Revise (only stage transition that sends a customer email) -->
                     <div class="col-md-12">
                         <a href="{{ url_for('bathqube_quote_revise', id=quote.id) }}"
@@ -81,11 +94,27 @@
                         </form>
                     </div>
                     {% if quote.stage == 'closed_won' %}
-                    <div class="col-md-12">
+                    <div class="col-md-6">
                         <a href="{{ url_for('tally_index') }}" class="btn btn-outline-dark w-100 text-start">
                             <i class="bi bi-calculator"></i> <strong>View in Tally</strong>
                             <div class="small text-muted">Track delivery, supplier costs, payments, and profit.</div>
                         </a>
+                    </div>
+                    <div class="col-md-6">
+                        <form method="POST" action="{{ url_for('bathqube_tax_invoice_new', id=quote.id) }}">
+                            <button type="submit" class="btn btn-outline-success w-100 text-start">
+                                <i class="bi bi-receipt"></i> <strong>Generate Tax Invoice</strong>
+                                <div class="small text-muted">Draft GST invoice. BD reviews + issues.</div>
+                            </button>
+                        </form>
+                    </div>
+                    <div class="col-md-6">
+                        <form method="POST" action="{{ url_for('bathqube_gate_pass_new', id=quote.id) }}">
+                            <button type="submit" class="btn btn-outline-dark w-100 text-start">
+                                <i class="bi bi-truck"></i> <strong>Generate Gate Pass</strong>
+                                <div class="small text-muted">Dispatch / packing slip for material leaving the factory.</div>
+                            </button>
+                        </form>
                     </div>
 
                     {# ─── Workshop Work Order — printable cutting sheet ─── #}

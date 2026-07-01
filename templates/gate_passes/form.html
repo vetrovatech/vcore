@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ gp.gp_number }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h3 class="mb-1"><i class="bi bi-pencil-square"></i> {{ gp.gp_number }}</h3>
+        <div class="small text-muted">
+            Status:
+            {% if gp.status == 'draft' %}<span class="badge bg-warning text-dark">Draft (qty editable)</span>
+            {% elif gp.status == 'issued' %}<span class="badge bg-success">Issued — only logistics fields are editable</span>
+            {% endif %}
+        </div>
+    </div>
+    <a href="{{ url_for('gate_pass_view', id=gp.id) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back
+    </a>
+</div>
+
+<form method="POST" action="{{ url_for('gate_pass_edit', id=gp.id) }}">
+    {% set is_draft = (gp.status == 'draft') %}
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header">Customer</div>
+                <div class="card-body">
+                    <div class="mb-2">
+                        <label class="form-label small">Customer Name</label>
+                        <input type="text" class="form-control" name="customer_name"
+                               value="{{ gp.customer_name }}" {% if not is_draft %}readonly{% endif %}>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small">Delivery Address</label>
+                        <textarea class="form-control" name="delivery_address" rows="2"
+                                  {% if not is_draft %}readonly{% endif %}>{{ gp.delivery_address or '' }}</textarea>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label small">Customer GSTIN</label>
+                            <input type="text" class="form-control" name="customer_gstin"
+                                   value="{{ gp.customer_gstin or '' }}" {% if not is_draft %}readonly{% endif %}>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">GP Date</label>
+                            <input type="date" class="form-control" name="gp_date"
+                                   value="{{ gp.gp_date.strftime('%Y-%m-%d') if gp.gp_date else '' }}"
+                                   {% if not is_draft %}readonly{% endif %}>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small">Reference Invoice No</label>
+                            <input type="text" class="form-control" name="ref_invoice_no"
+                                   value="{{ gp.ref_invoice_no or '' }}" {% if not is_draft %}readonly{% endif %}
+                                   placeholder="e.g. VTS/2627/0001">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header">Logistics <span class="small text-muted">(editable in any state)</span></div>
+                <div class="card-body">
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label small">Vehicle No</label>
+                            <input type="text" class="form-control" name="vehicle_no" value="{{ gp.vehicle_no or '' }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Transporter</label>
+                            <input type="text" class="form-control" name="transporter_name" value="{{ gp.transporter_name or '' }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Driver Name</label>
+                            <input type="text" class="form-control" name="driver_name" value="{{ gp.driver_name or '' }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Driver Phone</label>
+                            <input type="text" class="form-control" name="driver_phone" value="{{ gp.driver_phone or '' }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">LR Number</label>
+                            <input type="text" class="form-control" name="lr_number" value="{{ gp.lr_number or '' }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">e-Way Bill No</label>
+                            <input type="text" class="form-control" name="eway_bill_no" value="{{ gp.eway_bill_no or '' }}">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small">Place of Supply</label>
+                            <input type="text" class="form-control" name="place_of_supply" value="{{ gp.place_of_supply or '' }}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Line items</strong>
+            {% if is_draft %}
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addRow()">
+                <i class="bi bi-plus-circle"></i> Add Row
+            </button>
+            {% endif %}
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm mb-0" id="gpItemsTable">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:40px">#</th>
+                            <th>Description</th>
+                            <th style="width:100px" class="text-end">Width (mm)</th>
+                            <th style="width:100px" class="text-end">Height (mm)</th>
+                            <th style="width:90px" class="text-end">Qty</th>
+                            {% if is_draft %}<th style="width:34px"></th>{% endif %}
+                        </tr>
+                    </thead>
+                    <tbody id="gpItemsBody">
+                        {% for it in gp.items %}
+                        <tr data-idx="{{ loop.index0 }}">
+                            <td class="text-center text-muted small">{{ loop.index }}</td>
+                            <td><input type="text" class="form-control form-control-sm" name="item_{{ loop.index0 }}_material" value="{{ it.material_spec or '' }}" {% if not is_draft %}readonly{% endif %}></td>
+                            <td><input type="number" step="0.01" class="form-control form-control-sm text-end" name="item_{{ loop.index0 }}_width_mm" value="{{ '%g'|format(it.width_mm) if it.width_mm else '' }}" {% if not is_draft %}readonly{% endif %} placeholder="—"></td>
+                            <td><input type="number" step="0.01" class="form-control form-control-sm text-end" name="item_{{ loop.index0 }}_height_mm" value="{{ '%g'|format(it.height_mm) if it.height_mm else '' }}" {% if not is_draft %}readonly{% endif %} placeholder="—"></td>
+                            <td><input type="number" step="0.01" class="form-control form-control-sm text-end qty-input" name="item_{{ loop.index0 }}_qty_now" value="{{ '%g'|format(it.qty_this_pass) }}" {% if not is_draft %}readonly{% endif %}></td>
+                            {# Schema fields preserved — kept hidden so a future "glass-cutter slip" can resurface them without a migration #}
+                            <input type="hidden" name="item_{{ loop.index0 }}_qty_ordered" value="{{ '%g'|format(it.qty_ordered) }}">
+                            <input type="hidden" name="item_{{ loop.index0 }}_qty_before" value="{{ '%g'|format(it.qty_dispatched_before) }}">
+                            <input type="hidden" name="item_{{ loop.index0 }}_work_order" value="{{ it.work_order_no or '' }}">
+                            <input type="hidden" name="item_{{ loop.index0 }}_ref_code" value="{{ it.ref_code or '' }}">
+                            <input type="hidden" name="item_{{ loop.index0 }}_remarks" value="{{ it.remarks or '' }}">
+                            <input type="hidden" name="item_{{ loop.index0 }}_id" value="{{ it.id }}">
+                            <input type="hidden" name="item_{{ loop.index0 }}_present" value="1">
+                            {% if is_draft %}
+                            <td class="text-center">
+                                <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="this.closest('tr').remove()" title="Remove row">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-success">
+                        <tr>
+                            <td colspan="4" class="text-end"><strong>TOTAL ITEMS LEAVING GODOWN</strong></td>
+                            <td class="text-end"><strong id="gpTotalQty" style="font-size:1.1em">0</strong></td>
+                            {% if is_draft %}<td></td>{% endif %}
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header">Remarks</div>
+        <div class="card-body">
+            <textarea class="form-control" name="remarks" rows="2" placeholder="Internal remarks, special instructions, etc.">{{ gp.remarks or '' }}</textarea>
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-end gap-2">
+        <a href="{{ url_for('gate_pass_view', id=gp.id) }}" class="btn btn-outline-secondary">Cancel</a>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check2"></i> Save</button>
+    </div>
+</form>
+
+<script>
+function bindQtyTotaller() {
+    document.querySelectorAll('.qty-input').forEach(input => {
+        input.removeEventListener('input', updateTotal);
+        input.addEventListener('input', updateTotal);
+    });
+    updateTotal();
+}
+function updateTotal() {
+    let sum = 0;
+    document.querySelectorAll('.qty-input').forEach(i => {
+        const v = parseFloat(i.value || '0');
+        if (!isNaN(v)) sum += v;
+    });
+    const el = document.getElementById('gpTotalQty');
+    if (el) el.textContent = (Math.round(sum * 100) / 100).toString();
+}
+document.addEventListener('DOMContentLoaded', bindQtyTotaller);
+</script>
+
+{% if gp.status == 'draft' %}
+<script>
+let nextIdx = {{ gp.items|length }};
+
+function addRow() {
+    const tbody = document.getElementById('gpItemsBody');
+    const idx = nextIdx++;
+    const tr = document.createElement('tr');
+    tr.setAttribute('data-idx', idx);
+    tr.innerHTML = `
+        <td class="text-center text-muted small">${tbody.children.length + 1}</td>
+        <td><input type="text" class="form-control form-control-sm" name="item_${idx}_material"></td>
+        <td><input type="number" step="0.01" class="form-control form-control-sm text-end" name="item_${idx}_width_mm" placeholder="—"></td>
+        <td><input type="number" step="0.01" class="form-control form-control-sm text-end" name="item_${idx}_height_mm" placeholder="—"></td>
+        <td><input type="number" step="0.01" class="form-control form-control-sm text-end qty-input" name="item_${idx}_qty_now" value="0"></td>
+        <input type="hidden" name="item_${idx}_id" value="">
+        <input type="hidden" name="item_${idx}_present" value="1">
+        <input type="hidden" name="item_${idx}_qty_ordered" value="0">
+        <input type="hidden" name="item_${idx}_qty_before" value="0">
+        <input type="hidden" name="item_${idx}_work_order" value="">
+        <input type="hidden" name="item_${idx}_ref_code" value="">
+        <input type="hidden" name="item_${idx}_remarks" value="">
+        <td class="text-center">
+            <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="this.closest('tr').remove()">
+                <i class="bi bi-x-circle"></i>
+            </button>
+        </td>
+    `;
+    tbody.appendChild(tr);
+    bindQtyTotaller();
+}
+</script>
+{% endif %}
+{% endblock %}

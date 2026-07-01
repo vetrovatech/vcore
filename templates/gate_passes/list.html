@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Gate Passes{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="mb-1"><i class="bi bi-truck"></i> Gate Passes</h2>
+        <span class="text-muted small">Dispatch / packing slips. Tracks material physically leaving the factory.</span>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('gate_pass_list') }}" class="row g-3">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="search"
+                       placeholder="Search GP #, customer or vehicle"
+                       value="{{ search }}">
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" name="status">
+                    <option value="">All statuses</option>
+                    <option value="draft" {% if status_filter=='draft' %}selected{% endif %}>Draft</option>
+                    <option value="issued" {% if status_filter=='issued' %}selected{% endif %}>Issued</option>
+                    <option value="cancelled" {% if status_filter=='cancelled' %}selected{% endif %}>Cancelled</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <input type="text" class="form-control" name="fy" placeholder="FY e.g. 2627"
+                       value="{{ fy_filter }}">
+            </div>
+            <div class="col-md-2 d-flex gap-2">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Filter</button>
+                <a href="{{ url_for('gate_pass_list') }}" class="btn btn-outline-secondary">Clear</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if gate_passes %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>GP #</th>
+                        <th>Date</th>
+                        <th>Customer</th>
+                        <th>Source</th>
+                        <th>Vehicle</th>
+                        <th class="text-end">Qty</th>
+                        <th class="text-end">Sq.Mt</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for gp in gate_passes %}
+                    <tr>
+                        <td><strong>{{ gp.gp_number }}</strong></td>
+                        <td>{{ gp.gp_date.strftime('%d %b %Y') if gp.gp_date else '—' }}</td>
+                        <td>{{ gp.customer_name }}</td>
+                        <td class="small text-muted">{{ gp.source_label }}</td>
+                        <td class="small">{{ gp.vehicle_no or '—' }}</td>
+                        <td class="text-end">{{ '%.0f'|format(gp.total_qty) }}</td>
+                        <td class="text-end">{{ '%.3f'|format(gp.total_sqm) }}</td>
+                        <td>
+                            {% if gp.status == 'draft' %}<span class="badge bg-warning text-dark">Draft</span>
+                            {% elif gp.status == 'issued' %}<span class="badge bg-success">Issued</span>
+                            {% elif gp.status == 'cancelled' %}<span class="badge bg-secondary">Cancelled</span>
+                            {% endif %}
+                        </td>
+                        <td class="d-flex gap-1">
+                            <a href="{{ url_for('gate_pass_view', id=gp.id) }}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                            <a href="{{ url_for('gate_pass_pdf', id=gp.id) }}" target="_blank"
+                               class="btn btn-sm btn-outline-secondary" title="Download PDF">
+                                <i class="bi bi-file-earmark-pdf"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted text-center my-4">No gate passes yet. Raise one from a Tax Invoice or Closed-Won quote.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
