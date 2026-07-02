@@ -6294,7 +6294,8 @@ def _next_pi_serial():
 @app.route('/tally')
 @login_required
 def tally_index():
-    from models import Quote, PurchaseInvoice, Supplier, User as UserModel, BathqubeQuote
+    from models import (Quote, PurchaseInvoice, Supplier, User as UserModel,
+                        BathqubeQuote, TaxInvoice, GatePass, GatePassItem)
 
     date_from       = request.args.get('date_from', '')
     date_to         = request.args.get('date_to', '')
@@ -6302,6 +6303,21 @@ def tally_index():
     client_name     = request.args.get('client_name', '').strip()
     supplier_id     = request.args.get('supplier_id', '')
     delivery_status = request.args.get('delivery_status', '')
+    # Phase 1 tally filters (manager brief):
+    #   payment_status — Pending / Partial / Received  (derived from amounts)
+    #   dispatch_state — None / Partial / Complete     (from GatePass sums)
+    #   tax_invoice    — not_raised / draft / issued   (from TaxInvoice.status)
+    #   overdue        — '1' to show only overdue rows
+    # All four are applied post-aggregation in Python (derived fields aren't
+    # cheap to push into SQL without extra joins/subqueries; row count is
+    # capped by date+source filters so O(n) Python scan is fine).
+    payment_status  = request.args.get('payment_status', '')
+    dispatch_state  = request.args.get('dispatch_state', '')
+    tax_invoice     = request.args.get('tax_invoice', '')
+    overdue_only    = request.args.get('overdue', '') == '1'
+    # A row is "overdue" when it was accepted more than OVERDUE_DAYS ago
+    # and still has pending payment OR pending delivery.
+    OVERDUE_DAYS = 15
     # One-click source toggle — '' = all, 'bathqube' = Bathqube only,
     # 'regular' = everything except Bathqube. Used by the segmented button
     # group at the top of tally/index.html.
@@ -6417,12 +6433,96 @@ def tally_index():
             **display,
         }
 
+    # ── Batch-load derived state per source (single query each) ──────────
+    # dispatch_state depends on issued GatePassItems summed per source item,
+    # then compared to source items' ordered qty. Cheap enough at tally
+    # granularity to compute per-request without caching.
+    def _dispatch_state_for(source_kind, source_id, ordered_qty_total):
+        """Return one of: 'none' | 'partial' | 'complete'"""
+        if ordered_qty_total <= 0:
+            return 'none'
+        # Sum qty_this_pass across all issued gate passes for this source.
+        # We match through GatePass's polymorphic FK columns (only one set).
+        col = {
+            'regular':  GatePass.lead_quote_id,
+            'bathqube': GatePass.bathqube_quote_id,
+        }[source_kind]
+        total_disp = (db.session.query(db.func.coalesce(db.func.sum(GatePassItem.qty_this_pass), 0))
+                        .join(GatePass, GatePassItem.gate_pass_id == GatePass.id)
+                        .filter(col == source_id, GatePass.status == 'issued')
+                        .scalar() or 0)
+        total_disp = float(total_disp)
+        if total_disp <= 0:
+            return 'none'
+        if total_disp >= ordered_qty_total - 0.001:  # small epsilon for float compare
+            return 'complete'
+        return 'partial'
+
+    def _tax_invoice_state_for(source_kind, source_id):
+        """Return one of: 'not_raised' | 'draft' | 'issued'
+        (cancelled invoices don't count — treat source as 'not_raised' again)."""
+        col = {
+            'regular':  TaxInvoice.lead_quote_id,
+            'bathqube': TaxInvoice.bathqube_quote_id,
+        }[source_kind]
+        # Prefer 'issued' if any; else 'draft' if any; else 'not_raised'.
+        found = (TaxInvoice.query
+                    .filter(col == source_id, TaxInvoice.status != 'cancelled')
+                    .with_entities(TaxInvoice.status)
+                    .all())
+        if not found:
+            return 'not_raised'
+        statuses = {s[0] for s in found}
+        if 'issued' in statuses:
+            return 'issued'
+        return 'draft'
+
+    def _ordered_qty_for(source_kind, quote_obj):
+        """Total qty across non-extra source lines. Used for dispatch %."""
+        if source_kind == 'regular':
+            return sum(float(i.quantity or 0) for i in (quote_obj.items or [])
+                       if not getattr(i, 'is_group', False))
+        # bathqube
+        return sum(float(i.quantity or 0) for i in (quote_obj.items or [])
+                   if not getattr(i, 'is_extra', False))
+
+    from datetime import date as _date
+    today = _date.today()
+
+    def _enrich(row, quote_obj, source_kind):
+        """Add phase-1 derived fields onto a row dict in place."""
+        ordered = _ordered_qty_for(source_kind, quote_obj)
+        row['dispatch_state']    = _dispatch_state_for(source_kind, quote_obj.id, ordered)
+        row['tax_invoice_state'] = _tax_invoice_state_for(source_kind, quote_obj.id)
+        # Payment status: normalise to lowercase for the filter — regular Quote
+        # yields 'Pending'/'Partial'/'Received', Bathqube 'Paid'/'Partial'/'Unpaid'.
+        cps = (row.get('client_payment_status') or '').lower()
+        if cps in ('received', 'paid'):
+            row['payment_state'] = 'received'
+        elif cps == 'partial':
+            row['payment_state'] = 'partial'
+        else:
+            row['payment_state'] = 'pending'
+        # Overdue: accepted more than N days ago AND (payment still pending
+        # OR delivery still pending). Uses sort_date (quote_date or created_at).
+        sd = row.get('sort_date')
+        days_old = (today - sd).days if sd else 0
+        row['days_since_sale'] = days_old
+        row['is_overdue'] = (
+            days_old > OVERDUE_DAYS and (
+                row['payment_state'] in ('pending', 'partial') or
+                row['delivery_status'] != 'Delivered'
+            )
+        )
+
     rows = []
     for quote in quotes:
         pis = PurchaseInvoice.query.filter_by(quote_id=quote.id).all()
         if supplier_id and not any(str(pi.supplier_id) == supplier_id for pi in pis):
             continue
-        rows.append(_row_from(quote, pis, 'regular', quote.quote_date))
+        row = _row_from(quote, pis, 'regular', quote.quote_date)
+        _enrich(row, quote, 'regular')
+        rows.append(row)
 
     # ── Bathqube quote rows (stage='closed_won') ──────────────────────────────
     bq = BathqubeQuote.query.filter(BathqubeQuote.stage == 'closed_won')
@@ -6444,7 +6544,19 @@ def tally_index():
         pis = PurchaseInvoice.query.filter_by(bathqube_quote_id=quote.id).all()
         if supplier_id and not any(str(pi.supplier_id) == supplier_id for pi in pis):
             continue
-        rows.append(_row_from(quote, pis, 'bathqube', quote.created_at.date()))
+        row = _row_from(quote, pis, 'bathqube', quote.created_at.date())
+        _enrich(row, quote, 'bathqube')
+        rows.append(row)
+
+    # ── Phase-1 post-filters (payment / dispatch / tax invoice / overdue) ──
+    if payment_status:
+        rows = [r for r in rows if r['payment_state'] == payment_status]
+    if dispatch_state:
+        rows = [r for r in rows if r['dispatch_state'] == dispatch_state]
+    if tax_invoice:
+        rows = [r for r in rows if r['tax_invoice_state'] == tax_invoice]
+    if overdue_only:
+        rows = [r for r in rows if r['is_overdue']]
 
     # Sort the combined list by date desc so newest are on top regardless of source.
     rows.sort(key=lambda r: r['sort_date'], reverse=True)
@@ -6474,6 +6586,10 @@ def tally_index():
         'client_name':     client_name,
         'supplier_id':     supplier_id,
         'delivery_status': delivery_status,
+        'payment_status':  payment_status,
+        'dispatch_state':  dispatch_state,
+        'tax_invoice':     tax_invoice,
+        'overdue':         '1' if overdue_only else '',
         'source':          source_filter,
     }
 
@@ -7796,6 +7912,133 @@ def bathqube_quote_create():
         'success',
     )
     return redirect(url_for('bathqube_quote_view', id=quote.id))
+
+
+@app.route('/quotes/bathqube/<int:id>/send-first-quote', methods=['POST'])
+@login_required
+def bathqube_send_first_quote(id):
+    """WhatsApp the customer the initial estimate PDF using the approved
+    utility template 'first_qoute'. BD hits this the moment a fresh
+    Bathqube quote lands from the configurator to acknowledge the enquiry
+    and hand over a formatted estimate they can share/reply to.
+
+    Flow:
+      1. Render the current customer-facing estimate PDF
+      2. Upload it to Meta's media store, get a media_id
+      3. Send the template referencing that media_id in the header slot
+      4. Log the send + wamid to WhatsAppMessage (webhook updates status
+         from sent → delivered → read as it moves through Meta)
+
+    Retries: if Meta rejects with a parameter-structure error we retry
+    the send WITHOUT body variables — covers the case where BD
+    provisions 'first_qoute' with no {{1}} placeholder.
+    """
+    from models import BathqubeQuote, WhatsAppMessage
+    from utils.whatsapp import (upload_media, send_template, send_document,
+                                normalize_phone)
+    from utils.bathqube_pdf import generate_bathqube_pdf
+
+    quote = BathqubeQuote.query.get_or_404(id)
+    if not quote.phone:
+        return jsonify({'success': False, 'error': 'Quote has no customer phone'}), 400
+
+    # 1) Generate the customer estimate PDF
+    try:
+        pdf_bytes = generate_bathqube_pdf(quote)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'PDF render failed: {e}'}), 500
+
+    filename = f'{quote.estimate_number or ("Bathqube-Q" + str(quote.id))}.pdf'
+
+    # 2) Upload to Meta media store (media_id valid ~30 days)
+    upload = upload_media(pdf_bytes, filename=filename, mime_type='application/pdf')
+    if not upload.get('success'):
+        return jsonify({'success': False, 'error': f'Media upload failed: {upload.get("error")}'}), 502
+    media_id = upload['media_id']
+
+    # 3) Template body has TWO placeholders (approved on Meta):
+    #    {{1}} = customer first name
+    #    {{2}} = quote / estimate number (falls back to internal id when
+    #            the configurator hasn't assigned a BSP- number yet)
+    # The header is a TEXT header ("Document (PDF)"), NOT a document header —
+    # so we DON'T pass a document parameter to the template. Instead the
+    # PDF ships as a follow-up document message right after the template.
+    first_name = (quote.customer_name or 'there').strip().split()[0]
+    quote_ref  = quote.estimate_number or f'BQ-{quote.id}'
+    body_variables = [first_name, quote_ref]
+
+    to_number = normalize_phone(quote.phone) or quote.phone
+
+    # Log the template send attempt first (so any exception below leaves
+    # an audit trail).
+    msg_tpl = WhatsAppMessage(
+        lead_id=None,
+        to_number=to_number,
+        template_name='first_qoute',
+        language='en',
+        variables_json=json.dumps(body_variables),
+        sent_by=current_user.id,
+        status='queued',
+    )
+    db.session.add(msg_tpl)
+    db.session.flush()
+
+    # 4) Send the template (body-only — Meta's TEXT header takes no params)
+    tpl_result = send_template(
+        to=quote.phone,
+        template_name='first_qoute',
+        language='en',
+        variables=body_variables,
+    )
+
+    if not tpl_result.get('success'):
+        msg_tpl.status = 'failed'
+        msg_tpl.error_message = tpl_result.get('error', 'Unknown error')
+        db.session.commit()
+        return jsonify({'success': False,
+                        'stage': 'template',
+                        'error': msg_tpl.error_message}), 502
+
+    msg_tpl.status = 'sent'
+    msg_tpl.wamid = tpl_result.get('wamid')
+
+    # 5) Follow up with the PDF as a plain document message
+    doc_result = send_document(
+        to=quote.phone,
+        media_id=media_id,
+        filename=filename,
+        caption=f'Estimate {quote_ref}',
+    )
+    msg_doc = WhatsAppMessage(
+        lead_id=None,
+        to_number=to_number,
+        template_name='document:first_qoute',  # not a template — audit label
+        language='en',
+        variables_json=json.dumps({'filename': filename, 'media_id': media_id}),
+        sent_by=current_user.id,
+        status=('sent' if doc_result.get('success') else 'failed'),
+        wamid=doc_result.get('wamid'),
+        error_message=(None if doc_result.get('success') else doc_result.get('error')),
+    )
+    db.session.add(msg_doc)
+    db.session.commit()
+
+    if not doc_result.get('success'):
+        # Template landed but attachment didn't — half success. Let BD
+        # know so they can retry or send the PDF manually.
+        return jsonify({
+            'success': False,
+            'stage': 'document',
+            'template_wamid': msg_tpl.wamid,
+            'error': f'Template sent, but PDF attachment failed: {doc_result.get("error")}',
+        }), 502
+
+    return jsonify({
+        'success': True,
+        'template_wamid': msg_tpl.wamid,
+        'document_wamid': msg_doc.wamid,
+        'to': to_number,
+    })
 
 
 @app.route('/quotes/bathqube/<int:id>/send-draft', methods=['POST'])

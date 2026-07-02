@@ -291,7 +291,9 @@
         <span style="font-size:0.72rem;font-weight:700;letter-spacing:0.6px;color:#64748b;text-transform:uppercase;">SHOW:</span>
         {% set _qs = {'date_from': filters.date_from, 'date_to': filters.date_to,
                       'salesman_id': filters.salesman_id, 'client_name': filters.client_name,
-                      'supplier_id': filters.supplier_id, 'delivery_status': filters.delivery_status} %}
+                      'supplier_id': filters.supplier_id, 'delivery_status': filters.delivery_status,
+                      'payment_status': filters.payment_status, 'dispatch_state': filters.dispatch_state,
+                      'tax_invoice': filters.tax_invoice, 'overdue': filters.overdue} %}
         <div class="btn-group btn-group-sm" role="group" aria-label="Source filter">
             <a href="{{ url_for('tally_index', **_qs) }}"
                class="btn {% if not filters.source %}btn-primary{% else %}btn-outline-secondary{% endif %}">
@@ -354,6 +356,45 @@
                 </select>
             </div>
         </div>
+        {# Phase 1 tally filters — payment / dispatch / tax invoice / overdue #}
+        <div class="row g-2 mt-1">
+            <div class="col-6 col-md-2">
+                <label class="form-label">Payment</label>
+                <select name="payment_status" class="form-select">
+                    <option value="">All</option>
+                    <option value="pending"  {% if filters.payment_status == 'pending'  %}selected{% endif %}>Pending</option>
+                    <option value="partial"  {% if filters.payment_status == 'partial'  %}selected{% endif %}>Partial</option>
+                    <option value="received" {% if filters.payment_status == 'received' %}selected{% endif %}>Received</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">Dispatch</label>
+                <select name="dispatch_state" class="form-select">
+                    <option value="">All</option>
+                    <option value="none"     {% if filters.dispatch_state == 'none'     %}selected{% endif %}>Not dispatched</option>
+                    <option value="partial"  {% if filters.dispatch_state == 'partial'  %}selected{% endif %}>Partial</option>
+                    <option value="complete" {% if filters.dispatch_state == 'complete' %}selected{% endif %}>Fully dispatched</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">Tax Invoice</label>
+                <select name="tax_invoice" class="form-select">
+                    <option value="">All</option>
+                    <option value="not_raised" {% if filters.tax_invoice == 'not_raised' %}selected{% endif %}>Not raised</option>
+                    <option value="draft"      {% if filters.tax_invoice == 'draft'      %}selected{% endif %}>Draft</option>
+                    <option value="issued"     {% if filters.tax_invoice == 'issued'     %}selected{% endif %}>Issued</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-2 d-flex align-items-end">
+                <div class="form-check">
+                    <input type="checkbox" name="overdue" value="1" id="overdueChk" class="form-check-input"
+                           {% if filters.overdue == '1' %}checked{% endif %}>
+                    <label class="form-check-label" for="overdueChk">
+                        <i class="bi bi-exclamation-triangle text-warning me-1"></i>Overdue only (&gt;15d + pending)
+                    </label>
+                </div>
+            </div>
+        </div>
         <div class="d-flex gap-2 mt-2">
             <button type="submit" class="btn btn-primary btn-sm px-4"><i class="bi bi-funnel me-1"></i>Apply</button>
             <a href="{{ url_for('tally_index') }}" class="btn btn-outline-secondary btn-sm px-4 js-clear-filters"><i class="bi bi-x-circle me-1"></i>Clear</a>
@@ -399,10 +440,41 @@
     <div class="qc-body">
 
         <!-- Client info -->
-        <div class="qc-client">{{ r.customer_name }}</div>
+        <div class="qc-client">
+            {{ r.customer_name }}
+            {% if r.is_overdue %}
+            <span class="badge bg-danger text-white ms-2" style="font-size:0.65rem;vertical-align:middle;" title="Accepted >15 days ago with pending payment or delivery">
+                <i class="bi bi-exclamation-triangle-fill"></i> OVERDUE · {{ r.days_since_sale }}d
+            </span>
+            {% endif %}
+        </div>
         <div class="qc-sub">
             {% if r.customer_city %}<i class="bi bi-geo-alt me-1"></i>{{ r.customer_city }}{% endif %}
             {% if r.customer_phone %}&nbsp;·&nbsp;<i class="bi bi-telephone me-1"></i>{{ r.customer_phone }}{% endif %}
+        </div>
+        {# Phase 1 state chips — dispatch + tax invoice — one glance to know
+           what's outstanding on this deal (payment chip is elsewhere below). #}
+        <div class="d-flex gap-2 mt-2 flex-wrap" style="font-size:0.7rem;">
+            {% set d = r.dispatch_state %}
+            <span class="badge
+                {% if d == 'complete' %}bg-success
+                {% elif d == 'partial' %}bg-warning text-dark
+                {% else %}bg-light text-secondary border{% endif %}">
+                <i class="bi bi-truck me-1"></i>
+                Dispatch: {% if d == 'complete' %}Fully dispatched
+                          {% elif d == 'partial' %}Partial
+                          {% else %}Not dispatched{% endif %}
+            </span>
+            {% set ti = r.tax_invoice_state %}
+            <span class="badge
+                {% if ti == 'issued' %}bg-success
+                {% elif ti == 'draft' %}bg-warning text-dark
+                {% else %}bg-light text-secondary border{% endif %}">
+                <i class="bi bi-receipt me-1"></i>
+                Tax Invoice: {% if ti == 'issued' %}Issued
+                             {% elif ti == 'draft' %}Draft
+                             {% else %}Not raised{% endif %}
+            </span>
         </div>
 
         <!-- Financial metrics row -->

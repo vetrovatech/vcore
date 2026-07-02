@@ -50,6 +50,21 @@
                         </form>
                     </div>
                     {% endif %}
+                    {# Send-first-quote WhatsApp — surfaces the moment a quote lands
+                       from the configurator so BD can hand over a formatted PDF
+                       within seconds. Uses the approved utility template 'first_qoute'
+                       with the current estimate PDF attached as the header document. #}
+                    {% if quote.stage in ('quote_generated', 'draft', 'revision') and quote.phone %}
+                    <div class="col-md-12">
+                        <button type="button" class="btn btn-success w-100 text-start"
+                                id="sendFirstQuoteBtn"
+                                data-url="{{ url_for('bathqube_send_first_quote', id=quote.id) }}"
+                                data-customer="{{ quote.customer_name }}">
+                            <i class="bi bi-whatsapp"></i> <strong>Send Welcome + Quote on WhatsApp</strong>
+                            <div class="small">Sends the <em>first_qoute</em> utility template to <strong>{{ quote.phone }}</strong> with the current estimate PDF attached.</div>
+                        </button>
+                    </div>
+                    {% endif %}
                     <!-- Revise (only stage transition that sends a customer email) -->
                     <div class="col-md-12">
                         <a href="{{ url_for('bathqube_quote_revise', id=quote.id) }}"
@@ -547,4 +562,38 @@
         </div>
     </div>
 </div>
+
+<script>
+// Wire up the "Send Welcome + Quote on WhatsApp" button. Uses fetch so we
+// can surface the exact Meta error inline instead of navigating away.
+document.addEventListener('DOMContentLoaded', function() {
+    var btn = document.getElementById('sendFirstQuoteBtn');
+    if (!btn) return;
+    btn.addEventListener('click', function() {
+        var customer = btn.dataset.customer || 'customer';
+        if (!confirm('Send the first_qoute WhatsApp template with the current estimate PDF to ' + customer + '?')) return;
+        var original = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Uploading PDF + sending…';
+        fetch(btn.dataset.url, {method: 'POST', headers: {'X-Requested-With': 'fetch'}})
+            .then(function(r) { return r.json().then(function(j) { return {status: r.status, body: j}; }); })
+            .then(function(res) {
+                if (res.body.success) {
+                    btn.classList.remove('btn-success');
+                    btn.classList.add('btn-outline-success');
+                    btn.innerHTML = '<i class="bi bi-check2-circle"></i> <strong>Sent — wamid ' + (res.body.wamid || '').slice(-8) + '</strong><div class="small">Delivered receipt will appear in Actions Log within a few seconds.</div>';
+                } else {
+                    alert('WhatsApp send failed:\n\n' + (res.body.error || 'Unknown error'));
+                    btn.disabled = false;
+                    btn.innerHTML = original;
+                }
+            })
+            .catch(function(e) {
+                alert('Network error: ' + e);
+                btn.disabled = false;
+                btn.innerHTML = original;
+            });
+    });
+});
+</script>
 {% endblock %}
