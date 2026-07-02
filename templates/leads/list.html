@@ -287,11 +287,15 @@
         <small class="text-muted">Manage Your VA Leads &mdash; <strong>{{ total_leads }}</strong> total leads</small>
     </div>
     <div class="d-flex gap-2 align-items-center">
-        {% set untouched = leads | selectattr('is_untouched') | list %}
-        {% if untouched %}
-        <span class="untouched-counter">
-            <i class="bi bi-exclamation-circle-fill"></i> {{ untouched|length }} untouched
-        </span>
+        {# untouched_total_matching = DB-wide count of is_untouched=True
+           leads matching the current filter set (route-computed). Clickable —
+           tacks `untouched=1` onto the current URL to focus in on them. #}
+        {% if untouched_total_matching and untouched_total_matching > 0 %}
+        <a class="untouched-counter" style="text-decoration:none;"
+           href="{{ url_for('leads_list', **dict(request.args, untouched='1')) }}"
+           title="Show only untouched leads matching your current filters">
+            <i class="bi bi-exclamation-circle-fill"></i> {{ untouched_total_matching }} untouched
+        </a>
         {% endif %}
         {# Agent Log — owner-wise stage-activity matrix (KAN-52). Manager-or-
            admin only since it surfaces peer activity. #}

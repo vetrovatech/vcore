@@ -852,66 +852,67 @@ class SupplierPricing(db.Model):
 
 
 # ── Leadfy stage configuration ────────────────────────────────────────────────
-# `stage` is a free-form String(50) column with no DB enum, so the allowed
-# values are defined here in Python. Different lead origins follow different
-# sales funnels — Facebook ads run through a quote-revision flow (Quote 1/2/3
-# Shared → Awaiting Payment → Payment Rcvd), everything else uses the generic
-# CRM stages. Adding a new origin-specific funnel = add a new list + register
-# it in LEAD_STAGES_BY_ORIGIN.
+# `stage` is a free-form String(50) column with no DB enum. Consolidated on
+# 2026-07-02 from two per-origin funnels (Default + Facebook) into ONE
+# canonical 11-stage list. Rationale: BD couldn't cross-verify agent logs
+# across origins because the funnels used different vocabulary for the same
+# concept ("Untouched" vs "New Lead", "Payment Rcvd" vs "Closed Won", etc.).
+#
+# Every historical stage has been mapped forward — see
+# `migrate_reduce_lead_stages.py` for the exact rewrite table + backfill.
 
-LEAD_STAGES_DEFAULT = [
-    'New Lead', 'Contacted', 'Not Connected', 'Qualified',
-    'PI Shared', 'Closed Won', 'Closed Lost', 'Junk',
+LEAD_STAGES = [
+    'New Lead',        # untouched, needs first contact
+    'Contacted',       # BD reached out, in conversation
+    'Not Connected',   # tried but no response
+    'Qualified',       # real interest confirmed
+    'Quote 1 Shared',  # first PDF sent
+    'Quote 2 Shared',  # first revision
+    'Quote 3 Shared',  # second revision (practical cap)
+    'Awaiting Payment',# customer accepted, waiting on money
+    'Closed Won',      # paid in full
+    'Closed Lost',     # customer declined / silent / not interested
+    'Junk',            # spam / wrong number / duplicate
 ]
 
-LEAD_STAGES_FACEBOOK = [
-    'Untouched', 'Yet to connect',
-    'Quote 1 Shared', 'Quote 2 Shared', 'Quote 3 Shared',
-    'Not Interested', 'Awaiting Payment',
-    'Junk', 'Payment Rcvd', 'Lost',
-]
+# Backwards-compat aliases — several routes still import these names.
+# All three now point at the same single canonical list so the templates
+# that render "default vs facebook" dropdowns just get the same 11 stages
+# regardless of which alias they consulted.
+LEAD_STAGES_DEFAULT  = LEAD_STAGES
+LEAD_STAGES_FACEBOOK = LEAD_STAGES
+LEAD_STAGES_ALL      = LEAD_STAGES
 
-LEAD_STAGES_BY_ORIGIN = {
-    'facebook': LEAD_STAGES_FACEBOOK,
-}
-
-# Union of every known stage — used for the leads-list filter dropdown so a
-# user can filter by any stage regardless of origin selection.
-LEAD_STAGES_ALL = list(dict.fromkeys(LEAD_STAGES_DEFAULT + LEAD_STAGES_FACEBOOK))
+# Origin-specific funnel overrides — kept as an empty mapping for now so any
+# imports don't break. If BD ever needs a per-origin variant again, register
+# it here and update stages_for_origin() below.
+LEAD_STAGES_BY_ORIGIN = {}
 
 LEAD_STAGE_BADGE_CLASSES = {
-    # Generic CRM stages
-    'New Lead': 'primary',
-    'Contacted': 'info',
-    'Not Connected': 'warning',
-    'Qualified': 'warning',
-    'PI Shared': 'secondary',
-    'Closed Won': 'success',
-    'Closed Lost': 'danger',
-    'Junk': 'dark',
-    # Facebook funnel
-    'Untouched': 'primary',
-    'Yet to connect': 'info',
-    'Quote 1 Shared': 'secondary',
-    'Quote 2 Shared': 'secondary',
-    'Quote 3 Shared': 'secondary',
-    'Not Interested': 'warning',
-    'Awaiting Payment': 'warning',
-    'Payment Rcvd': 'success',
-    'Lost': 'danger',
+    'New Lead':         'primary',     # blue — fresh
+    'Contacted':        'info',        # light blue — engaged
+    'Not Connected':    'warning',     # yellow — chase
+    'Qualified':        'warning',     # yellow — action needed
+    'Quote 1 Shared':   'secondary',   # grey — quote out
+    'Quote 2 Shared':   'secondary',   # grey — negotiating
+    'Quote 3 Shared':   'secondary',   # grey — heavier negotiation
+    'Awaiting Payment': 'warning',     # yellow — money pending
+    'Closed Won':       'success',     # green — paid
+    'Closed Lost':      'danger',      # red — lost
+    'Junk':             'dark',        # black — dead
 }
 
 
 def stages_for_origin(origin):
-    """Return the ordered list of allowed stages for the given origin string."""
-    if origin and origin.strip().lower() in LEAD_STAGES_BY_ORIGIN:
-        return LEAD_STAGES_BY_ORIGIN[origin.strip().lower()]
-    return LEAD_STAGES_DEFAULT
+    """Return the ordered list of allowed stages. Same 11-stage funnel for
+    every origin now — argument kept for signature-compat with older
+    callers, but the value is ignored."""
+    return LEAD_STAGES
 
 
 def default_stage_for_origin(origin):
-    """First stage in the funnel for the given origin — used when creating leads."""
-    return stages_for_origin(origin)[0]
+    """First stage in the funnel — used when creating leads."""
+    return LEAD_STAGES[0]
 
 
 class Lead(db.Model):

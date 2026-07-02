@@ -3070,6 +3070,13 @@ def _build_leads_query(args, *, restrict_to_current_user=True):
             query = query.filter(Lead.owner_id == int(args.get('owner')))
         except ValueError:
             pass
+    # `unowned=1` filters to leads with no owner assigned. Powers the
+    # per-stage Unowned column on /leads/agent-log — click the number and
+    # you get the exact 89 leads (or whatever) that make up that cell.
+    # Applied AFTER the owner filter so `?owner=5&unowned=1` narrows to
+    # nothing (impossible) rather than one silently overriding the other.
+    if args.get('unowned') == '1':
+        query = query.filter(Lead.owner_id.is_(None))
 
     for key, op in (
         ('updated_from', lambda v: Lead.updated_at >= datetime.strptime(v, '%Y-%m-%d')),
@@ -3248,6 +3255,14 @@ def leads_agent_log():
     # Leads with no owner assigned — surface as a single counter so they
     # don't silently disappear from the snapshot's grand total.
     snapshot_unowned = sum(snapshot_matrix.get(None, {}).get(s, 0) for s in stages)
+    # Per-stage unowned breakdown for the dedicated "Unowned" column in the
+    # snapshot matrix. Without this column, visible owner cells + Total wouldn't
+    # reconcile because Total sums across ALL owners including None while the
+    # visible cells iterate only real owners. Adding the column makes the math
+    # (visible_cells + unowned = total) obvious at a glance.
+    snapshot_unowned_by_stage = {
+        s: snapshot_matrix.get(None, {}).get(s, 0) for s in stages
+    }
     # Leads whose `stage` value isn't in LEAD_STAGES_ALL (legacy free-text,
     # custom funnels added by BD via direct SQL, etc). They count in the
     # grand total but won't appear in any per-stage row of the matrix,
@@ -3271,6 +3286,7 @@ def leads_agent_log():
                            snapshot_owner_totals=snapshot_owner_totals,
                            snapshot_grand_total=snapshot_grand_total,
                            snapshot_unowned=snapshot_unowned,
+                           snapshot_unowned_by_stage=snapshot_unowned_by_stage,
                            snapshot_other_stages_count=snapshot_other_stages_count,
                            preset=preset,
                            # Display the inclusive end-of-range — what the
@@ -3318,6 +3334,19 @@ def leads_list():
     pagination = query.order_by(Lead.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
     leads = pagination.items
     total_leads = Lead.query.count()
+
+    # Count untouched leads matching the CURRENT filter set (minus the
+    # untouched filter itself, so the badge reads e.g. "12 untouched" even
+    # when the user has filtered to untouched=No). Previous behaviour was
+    # `{{ leads|selectattr('is_untouched')|list|length }}` in the template
+    # — that counts only rows on the current page (15 by default), so BD
+    # got misled into thinking "10 untouched" was the full total when it
+    # was actually 10 out of 15 visible.
+    _untouched_args = {k: v for k, v in request.args.items() if k != 'untouched'}
+    untouched_total_matching = (_build_leads_query(_untouched_args)
+                                .filter(Lead.is_untouched.is_(True))
+                                .count())
+
     users = User.query.filter_by(is_active=True).order_by(User.username).all()
 
     origins = db.session.query(Lead.origin).filter(Lead.origin.isnot(None)).distinct().order_by(Lead.origin).all()
@@ -3362,6 +3391,7 @@ def leads_list():
                            leads=leads,
                            pagination=pagination,
                            total_leads=total_leads,
+                           untouched_total_matching=untouched_total_matching,
                            users=users,
                            origins=origins,
                            states=states,

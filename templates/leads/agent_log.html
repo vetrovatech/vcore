@@ -222,6 +222,10 @@
                         </a>
                     </th>
                     {% endfor %}
+                    {# Unowned column — closes the gap between visible owner cells
+                       and the Total column. Sits before Total so the eye reads:
+                       cells + unowned = total. #}
+                    <th title="Leads with no owner assigned">Unowned</th>
                     <th class="al-totals-col">Total</th>
                 </tr>
             </thead>
@@ -247,6 +251,16 @@
                             {% endif %}
                         </td>
                     {% endfor %}
+                    {% set unowned_cnt = snapshot_unowned_by_stage.get(stage, 0) %}
+                    <td>
+                        {% if unowned_cnt > 0 %}
+                        <a class="al-cell-link"
+                           href="{{ url_for('leads_list', stage=stage, unowned='1') }}"
+                           title="{{ unowned_cnt }} lead{{ '' if unowned_cnt == 1 else 's' }} in {{ stage }} with no owner assigned">{{ unowned_cnt }}</a>
+                        {% else %}
+                        <span class="al-cell-zero">·</span>
+                        {% endif %}
+                    </td>
                     <td class="al-totals-col">{{ snapshot_stage_totals.get(stage, 0) }}</td>
                 </tr>
                 {% endif %}
@@ -256,6 +270,7 @@
                     {% for owner in owners %}
                     <td>{{ snapshot_owner_totals.get(owner.id, 0) }}</td>
                     {% endfor %}
+                    <td>{{ snapshot_unowned }}</td>
                     <td class="al-grand">{{ snapshot_grand_total }}</td>
                 </tr>
             </tbody>
