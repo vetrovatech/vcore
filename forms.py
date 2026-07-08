@@ -21,7 +21,10 @@ class UserForm(FlaskForm):
     confirm_password = PasswordField('Confirm Password', validators=[EqualTo('password', message='Passwords must match')])
     role = SelectField('Role', choices=[('Admin', 'Admin'), ('Manager', 'Manager'), ('Promotor', 'User')], validators=[DataRequired()])
     is_active = BooleanField('Active', default=True)
-    
+    # Cosmetic: uncheck to hide this user from the /leads/agent-log columns
+    # without touching their login or permissions. Manager toggles.
+    show_in_agent_log = BooleanField('Show in Agent Log', default=True)
+
     def __init__(self, user_id=None, *args, **kwargs):
         super(UserForm, self).__init__(*args, **kwargs)
         self.user_id = user_id

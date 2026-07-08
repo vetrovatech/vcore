@@ -673,8 +673,9 @@
             </div>
             <div class="modal-body">
                 <div class="alert alert-info py-2">
-                    <strong>Step 1:</strong> Download the standard template, fill in the <em>Items</em> sheet, save, and upload here.
-                    Headers must match the template exactly.
+                    <strong>Step 1:</strong> Download the standard template, fill the <em>Items</em> sheet, save, upload here.
+                    <br><strong>Tip:</strong> the first column is <em>Group</em> — rows with the same Group name land under the same group on the quote,
+                    so one file can populate multiple product categories at once (e.g., 6MM Toughened + 8MM Tinted + 12MM Clear).
                 </div>
 
                 <div class="d-flex gap-2 align-items-center mb-3">
@@ -686,21 +687,17 @@
 
                 <div id="bulkImportError" class="alert alert-danger py-2" style="display:none;"></div>
 
-                <h6 class="mb-2">Target Group & Defaults</h6>
+                <h6 class="mb-2">Defaults</h6>
                 <div class="row g-2 mb-3">
-                    <div class="col-md-3">
-                        <label class="form-label small mb-1">Insert into group</label>
-                        <select id="bulkImportTargetGroup" class="form-select form-select-sm"></select>
+                    <div class="col-md-4">
+                        <label class="form-label small mb-1">Fallback group name <small class="text-muted">(for rows with blank Group)</small></label>
+                        <input type="text" id="bulkImportNewGroupName" class="form-control form-control-sm" placeholder="e.g., Imported items">
                     </div>
-                    <div class="col-md-3">
-                        <label class="form-label small mb-1">New group name <small class="text-muted">(if creating)</small></label>
-                        <input type="text" id="bulkImportNewGroupName" class="form-control form-control-sm" placeholder="e.g., 6MM ST-136 HSG">
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label small mb-1">Default Rate (₹/sqm) <small class="text-muted">(if rate column missing)</small></label>
+                    <div class="col-md-4">
+                        <label class="form-label small mb-1">Default Rate (₹/sqm) <small class="text-muted">(if row's Rate is blank)</small></label>
                         <input type="number" step="0.01" id="bulkImportDefaultRate" class="form-control form-control-sm" placeholder="0.00">
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-4">
                         <label class="form-label small mb-1">Chargeable Extra (MM)</label>
                         <input type="number" id="bulkImportChargeableExtra" class="form-control form-control-sm" value="30">
                     </div>
@@ -712,6 +709,7 @@
                         <thead class="table-light" style="position: sticky; top: 0;">
                             <tr>
                                 <th>#</th>
+                                <th>Group</th>
                                 <th>Particular</th>
                                 <th>Actual W</th>
                                 <th>Actual H</th>
@@ -726,7 +724,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr><td colspan="12" class="text-center text-muted py-3">No data yet — upload a file or paste rows above.</td></tr>
+                            <tr><td colspan="13" class="text-center text-muted py-3">No data yet — upload a file above.</td></tr>
                         </tbody>
                     </table>
                 </div>

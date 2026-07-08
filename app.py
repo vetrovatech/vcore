@@ -647,7 +647,8 @@ def user_new():
             username=form.username.data,
             email=form.email.data,
             role=form.role.data,
-            is_active=form.is_active.data
+            is_active=form.is_active.data,
+            show_in_agent_log=form.show_in_agent_log.data,
         )
         user.set_password(form.password.data)
         db.session.add(user)
@@ -670,7 +671,8 @@ def user_edit(id):
         user.email = form.email.data
         user.role = form.role.data
         user.is_active = form.is_active.data
-        
+        user.show_in_agent_log = form.show_in_agent_log.data
+
         # Only update password if provided
         if form.password.data:
             user.set_password(form.password.data)
@@ -3070,13 +3072,24 @@ def _build_leads_query(args, *, restrict_to_current_user=True):
             query = query.filter(Lead.owner_id == int(args.get('owner')))
         except ValueError:
             pass
-    # `unowned=1` filters to leads with no owner assigned. Powers the
-    # per-stage Unowned column on /leads/agent-log — click the number and
-    # you get the exact 89 leads (or whatever) that make up that cell.
-    # Applied AFTER the owner filter so `?owner=5&unowned=1` narrows to
-    # nothing (impossible) rather than one silently overriding the other.
+    # `assigned_to=X` filters to leads currently assigned to user X. This is
+    # what the /leads/agent-log cells link to (2026-07-02 rewrite — the matrix
+    # counts by assignee, so click-through must too, otherwise the drill-down
+    # would jump from "leads on rohits's plate" to "leads rohits owns" which
+    # are now different sets).
+    if args.get('assigned_to'):
+        try:
+            query = query.filter(Lead.assigned_to_id == int(args.get('assigned_to')))
+        except ValueError:
+            pass
+    # `unowned=1` filters to leads with no owner assigned (legacy — kept for
+    # any external bookmark that still hits it).
     if args.get('unowned') == '1':
         query = query.filter(Lead.owner_id.is_(None))
+    # `unassigned=1` filters to leads with no current assignee. Powers the
+    # per-stage Unassigned column on /leads/agent-log.
+    if args.get('unassigned') == '1':
+        query = query.filter(Lead.assigned_to_id.is_(None))
 
     for key, op in (
         ('updated_from', lambda v: Lead.updated_at >= datetime.strptime(v, '%Y-%m-%d')),
@@ -3207,8 +3220,12 @@ def leads_agent_log():
     # All active users become columns even if they have 0 events in this
     # range — this makes "who hasn't done anything this week?" obvious at a
     # glance. Sort alphabetically per the ticket.
+    # `show_in_agent_log` is a cosmetic filter — hidden users keep every other
+    # permission (login, edit, etc), they just don't appear as a column here.
+    # Manager toggles it in the user admin form.
     owners = (UserModel.query
                 .filter(UserModel.is_active == True)  # noqa: E712
+                .filter(UserModel.show_in_agent_log == True)  # noqa: E712
                 .order_by(UserModel.username)
                 .all())
 
@@ -3496,7 +3513,13 @@ def lead_edit(id):
         # "missing field" and "empty field". A missing field means
         # "don't touch", an empty field means "clear it". Guarding with
         # `'owner_id' in request.form` distinguishes the two cleanly.
-        if 'owner_id' in request.form:
+        #
+        # Owner changes are manager/admin only (2026-07-02). Promotors can
+        # still update stage, notes, phone, assigned_to etc. — just not
+        # transfer ownership. Silently dropping the field on a Promotor edit
+        # keeps their normal edits working (form template can safely include
+        # the field) without letting them use it.
+        if 'owner_id' in request.form and current_user.is_manager_or_admin():
             owner_id = request.form.get('owner_id') or None
             new_owner_id = int(owner_id) if owner_id else None
             if new_owner_id != lead.owner_id:
@@ -3577,7 +3600,15 @@ def lead_delete(id):
 @login_required
 def leads_bulk_assign():
     """Bulk-assign multiple leads to a single user (sets both owner and assigned_to).
-    Available to any logged-in user (was admin-only until 2026-05-31).
+
+    Manager/admin only (2026-07-02). Sales users (Promotor) can't reassign
+    leads — the blast radius of a mistake here is one incident away from
+    another "58 leads walked away from Abhay" event, so it's a manager call.
+
+    Ownership model: `owner_id` transfers on every reassignment — whoever
+    the lead is bulk-assigned TO becomes the current owner. Agent-log
+    columns count by `owner_id`, so this keeps the "who's carrying this
+    lead right now" view honest as leads pass hands.
 
     Two input modes:
       • `lead_ids[]` — assign exactly those IDs (original 15-per-page flow).
@@ -3588,6 +3619,9 @@ def leads_bulk_assign():
         without depending on pagination.
     """
     from models import Lead, User, LeadHistory
+
+    if not current_user.is_manager_or_admin():
+        return jsonify({'success': False, 'error': 'Only managers or admins can reassign leads.'}), 403
 
     user_id_raw = request.form.get('user_id')
     if not user_id_raw:
@@ -4017,6 +4051,11 @@ def indiamart_refresh_token_route():
 @app.route('/leads/indiamart/sync', methods=['POST'])
 @login_required
 def indiamart_sync():
+    # Manager+ only — hammering this button by a sales user could rate-limit
+    # the paid IndiaMart API and briefly break the hourly cron ingest.
+    if not current_user.is_manager_or_admin():
+        flash('Only managers or admins can trigger IndiaMart sync.', 'danger')
+        return redirect(url_for('leads_list'))
     new_count, skipped_count, err = _do_indiamart_sync(None, current_user.id)
     if err:
         flash(err, 'warning' if 'expired' in err.lower() or 'rate' in err.lower() else 'danger')
@@ -4278,7 +4317,7 @@ def _do_facebook_sync(created_by_id):
                         state=state,
                         notes=notes,
                         origin='Facebook',
-                        stage='Untouched',
+                        stage='New Lead',
                         lead_type='Enquiry',
                         facebook_lead_id=fb_lead_id,
                         fb_page_id       = page_id,
@@ -4322,6 +4361,10 @@ def _do_facebook_sync(created_by_id):
 @login_required
 def facebook_sync():
     """Manual sync — triggered by clicking the Sync Facebook button."""
+    # Manager+ only — same reasoning as IndiaMart sync above.
+    if not current_user.is_manager_or_admin():
+        flash('Only managers or admins can trigger Facebook sync.', 'danger')
+        return redirect(url_for('leads_list'))
     new_count, skipped_count, err = _do_facebook_sync(current_user.id)
     if err:
         flash(f'Facebook sync failed: {err}', 'danger')
@@ -6324,6 +6367,12 @@ def _next_pi_serial():
 @app.route('/tally')
 @login_required
 def tally_index():
+    # Manager/admin only — exposes cross-team revenue, PIs, dispatch state
+    # and salesman-level totals. Sales users don't need visibility into
+    # peers' commercial data.
+    if not current_user.is_manager_or_admin():
+        flash('Access denied.', 'danger')
+        return redirect(url_for('dashboard'))
     from models import (Quote, PurchaseInvoice, Supplier, User as UserModel,
                         BathqubeQuote, TaxInvoice, GatePass, GatePassItem)
 
@@ -6630,6 +6679,9 @@ def tally_index():
 @app.route('/quotes/<int:id>/tally-update', methods=['POST'])
 @login_required
 def quote_tally_update(id):
+    if not current_user.is_manager_or_admin():
+        flash('Access denied.', 'danger')
+        return redirect(url_for('quote_view', id=id))
     from models import Quote
     quote = Quote.query.get_or_404(id)
     quote.delivery_status = request.form.get('delivery_status', quote.delivery_status)
@@ -6673,6 +6725,9 @@ def bathqube_quote_delete(id):
 def bathqube_quote_tally_update(id):
     """Mirror of quote_tally_update for bathqube quotes — same form fields,
     same semantics, just a different table."""
+    if not current_user.is_manager_or_admin():
+        flash('Access denied.', 'danger')
+        return redirect(url_for('bathqube_quote_view', id=id))
     quote = BathqubeQuote.query.get_or_404(id)
     quote.delivery_status = request.form.get('delivery_status', quote.delivery_status)
     online_recv = request.form.get('amount_received', '').strip()
@@ -7298,6 +7353,9 @@ from models import (
     BATHQUBE_STAGES, BATHQUBE_OPS_STAGES, BATHQUBE_OPS_ACTIVE_STAGES,
     UpvcQuote, UpvcQuoteItem, UpvcQuoteRevision, UpvcStatusEvent,
     UPVC_STAGES, UPVC_ACTIVE_STAGES,
+    VetrovaQuote, VetrovaStatusEvent,
+    VETROVA_STAGES, VETROVA_ACTIVE_STAGES, VETROVA_STAGE_LABELS,
+    VETROVA_CATEGORIES, VETROVA_CATEGORY_LABELS,
 )
 from utils.bathqube_messages import render_stage_message, STAGE_LABELS
 
@@ -7771,6 +7829,153 @@ def bathqube_quotes_list():
                            stage_labels=STAGE_LABELS, stages=BATHQUBE_STAGES)
 
 
+# ─── Vetrova Quotes — configurator quotes from vetrova.in ────────────────────
+# Ingested from glassyplatform's /api/vetrova/quote-request via the same
+# HMAC-signed webhook pattern as Bathqube. BD works the funnel here.
+
+@app.route('/api/vetrova/quotes/ingest', methods=['POST'])
+@limiter.limit("60 per minute")
+def vetrova_ingest():
+    """Webhook from glassyplatform: create/upsert a VetrovaQuote."""
+    raw = request.get_data(cache=True)
+    sig = request.headers.get('X-Bathqube-Signature', '')
+    if not _bathqube_verify_signature(raw, sig):
+        return jsonify({'error': 'invalid signature'}), 401
+
+    try:
+        data = json.loads(raw.decode('utf-8'))
+    except Exception:
+        return jsonify({'error': 'invalid json'}), 400
+
+    quote_ref = (data.get('quoteRef') or '').strip()
+    if not quote_ref:
+        return jsonify({'error': 'quoteRef required'}), 400
+
+    contact = data.get('contact') or {}
+    name = (contact.get('name') or '').strip()
+    phone = (contact.get('phone') or '').strip()
+    if not name or not phone:
+        return jsonify({'error': 'name and phone required'}), 400
+
+    category_slug = (data.get('categorySlug') or '').strip()
+    if not category_slug:
+        return jsonify({'error': 'categorySlug required'}), 400
+
+    selections = data.get('selections') or {}
+    if not isinstance(selections, dict):
+        selections = {}
+
+    external_id = str(data.get('externalId') or quote_ref)
+
+    quote = VetrovaQuote.query.filter_by(quote_ref=quote_ref).first()
+    is_new = quote is None
+    if is_new:
+        quote = VetrovaQuote(quote_ref=quote_ref, stage='quote_generated')
+        db.session.add(quote)
+
+    quote.external_id = external_id
+    quote.category_slug = category_slug
+    quote.category_label = data.get('categoryLabel') or VETROVA_CATEGORY_LABELS.get(category_slug, category_slug.title())
+    quote.customer_name = name
+    quote.phone = phone
+    quote.email = contact.get('email') or None
+    quote.pincode = contact.get('pincode') or None
+    quote.site_address = contact.get('siteAddress') or None
+    quote.notes = contact.get('notes') or None
+    quote.selections = json.dumps(selections) if selections else None
+    quote.running_ft = data.get('runningFt') or 0
+    quote.quantity = data.get('quantity') or 1
+    quote.total = data.get('total') or 0
+
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'db error', 'detail': str(e)}), 500
+
+    return jsonify({'ok': True, 'id': quote.id, 'created': is_new}), 200
+
+
+@app.route('/quotes/vetrova')
+@login_required
+def vetrova_quotes_list():
+    search = (request.args.get('search') or '').strip()
+    stage = request.args.get('stage') or ''
+    category = request.args.get('category') or ''
+    include_archived = request.args.get('archived') == '1'
+    q = VetrovaQuote.query
+    if search:
+        like = f'%{search}%'
+        q = q.filter(
+            (VetrovaQuote.customer_name.ilike(like))
+            | (VetrovaQuote.phone.ilike(like))
+            | (VetrovaQuote.quote_ref.ilike(like))
+            | (VetrovaQuote.email.ilike(like))
+        )
+    if category:
+        q = q.filter_by(category_slug=category)
+    if stage:
+        q = q.filter_by(stage=stage)
+    elif not include_archived:
+        q = q.filter(VetrovaQuote.stage.in_(VETROVA_ACTIVE_STAGES))
+    quotes = q.order_by(VetrovaQuote.created_at.desc()).all()
+    return render_template('quotes/vetrova_list.html',
+                           quotes=quotes, search=search, stage=stage,
+                           category=category, include_archived=include_archived,
+                           stage_labels=VETROVA_STAGE_LABELS, stages=VETROVA_STAGES,
+                           categories=VETROVA_CATEGORIES)
+
+
+@app.route('/quotes/vetrova/<int:id>')
+@login_required
+def vetrova_quote_view(id):
+    quote = VetrovaQuote.query.get_or_404(id)
+    return render_template('quotes/vetrova_view.html',
+                           quote=quote,
+                           stage_labels=VETROVA_STAGE_LABELS,
+                           stages=VETROVA_STAGES,
+                           category_label=VETROVA_CATEGORY_LABELS.get(quote.category_slug, quote.category_label))
+
+
+@app.route('/quotes/vetrova/<int:id>/stage', methods=['POST'])
+@login_required
+def vetrova_quote_stage(id):
+    quote = VetrovaQuote.query.get_or_404(id)
+    target = (request.form.get('stage') or '').strip()
+    if target not in VETROVA_STAGES:
+        flash('Invalid stage.', 'danger')
+        return redirect(url_for('vetrova_quote_view', id=id))
+    if target == quote.stage:
+        flash(f'Already in {VETROVA_STAGE_LABELS.get(target, target)}.', 'info')
+        return redirect(url_for('vetrova_quote_view', id=id))
+    event = VetrovaStatusEvent(
+        quote_id=quote.id,
+        from_stage=quote.stage,
+        to_stage=target,
+        note=(request.form.get('note') or '').strip() or None,
+        triggered_by=current_user.id,
+    )
+    quote.stage = target
+    db.session.add(event)
+    db.session.commit()
+    flash(f'Moved to {VETROVA_STAGE_LABELS.get(target, target)}.', 'success')
+    return redirect(url_for('vetrova_quote_view', id=id))
+
+
+@app.route('/quotes/vetrova/<int:id>/delete', methods=['POST'])
+@login_required
+def vetrova_quote_delete(id):
+    if not current_user.is_admin():
+        flash('Only admins can delete quotes.', 'danger')
+        return redirect(url_for('vetrova_quote_view', id=id))
+    quote = VetrovaQuote.query.get_or_404(id)
+    ref = quote.quote_ref
+    db.session.delete(quote)
+    db.session.commit()
+    flash(f'Deleted {ref}.', 'success')
+    return redirect(url_for('vetrova_quotes_list'))
+
+
 # ─── BD-side Bathqube quote creator routes (KAN-67 follow-up) ────────────────
 # Companion to /quotes/upvc/new, but for Bathqube. BD picks options + types
 # panels in vcore (no visuals, no leaving the app), the form server-fetches
@@ -7948,23 +8153,22 @@ def bathqube_quote_create():
 @login_required
 def bathqube_send_first_quote(id):
     """WhatsApp the customer the initial estimate PDF using the approved
-    utility template 'first_qoute'. BD hits this the moment a fresh
-    Bathqube quote lands from the configurator to acknowledge the enquiry
-    and hand over a formatted estimate they can share/reply to.
+    utility template 'first_quote_generated'. BD hits this the moment a
+    fresh Bathqube quote lands from the configurator.
 
     Flow:
-      1. Render the current customer-facing estimate PDF
+      1. Render the customer-facing estimate PDF
       2. Upload it to Meta's media store, get a media_id
-      3. Send the template referencing that media_id in the header slot
-      4. Log the send + wamid to WhatsAppMessage (webhook updates status
-         from sent → delivered → read as it moves through Meta)
-
-    Retries: if Meta rejects with a parameter-structure error we retry
-    the send WITHOUT body variables — covers the case where BD
-    provisions 'first_qoute' with no {{1}} placeholder.
+      3. Send the template with the media_id populating its DOCUMENT
+         header — PDF ships with the template body in a single message,
+         no 24-hour window dependency (2026-07-03 rewrite; previous
+         `first_qoute` template had a TEXT header so we needed a
+         follow-up document that failed for cold leads).
+      4. Log to WhatsAppMessage (webhook updates status from sent →
+         delivered → read as it moves through Meta)
     """
     from models import BathqubeQuote, WhatsAppMessage
-    from utils.whatsapp import (upload_media, send_template, send_document,
+    from utils.whatsapp import (upload_media, send_template_with_document,
                                 normalize_phone)
     from utils.bathqube_pdf import generate_bathqube_pdf
 
@@ -7972,7 +8176,7 @@ def bathqube_send_first_quote(id):
     if not quote.phone:
         return jsonify({'success': False, 'error': 'Quote has no customer phone'}), 400
 
-    # 1) Generate the customer estimate PDF
+    # 1) Render the customer estimate PDF
     try:
         pdf_bytes = generate_bathqube_pdf(quote)
     except Exception as e:
@@ -7990,83 +8194,50 @@ def bathqube_send_first_quote(id):
     #    {{1}} = customer first name
     #    {{2}} = quote / estimate number (falls back to internal id when
     #            the configurator hasn't assigned a BSP- number yet)
-    # The header is a TEXT header ("Document (PDF)"), NOT a document header —
-    # so we DON'T pass a document parameter to the template. Instead the
-    # PDF ships as a follow-up document message right after the template.
+    # Header is a DOCUMENT header — media_id ships in the same request.
     first_name = (quote.customer_name or 'there').strip().split()[0]
     quote_ref  = quote.estimate_number or f'BQ-{quote.id}'
     body_variables = [first_name, quote_ref]
 
     to_number = normalize_phone(quote.phone) or quote.phone
 
-    # Log the template send attempt first (so any exception below leaves
-    # an audit trail).
-    msg_tpl = WhatsAppMessage(
+    msg = WhatsAppMessage(
         lead_id=None,
         to_number=to_number,
-        template_name='first_qoute',
+        template_name='first_quote_generated',
         language='en',
-        variables_json=json.dumps(body_variables),
+        variables_json=json.dumps({'body': body_variables,
+                                   'filename': filename,
+                                   'media_id': media_id}),
         sent_by=current_user.id,
         status='queued',
     )
-    db.session.add(msg_tpl)
+    db.session.add(msg)
     db.session.flush()
 
-    # 4) Send the template (body-only — Meta's TEXT header takes no params)
-    tpl_result = send_template(
+    # 4) Single send — template body + PDF header in one API call
+    result = send_template_with_document(
         to=quote.phone,
-        template_name='first_qoute',
-        language='en',
-        variables=body_variables,
-    )
-
-    if not tpl_result.get('success'):
-        msg_tpl.status = 'failed'
-        msg_tpl.error_message = tpl_result.get('error', 'Unknown error')
-        db.session.commit()
-        return jsonify({'success': False,
-                        'stage': 'template',
-                        'error': msg_tpl.error_message}), 502
-
-    msg_tpl.status = 'sent'
-    msg_tpl.wamid = tpl_result.get('wamid')
-
-    # 5) Follow up with the PDF as a plain document message
-    doc_result = send_document(
-        to=quote.phone,
+        template_name='first_quote_generated',
         media_id=media_id,
         filename=filename,
-        caption=f'Estimate {quote_ref}',
-    )
-    msg_doc = WhatsAppMessage(
-        lead_id=None,
-        to_number=to_number,
-        template_name='document:first_qoute',  # not a template — audit label
         language='en',
-        variables_json=json.dumps({'filename': filename, 'media_id': media_id}),
-        sent_by=current_user.id,
-        status=('sent' if doc_result.get('success') else 'failed'),
-        wamid=doc_result.get('wamid'),
-        error_message=(None if doc_result.get('success') else doc_result.get('error')),
+        body_variables=body_variables,
     )
-    db.session.add(msg_doc)
-    db.session.commit()
 
-    if not doc_result.get('success'):
-        # Template landed but attachment didn't — half success. Let BD
-        # know so they can retry or send the PDF manually.
-        return jsonify({
-            'success': False,
-            'stage': 'document',
-            'template_wamid': msg_tpl.wamid,
-            'error': f'Template sent, but PDF attachment failed: {doc_result.get("error")}',
-        }), 502
+    if not result.get('success'):
+        msg.status = 'failed'
+        msg.error_message = result.get('error', 'Unknown error')
+        db.session.commit()
+        return jsonify({'success': False, 'error': msg.error_message}), 502
+
+    msg.status = 'sent'
+    msg.wamid = result.get('wamid')
+    db.session.commit()
 
     return jsonify({
         'success': True,
-        'template_wamid': msg_tpl.wamid,
-        'document_wamid': msg_doc.wamid,
+        'wamid': msg.wamid,
         'to': to_number,
     })
 

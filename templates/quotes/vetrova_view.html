@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}{{ quote.quote_ref }} - Vetrova Quote - VCore{% endblock %}
+{% block content %}
+
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb small mb-0">
+        <li class="breadcrumb-item"><a href="{{ url_for('vetrova_quotes_list') }}">Vetrova Quotes</a></li>
+        <li class="breadcrumb-item active" aria-current="page">{{ quote.quote_ref }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-1">
+            <i class="bi bi-buildings"></i> {{ quote.quote_ref }}
+            <span class="badge bg-secondary align-middle">{{ category_label }}</span>
+            <span class="badge bg-info text-dark align-middle">{{ stage_labels.get(quote.stage, quote.stage) }}</span>
+        </h2>
+        <span class="text-muted small">Received {{ quote.created_at.strftime('%d %b %Y, %I:%M %p') }}</span>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="card mb-4">
+            <div class="card-header"><strong>Customer</strong></div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Name</dt>
+                    <dd class="col-sm-8">{{ quote.customer_name }}</dd>
+                    <dt class="col-sm-4">Phone</dt>
+                    <dd class="col-sm-8"><a href="tel:{{ quote.phone }}">{{ quote.phone }}</a>
+                        <a href="https://wa.me/{{ quote.phone|replace('+','')|replace(' ','')|replace('-','') }}" target="_blank" class="btn btn-sm btn-outline-success ms-2">
+                            <i class="bi bi-whatsapp"></i> WhatsApp
+                        </a>
+                    </dd>
+                    {% if quote.email %}
+                    <dt class="col-sm-4">Email</dt>
+                    <dd class="col-sm-8"><a href="mailto:{{ quote.email }}">{{ quote.email }}</a></dd>
+                    {% endif %}
+                    {% if quote.pincode %}
+                    <dt class="col-sm-4">Pincode</dt>
+                    <dd class="col-sm-8">{{ quote.pincode }}</dd>
+                    {% endif %}
+                    {% if quote.site_address %}
+                    <dt class="col-sm-4">Site address</dt>
+                    <dd class="col-sm-8" style="white-space:pre-wrap">{{ quote.site_address }}</dd>
+                    {% endif %}
+                    {% if quote.notes %}
+                    <dt class="col-sm-4">Customer notes</dt>
+                    <dd class="col-sm-8" style="white-space:pre-wrap">{{ quote.notes }}</dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header"><strong>Configuration</strong></div>
+            <div class="card-body">
+                <dl class="row mb-3">
+                    <dt class="col-sm-4">Category</dt>
+                    <dd class="col-sm-8">{{ category_label }}</dd>
+                    <dt class="col-sm-4">Running feet</dt>
+                    <dd class="col-sm-8">{{ '%g'|format(quote.running_ft|float) }} ft</dd>
+                    <dt class="col-sm-4">Quantity</dt>
+                    <dd class="col-sm-8">{{ quote.quantity }}</dd>
+                    <dt class="col-sm-4">Customer-facing total</dt>
+                    <dd class="col-sm-8">₹{{ '{:,.0f}'.format(quote.total|float) }}</dd>
+                    {% if quote.revised_total %}
+                    <dt class="col-sm-4">Revised total</dt>
+                    <dd class="col-sm-8">₹{{ '{:,.0f}'.format(quote.revised_total|float) }}</dd>
+                    {% endif %}
+                </dl>
+
+                {% if quote.selections_parsed %}
+                <h6 class="text-muted small text-uppercase mt-3">Customer's selections</h6>
+                <table class="table table-sm table-striped mb-0">
+                    <tbody>
+                        {% for key, value in quote.selections_parsed.items() %}
+                        <tr>
+                            <td class="text-muted" style="width:40%">{{ key }}</td>
+                            <td>{{ value }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card mb-4">
+            <div class="card-header"><strong>Move stage</strong></div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('vetrova_quote_stage', id=quote.id) }}">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Next stage</label>
+                        <select class="form-select" name="stage" required>
+                            {% for s in stages %}
+                            <option value="{{ s }}" {% if quote.stage==s %}selected{% endif %}>
+                                {{ stage_labels[s] }}{% if quote.stage==s %} (current){% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Internal note (optional)</label>
+                        <textarea class="form-control" name="note" rows="3" placeholder="What did the customer say?"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-arrow-right-circle"></i> Update stage
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header"><strong>Stage history</strong></div>
+            <div class="card-body">
+                {% if quote.events %}
+                <ul class="list-unstyled mb-0">
+                    {% for e in quote.events %}
+                    <li class="mb-3 pb-3 border-bottom">
+                        <div class="small text-muted">
+                            {{ e.created_at.strftime('%d %b %Y, %I:%M %p') }}
+                            {% if e.user %} · {{ e.user.name or e.user.email }}{% endif %}
+                        </div>
+                        <div>
+                            {% if e.from_stage %}
+                            <span class="badge bg-light text-dark">{{ stage_labels.get(e.from_stage, e.from_stage) }}</span>
+                            <i class="bi bi-arrow-right small"></i>
+                            {% endif %}
+                            <span class="badge bg-info text-dark">{{ stage_labels.get(e.to_stage, e.to_stage) }}</span>
+                        </div>
+                        {% if e.note %}
+                        <div class="small mt-1" style="white-space:pre-wrap">{{ e.note }}</div>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted mb-0 small">No stage changes yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

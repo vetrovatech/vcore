@@ -79,6 +79,11 @@
                                 {{ form.is_active(class="form-check-input") }}
                                 {{ form.is_active.label(class="form-check-label") }}
                             </div>
+                            <div class="form-check mt-2">
+                                {{ form.show_in_agent_log(class="form-check-input") }}
+                                {{ form.show_in_agent_log.label(class="form-check-label") }}
+                                <div class="form-text small">Uncheck to hide this user from the /leads/agent-log matrix. Doesn't affect login or permissions.</div>
+                            </div>
                         </div>
                     </div>
 

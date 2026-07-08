@@ -329,6 +329,7 @@
                 <i class="bi bi-arrow-clockwise"></i> Refresh Token
             </button>
         {% endif %}
+        {% if current_user.is_manager_or_admin() %}
         <form method="POST" action="{{ url_for('indiamart_sync') }}" id="syncForm">
             <button type="submit" class="btn btn-success btn-sm" id="syncBtn">
                 <span class="sync-text"><i class="bi bi-arrow-repeat"></i> Sync IndiaMart</span>
@@ -342,6 +343,7 @@
                 <span class="fb-sync-spinner" style="display:none;"><span class="spinner-border spinner-border-sm"></span> Syncing...</span>
             </button>
         </form>
+        {% endif %}
         {% endif %}
         <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addLeadModal">
             <i class="bi bi-plus-circle"></i> + Create Lead
@@ -495,7 +497,8 @@
    (Gmail-style). Clicking it switches the assign POST from `lead_ids[]` to
    `select_all_matching=1` + the filter querystring, so the server re-runs
    the filter and assigns every match — no pagination limit. #}
-<!-- Bulk Action Bar -->
+<!-- Bulk Action Bar (manager/admin only — Promotors can't reassign leads) -->
+{% if current_user.is_manager_or_admin() %}
 <div class="bulk-bar" id="bulkBar"
      data-page-count="{{ leads|length }}"
      data-total-count="{{ pagination.total }}">
@@ -522,6 +525,7 @@
     </button>
     <button type="button" class="btn btn-link btn-sm text-muted" id="bulkClearBtn">Clear</button>
 </div>
+{% endif %}
 
 <!-- Leads Table -->
 <div class="card">

@@ -17,6 +17,11 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False, default='Promotor')  # Admin, Manager, Promotor
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    # Cosmetic-only flag: when False the user is hidden from the columns of
+    # /leads/agent-log but keeps every other permission (login, edit leads,
+    # etc). Manager toggles this in the user admin form. False for old team
+    # members who no longer need to appear in the daily activity matrix.
+    show_in_agent_log = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
@@ -2293,4 +2298,127 @@ class GatePassItem(db.Model):
 
     def __repr__(self):
         return f'<GatePassItem gp={self.gate_pass_id} ref={self.ref_code} qty={self.qty_this_pass}>'
+
+
+# ============================================================================
+# Vetrova Quotes (KAN — 2026-07-08)
+# ============================================================================
+# Customer fills a per-category configurator on vetrova.in (balcony,
+# staircase, pergola, …) and clicks "Get quote on WhatsApp". Glassyplatform
+# HMAC-forwards the payload to `POST /api/vetrova/quotes/ingest` here. BD
+# then works the lead through the same 5-stage funnel as Bathqube. Category
+# lives on the row so BD can filter (Balcony / Staircase / Pergola / …).
+# ============================================================================
+
+VETROVA_STAGES = (
+    'quote_generated',       # landed from vetrova.in configurator
+    'in_pipeline',           # BD actively working
+    'revision',              # revised quote sent
+    'awaiting_payment',      # order ready / waiting for payment
+    'closed_won',            # deal closed
+    'junk',                  # not a real lead
+    'rejected',              # lost / declined
+)
+
+VETROVA_ACTIVE_STAGES = ('quote_generated', 'in_pipeline', 'revision', 'awaiting_payment', 'closed_won')
+
+VETROVA_STAGE_LABELS = {
+    'quote_generated':  'Quote Generated',
+    'in_pipeline':      'In Pipeline',
+    'revision':         'Revision',
+    'awaiting_payment': 'Awaiting Payment',
+    'closed_won':       'Closed Won',
+    'junk':             'Junk',
+    'rejected':         'Rejected',
+}
+
+# Canonical category enum shared with glassyplatform. Slugs match
+# `categorySlug` on the POST payload. Labels are what BD sees in the filter
+# dropdown and the list-view column. Keep alphabetical after 'balcony' —
+# the three current railings-family categories first.
+VETROVA_CATEGORIES = (
+    ('balcony',   'Balcony'),
+    ('staircase', 'Staircase'),
+    ('pergola',   'Pergola'),
+)
+VETROVA_CATEGORY_LABELS = dict(VETROVA_CATEGORIES)
+
+
+class VetrovaQuote(db.Model):
+    """Configurator quote from vetrova.in, one row per customer submission."""
+    __tablename__ = 'vetrova_quotes'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Compact reference minted by glassyplatform (VQ-BAL-1234).
+    quote_ref = db.Column(db.String(32), unique=True, nullable=False, index=True)
+    # Distinct from quote_ref so future glassyplatform-side persistence can
+    # link back independently. Optional today (glassyplatform's endpoint is
+    # still stateless), so it may equal quote_ref for now.
+    external_id = db.Column(db.String(64), unique=True, nullable=True, index=True)
+
+    # Which configurator the customer used.
+    category_slug = db.Column(db.String(32), nullable=False, index=True)
+    category_label = db.Column(db.String(64), nullable=False)
+
+    # Customer
+    customer_name = db.Column(db.String(200), nullable=False)
+    phone = db.Column(db.String(32), nullable=False, index=True)
+    email = db.Column(db.String(200), nullable=True, index=True)
+    pincode = db.Column(db.String(12), nullable=True)
+    site_address = db.Column(db.Text, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    # Configurator snapshot (selection slugs as JSON) + dimensions.
+    selections = db.Column(db.Text, nullable=True)
+    running_ft = db.Column(db.Numeric(10, 2), default=0, nullable=False)
+    quantity = db.Column(db.Integer, default=1, nullable=False)
+
+    # Money — total is the ₹ figure the customer saw on the configurator.
+    # revised_total is what BD lands on after negotiation.
+    total = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    revised_total = db.Column(db.Numeric(12, 2), nullable=True)
+
+    stage = db.Column(db.String(32), nullable=False, default='quote_generated', index=True)
+    stage_notes = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    events = db.relationship('VetrovaStatusEvent', backref='quote', lazy=True,
+                             cascade='all, delete-orphan',
+                             order_by='VetrovaStatusEvent.created_at.desc()')
+
+    @property
+    def selections_parsed(self):
+        if not self.selections:
+            return {}
+        try:
+            return json.loads(self.selections)
+        except Exception:
+            return {}
+
+    def __repr__(self):
+        return f'<VetrovaQuote {self.quote_ref} {self.category_slug} {self.customer_name} {self.stage}>'
+
+
+class VetrovaStatusEvent(db.Model):
+    """Audit log of stage transitions on a VetrovaQuote."""
+    __tablename__ = 'vetrova_status_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('vetrova_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+
+    from_stage = db.Column(db.String(32), nullable=True)
+    to_stage = db.Column(db.String(32), nullable=False)
+    note = db.Column(db.Text, nullable=True)
+
+    triggered_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = db.relationship('User', foreign_keys=[triggered_by])
+
+    def __repr__(self):
+        return f'<VetrovaStatusEvent q={self.quote_id} {self.from_stage}->{self.to_stage}>'
 

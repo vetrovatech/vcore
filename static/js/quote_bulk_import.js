@@ -22,7 +22,14 @@
     // template files will fail header validation if columns are reordered or
     // renamed. Headers are matched case-insensitively, but text must match.
 
+    // Multi-group support (2026-07-03): the first column is `Group`. Rows
+    // sharing the same Group value get inserted under the same group on the
+    // quote — one upload can now populate 3, 5, 10 groups at once instead of
+    // needing one file per glass thickness / product category. If Group is
+    // blank on a row, the modal's "Fallback group" input applies (back-compat
+    // with old single-group workflow).
     const TEMPLATE_HEADERS = [
+        'Group',
         'Particular',
         'Actual W (MM)',
         'Actual H (MM)',
@@ -38,6 +45,7 @@
     // Maps each template column position to the data-field key used by
     // addSubItemWithData(). Order MUST match TEMPLATE_HEADERS.
     const COL_TO_FIELD = [
+        'group_name',
         'particular',
         'actual_width',
         'actual_height',
@@ -50,31 +58,42 @@
         'cutout',
     ];
 
-    const SAMPLE_ROW = ['N-G-B1 T-BLOCK', 990, 2400, 'MM', 1020, 2430, 2, 1320, 0, 0];
+    // Two sample rows across two groups so BD sees the multi-group pattern
+    // in the downloaded template instead of having to guess.
+    const SAMPLE_ROWS = [
+        ['6MM ST-136 HSG', 'N-G-B1 T-BLOCK', 990, 2400, 'MM', 1020, 2430, 2, 1320, 0, 0],
+        ['6MM ST-136 HSG', 'N-G-B2',         990, 2200, 'MM', 1020, 2230, 3, 1320, 0, 0],
+        ['8MM Tinted',      'T-BLOCK-1',    1200, 2100, 'MM', 1230, 2130, 5, 1650, 0, 0],
+    ];
 
     const INSTRUCTIONS = [
         ['VCore Bulk Quote Import — Instructions'],
         [''],
         ['1. Fill rows in the "Items" sheet. Do NOT rename or reorder columns.'],
-        ['2. Each row becomes one line item under your chosen Group.'],
+        ['2. Each row becomes one line item under the Group named in its first column.'],
+        ['   Rows sharing the same Group name land under the same group on the quote.'],
+        ['   One upload can create multiple groups — e.g., 6MM Toughened, 8MM Tinted, 12MM Clear.'],
         ['3. Column rules:'],
+        ['   - Group:             text, REQUIRED. Product category / glass spec (e.g., "6MM ST-136 HSG").'],
+        ['                        Rows with the same Group name go under the same group on the quote.'],
+        ['                        If a Group already exists on the quote, its items are appended; otherwise a new group is created.'],
         ['   - Particular:        text. The product description or ref code (e.g., "N-G-B1 T-BLOCK").'],
         ['   - Actual W / H:      mm. Optional. If filled, the system can derive Chargeable from these.'],
         ['   - Unit:              one of MM, sqft, pcs. Default MM. Use "pcs" only for piece-rate items (no area).'],
         ['   - Chargeable W / H:  mm. REQUIRED for MM / sqft rows. This is what drives Area (Sq Mtr).'],
         ['   - Qty:               whole number, REQUIRED, >= 1.'],
-        ['   - Rate (Rs/SqMt):    optional. If blank, the group-default rate set during import is used.'],
+        ['   - Rate (Rs/SqMt):    optional. If blank, the modal-default rate is used for the group.'],
         ['   - Holes / Cutouts:   integer counts. Default 0.'],
         [''],
-        ['4. Sample row in "Items" sheet shows the expected format. Replace it with your data.'],
+        ['4. Sample rows in "Items" sheet show the multi-group pattern. Replace with your data.'],
         ['5. Save as .xlsx and upload via "Import Items" on the quote form.'],
-        ['6. The Preview screen shows valid (green) and warning (amber) rows.'],
+        ['6. The Preview screen shows valid (green) and warning (amber) rows, grouped by their Group name.'],
         ['   Rows with missing required fields will be skipped at import.'],
         [''],
         ['Notes:'],
-        ['  - For multiple glass types/specs, do separate imports per Group (e.g., one upload per thickness).'],
+        ['  - Left the Group column blank? The row lands under the modal fallback group.'],
         ['  - Jumbo charge is computed from per-piece area (not Qty-multiplied).'],
-        ['  - The new Total Area (Sq Mtr) column = per-piece area x Qty (display only).'],
+        ['  - Total Area (Sq Mtr) column on the quote = per-piece area x Qty (display only).'],
     ];
 
     const SHEETJS_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
@@ -99,7 +118,7 @@
 
     function downloadTemplate() {
         loadSheetJS().then(() => {
-            const itemsData = [TEMPLATE_HEADERS, SAMPLE_ROW];
+            const itemsData = [TEMPLATE_HEADERS, ...SAMPLE_ROWS];
             const wsItems = XLSX.utils.aoa_to_sheet(itemsData);
             // Set column widths roughly to header lengths
             wsItems['!cols'] = TEMPLATE_HEADERS.map(h => ({ wch: Math.max(h.length + 2, 12) }));
@@ -211,22 +230,31 @@
             errBox.style.display = 'block';
             errBox.textContent = parseError;
             tbl.querySelector('tbody').innerHTML =
-                `<tr><td colspan="11" class="text-center text-muted py-3">Fix the file and re-upload.</td></tr>`;
+                `<tr><td colspan="13" class="text-center text-muted py-3">Fix the file and re-upload.</td></tr>`;
             if (summary) summary.innerHTML = '';
             return;
         }
         errBox.style.display = 'none';
         errBox.textContent = '';
 
+        const fallback = (document.getElementById('bulkImportNewGroupName')?.value || '').trim();
+
         let goodCount = 0, badCount = 0;
+        const groupCounts = {};    // group name → # of rows (for the summary chip)
         const tbody = parsedRows.map((row, i) => {
             const o = rowToObj(row);
             const errs = validateRow(o);
             if (errs.length) badCount++; else goodCount++;
             const cls = errs.length ? 'table-warning' : '';
             const errTxt = errs.length ? errs.join(', ') : '';
+            const effectiveGroup = o.group_name || fallback || '(no group)';
+            if (!errs.length) groupCounts[effectiveGroup] = (groupCounts[effectiveGroup] || 0) + 1;
+            const groupCell = o.group_name
+                ? escapeHtml(o.group_name)
+                : `<span class="text-muted fst-italic">${escapeHtml(fallback || '(none)')}</span>`;
             return `<tr class="${cls}">
                 <td>${i + 1}</td>
+                <td>${groupCell}</td>
                 <td>${escapeHtml(o.particular)}</td>
                 <td>${escapeHtml(o.actual_width)}</td>
                 <td>${escapeHtml(o.actual_height)}</td>
@@ -242,17 +270,20 @@
         }).join('');
 
         tbl.querySelector('tbody').innerHTML = tbody ||
-            `<tr><td colspan="12" class="text-center text-muted py-3">No data rows found in the file.</td></tr>`;
+            `<tr><td colspan="13" class="text-center text-muted py-3">No data rows found in the file.</td></tr>`;
 
         if (summary) {
+            const groupNames = Object.keys(groupCounts);
+            const groupsChip = groupNames.length
+                ? `<span class="badge bg-info text-dark me-2" title="${escapeHtml(groupNames.map(n => `${n}: ${groupCounts[n]}`).join(' · '))}">${groupNames.length} group${groupNames.length === 1 ? '' : 's'}</span>`
+                : '';
             summary.innerHTML = `
                 <span class="badge bg-success me-2">${goodCount} valid</span>
                 <span class="badge bg-warning text-dark me-2">${badCount} need attention</span>
-                <span class="text-muted small">(invalid rows are skipped at import)</span>
+                ${groupsChip}
+                <span class="text-muted small">(hover the groups chip to see per-group counts)</span>
             `;
         }
-
-        refreshGroupSelector();
     }
 
     function refreshGroupSelector() {
@@ -273,6 +304,19 @@
 
     // ─── commit (insert as sub-items) ────────────────────────────────────────
 
+    // Case-insensitive name match against existing group rows on the form.
+    // Returns null if no group row already carries that name.
+    function findExistingGroupRow(name) {
+        if (!name) return null;
+        const target = name.trim().toLowerCase();
+        const rows = document.querySelectorAll('#itemsBody .group-row');
+        for (const r of rows) {
+            const current = (r.querySelector('.particular-input')?.value || '').trim().toLowerCase();
+            if (current && current === target) return r;
+        }
+        return null;
+    }
+
     function commitImport() {
         if (parseError) {
             alert(parseError);
@@ -284,81 +328,90 @@
             return;
         }
 
-        const targetVal = document.getElementById('bulkImportTargetGroup')?.value;
-        const newName = document.getElementById('bulkImportNewGroupName')?.value.trim();
+        const fallbackName = document.getElementById('bulkImportNewGroupName')?.value.trim() || '';
         const groupRate = document.getElementById('bulkImportDefaultRate')?.value;
         const chargeableExtra = document.getElementById('bulkImportChargeableExtra')?.value;
 
-        let groupRow;
-        if (!targetVal || targetVal === '__new__') {
-            if (typeof window.addGroup !== 'function') {
-                alert('addGroup() is unavailable — page state is broken.');
-                return;
-            }
-            window.addGroup();
-            const groupRows = document.querySelectorAll('#itemsBody .group-row');
-            groupRow = groupRows[groupRows.length - 1];
-            if (newName) {
-                const nameInput = groupRow.querySelector('.particular-input');
-                if (nameInput) nameInput.value = newName;
-            }
-        } else {
-            groupRow = document.querySelector(`[data-item-id="${targetVal}"]`);
+        if (typeof window.addGroup !== 'function' || typeof window.addSubItemWithData !== 'function') {
+            alert('Form helpers (addGroup / addSubItemWithData) are unavailable — page state is broken.');
+            return;
+        }
+
+        // Bucket valid rows by their Group name (falling back to modal default).
+        // Preserve insertion order so groups end up on the quote in the order
+        // BD listed them in the spreadsheet.
+        const buckets = new Map();  // name → [row, row, ...]
+        for (const o of validObjs) {
+            const name = (o.group_name || fallbackName || 'Imported items').trim();
+            if (!buckets.has(name)) buckets.set(name, []);
+            buckets.get(name).push(o);
+        }
+
+        const touchedGroupRows = [];   // for post-commit recalc
+
+        for (const [name, rows] of buckets.entries()) {
+            // Reuse an existing group of the same name if the quote already
+            // has one — BD may bulk-import a supplementary batch mid-edit
+            // and expect it to append, not create a duplicate group.
+            let groupRow = findExistingGroupRow(name);
             if (!groupRow) {
-                alert('Target group no longer exists. Pick another.');
-                return;
+                window.addGroup();
+                const allGroups = document.querySelectorAll('#itemsBody .group-row');
+                groupRow = allGroups[allGroups.length - 1];
+                const nameInput = groupRow.querySelector('.particular-input');
+                if (nameInput) nameInput.value = name;
             }
+
+            // Apply modal defaults per-group (only if not already set on the row).
+            if (groupRate) {
+                const gr = groupRow.querySelector('.group-rate-input');
+                if (gr && !gr.value) gr.value = groupRate;
+            }
+            if (chargeableExtra) {
+                const ce = groupRow.querySelector('.chargeable-extra-input');
+                if (ce && !ce.value) ce.value = chargeableExtra;
+            }
+
+            for (const o of rows) {
+                const cw = numify(o.chargeable_width);
+                const ch = numify(o.chargeable_height);
+                const aw = numify(o.actual_width);
+                const ah = numify(o.actual_height);
+                const qty = numify(o.quantity);
+                const rate = numify(o.rate_sqper) || numify(groupRate) || 0;
+                const unitMap = { MM: 'MM', SQFT: 'sqft', PCS: 'pcs' };
+                const unitNormalized = unitMap[(o.unit || 'MM').toUpperCase()] || 'MM';
+
+                window.addSubItemWithData(groupRow, {
+                    particular: o.particular || '',
+                    actual_width: aw,
+                    actual_height: ah,
+                    chargeable_width: cw,
+                    chargeable_height: ch,
+                    unit: unitNormalized,
+                    quantity: qty,
+                    rate_sqper: rate,
+                    hole: numify(o.hole) || 0,
+                    cutout: numify(o.cutout) || 0,
+                    chargeable_extra: numify(chargeableExtra) || 30,
+                    total: 0,
+                    unit_square: null,
+                });
+            }
+            touchedGroupRows.push(groupRow);
         }
 
-        if (groupRate) {
-            const gr = groupRow.querySelector('.group-rate-input');
-            if (gr) gr.value = groupRate;
+        // Recalc all newly inserted rows across every touched group so
+        // derived fields (area, per-piece total, group total) populate.
+        for (const groupRow of touchedGroupRows) {
+            const groupId = groupRow.dataset.itemId;
+            document.querySelectorAll(`[data-parent-id="${groupId}"]`).forEach(r => {
+                const trigger = r.querySelector('.qty-input');
+                if (trigger && typeof window.calculateItemTotal === 'function') {
+                    window.calculateItemTotal(trigger);
+                }
+            });
         }
-        if (chargeableExtra) {
-            const ce = groupRow.querySelector('.chargeable-extra-input');
-            if (ce) ce.value = chargeableExtra;
-        }
-
-        validObjs.forEach(o => {
-            const cw = numify(o.chargeable_width);
-            const ch = numify(o.chargeable_height);
-            const aw = numify(o.actual_width);
-            const ah = numify(o.actual_height);
-            const qty = numify(o.quantity);
-            const rate = numify(o.rate_sqper) || numify(groupRate) || 0;
-            // Form's <select> uses values exactly: 'MM', 'sqft', 'pcs'.
-            const unitMap = { MM: 'MM', SQFT: 'sqft', PCS: 'pcs' };
-            const unitNormalized = unitMap[(o.unit || 'MM').toUpperCase()] || 'MM';
-
-            const data = {
-                particular: o.particular || '',
-                actual_width: aw,
-                actual_height: ah,
-                chargeable_width: cw,
-                chargeable_height: ch,
-                unit: unitNormalized,
-                quantity: qty,
-                rate_sqper: rate,
-                hole: numify(o.hole) || 0,
-                cutout: numify(o.cutout) || 0,
-                chargeable_extra: numify(chargeableExtra) || 30,
-                total: 0,
-                unit_square: null,
-            };
-
-            if (typeof window.addSubItemWithData === 'function') {
-                window.addSubItemWithData(groupRow, data);
-            }
-        });
-
-        // Recalc all newly inserted rows so derived fields populate
-        const groupId = groupRow.dataset.itemId;
-        document.querySelectorAll(`[data-parent-id="${groupId}"]`).forEach(r => {
-            const trigger = r.querySelector('.qty-input');
-            if (trigger && typeof window.calculateItemTotal === 'function') {
-                window.calculateItemTotal(trigger);
-            }
-        });
 
         if (typeof window.updateTotals === 'function') window.updateTotals();
         if (typeof window.renumberItems === 'function') window.renumberItems();

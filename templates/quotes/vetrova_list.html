@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Vetrova Quotes - VCore{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="mb-1"><i class="bi bi-buildings"></i> Vetrova Quotes</h2>
+        <span class="text-muted small">Auto-ingested from vetrova.in configurator (Balcony / Staircase / Pergola / …)</span>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('vetrova_quotes_list') }}" class="row g-3">
+            <div class="col-md-3">
+                <input type="text" class="form-control" name="search"
+                       placeholder="Search name, phone, email or quote ref"
+                       value="{{ search }}">
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" name="category">
+                    <option value="">All categories</option>
+                    {% for slug, label in categories %}
+                    <option value="{{ slug }}" {% if category==slug %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" name="stage">
+                    <option value="">All stages</option>
+                    {% for s in stages %}
+                    <option value="{{ s }}" {% if stage==s %}selected{% endif %}>{{ stage_labels[s] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-center gap-2 flex-wrap">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
+                <a href="{{ url_for('vetrova_quotes_list') }}" class="btn btn-secondary js-clear-filters">
+                    <i class="bi bi-x-circle"></i> Clear
+                </a>
+                <div class="form-check ms-2">
+                    <input class="form-check-input" type="checkbox" id="archivedToggle"
+                           name="archived" value="1"
+                           {% if include_archived %}checked{% endif %}
+                           onchange="this.form.submit()">
+                    <label class="form-check-label small text-muted" for="archivedToggle">
+                        Include Junk &amp; Rejected
+                    </label>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if quotes %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Quote Ref</th>
+                        <th>Received</th>
+                        <th>Category</th>
+                        <th>Customer</th>
+                        <th>Phone</th>
+                        <th>Total</th>
+                        <th>Stage</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for q in quotes %}
+                    <tr>
+                        <td><strong>{{ q.quote_ref }}</strong></td>
+                        <td>{{ q.created_at.strftime('%d %b %Y') }}</td>
+                        <td><span class="badge bg-secondary">{{ q.category_label }}</span></td>
+                        <td>{{ q.customer_name }}</td>
+                        <td>{{ q.phone }}</td>
+                        <td>₹{{ '{:,.0f}'.format(q.revised_total or q.total or 0) }}</td>
+                        <td><span class="badge bg-info text-dark">{{ stage_labels.get(q.stage, q.stage) }}</span></td>
+                        <td class="d-flex gap-1">
+                            <a href="{{ url_for('vetrova_quote_view', id=q.id) }}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                            {% if current_user.is_admin() %}
+                            <form method="POST" action="{{ url_for('vetrova_quote_delete', id=q.id) }}"
+                                  onsubmit="return confirm('Delete quote {{ q.quote_ref }} ({{ q.customer_name }})? This cannot be undone.');"
+                                  style="display:inline;">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete (admin only)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted text-center my-4">No Vetrova quotes yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/list_filter_persistence.js') }}"></script>
+<script>ListFilterPersist.init({ key: 'vetrova_quotes_filter_params' });</script>
+{% endblock %}
