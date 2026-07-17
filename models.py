@@ -1202,6 +1202,32 @@ class MeetingPhoto(db.Model):
         return f'<MeetingPhoto {self.id} for meeting {self.meeting_id}>'
 
 
+class Brand(db.Model):
+    """One WhatsApp Business Account (WABA) per row.
+
+    Each row holds the credentials for a specific brand's WhatsApp sender.
+    Initially seeded with 'bathqube' copied from env vars; 'vetrova' and any
+    future brands each add their own row with their own WABA credentials and
+    phone number. The send helper looks up creds per-send, so no code change
+    is needed to onboard a new brand — just insert a row + register the
+    same-named template on that brand's WABA.
+    """
+    __tablename__ = 'brands'
+
+    id                  = db.Column(db.Integer, primary_key=True)
+    slug                = db.Column(db.String(32),  unique=True, nullable=False, index=True)
+    name                = db.Column(db.String(120), nullable=False)
+    wa_phone_number_id  = db.Column(db.String(64),  nullable=False)
+    wa_access_token     = db.Column(db.Text,        nullable=False)
+    wa_api_version      = db.Column(db.String(10),  nullable=False, default='v21.0')
+    is_active           = db.Column(db.Boolean,     nullable=False, default=True)
+    created_at          = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at          = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f'<Brand {self.slug} phone_id={self.wa_phone_number_id}>'
+
+
 class WhatsAppMessage(db.Model):
     """Audit log of every WhatsApp template message sent via the Cloud API.
 
@@ -1214,6 +1240,12 @@ class WhatsAppMessage(db.Model):
     id              = db.Column(db.Integer, primary_key=True)
     lead_id         = db.Column(db.Integer, db.ForeignKey('leads.id', ondelete='SET NULL'), nullable=True, index=True)
     meeting_id      = db.Column(db.Integer, db.ForeignKey('meetings.id', ondelete='SET NULL'), nullable=True, index=True)
+    # Which Bathqube quote this send belongs to (bulk-send from the Bathqube
+    # inbox). Nullable for lead-only sends (single-send from lead view).
+    bathqube_quote_id = db.Column(db.Integer, db.ForeignKey('bathqube_quotes.id', ondelete='SET NULL'), nullable=True, index=True)
+    # Which brand's WABA sent this message. Nullable for legacy rows sent
+    # before the Brand table existed (env-var single-tenant era).
+    brand_id        = db.Column(db.Integer, db.ForeignKey('brands.id', ondelete='SET NULL'), nullable=True, index=True)
     to_number       = db.Column(db.String(20),  nullable=False, index=True)
     template_name   = db.Column(db.String(100), nullable=False)
     language        = db.Column(db.String(10),  nullable=False, default='en')
@@ -1226,9 +1258,11 @@ class WhatsAppMessage(db.Model):
     sent_at         = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at      = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    lead    = db.relationship('Lead',    foreign_keys=[lead_id],    backref='whatsapp_messages')
-    meeting = db.relationship('Meeting', foreign_keys=[meeting_id], backref='whatsapp_messages')
-    sender  = db.relationship('User',    foreign_keys=[sent_by])
+    lead            = db.relationship('Lead',    foreign_keys=[lead_id],           backref='whatsapp_messages')
+    meeting         = db.relationship('Meeting', foreign_keys=[meeting_id],        backref='whatsapp_messages')
+    bathqube_quote  = db.relationship('BathqubeQuote', foreign_keys=[bathqube_quote_id], backref='whatsapp_messages')
+    brand           = db.relationship('Brand',   foreign_keys=[brand_id])
+    sender          = db.relationship('User',    foreign_keys=[sent_by])
 
     def __repr__(self):
         return f'<WhatsAppMessage {self.id} {self.template_name} → {self.to_number} [{self.status}]>'

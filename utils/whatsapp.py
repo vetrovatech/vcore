@@ -30,7 +30,7 @@ def normalize_phone(raw):
     return digits or None
 
 
-def send_template(to, template_name, language="en", variables=None):
+def send_template(to, template_name, language="en", variables=None, brand=None):
     """
     Send an approved WhatsApp template.
 
@@ -39,6 +39,9 @@ def send_template(to, template_name, language="en", variables=None):
         template_name: exact template name as approved by Meta
         language: language code matching the approved template (e.g. 'en', 'en_US', 'hi')
         variables: list of strings for {{1}}, {{2}}, ... in the template body
+        brand: optional Brand instance whose WABA credentials should be used.
+               When None, falls back to WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID
+               env vars (single-tenant legacy path — kept for back-compat).
 
     Returns:
         dict with keys:
@@ -47,9 +50,14 @@ def send_template(to, template_name, language="en", variables=None):
           error   (str, when failed)
           status  (HTTP status code from Graph API)
     """
-    token = os.getenv("WHATSAPP_TOKEN", "")
-    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
-    api_ver = os.getenv("WHATSAPP_API_VERSION", "v21.0")
+    if brand is not None:
+        token = brand.wa_access_token or ""
+        phone_id = brand.wa_phone_number_id or ""
+        api_ver = brand.wa_api_version or "v21.0"
+    else:
+        token = os.getenv("WHATSAPP_TOKEN", "")
+        phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+        api_ver = os.getenv("WHATSAPP_API_VERSION", "v21.0")
 
     if not token or not phone_id:
         return {"success": False, "error": "WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID not configured"}

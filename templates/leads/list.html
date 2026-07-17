@@ -523,6 +523,23 @@
         <span class="bulk-assign-text"><i class="bi bi-person-check-fill"></i> Assign</span>
         <span class="bulk-assign-spinner" style="display:none;"><span class="spinner-border spinner-border-sm"></span> Assigning...</span>
     </button>
+    {# Bulk WhatsApp send — pick a template from LEAD_TEMPLATES + Send.
+       Server accepts up to MAX_BULK_WA_LEADS (25) per request; anything
+       above is truncated + reported back. Selection uses the same
+       persisted set as bulk-assign (see JS below). #}
+    <span class="bulk-bar-sep" style="width:1px; align-self:stretch; background:rgba(0,0,0,0.1);"></span>
+    <select class="form-select form-select-sm" id="bulkTemplate">
+        <option value="">— WhatsApp template —</option>
+        {% for t in lead_templates %}
+        <option value="{{ t.name }}" data-needs-document="{{ 'true' if t.needs_document else 'false' }}">
+            {{ t.label }}
+        </option>
+        {% endfor %}
+    </select>
+    <button type="button" class="btn btn-success btn-sm" id="bulkSendWaBtn">
+        <span class="bulk-wa-text"><i class="bi bi-whatsapp"></i> Send WhatsApp</span>
+        <span class="bulk-wa-spinner" style="display:none;"><span class="spinner-border spinner-border-sm"></span> Sending...</span>
+    </button>
     <button type="button" class="btn btn-link btn-sm text-muted" id="bulkClearBtn">Clear</button>
 </div>
 {% endif %}
@@ -1130,6 +1147,78 @@
                 btn.disabled = false;
                 btn.querySelector('.bulk-assign-text').style.display = 'inline-block';
                 btn.querySelector('.bulk-assign-spinner').style.display = 'none';
+            });
+    });
+
+    // Bulk WhatsApp template send. Mirrors the bulk-assign flow but posts
+    // to /leads/bulk-send-template. Only reads the persisted cross-page
+    // selection (no "select all matching" server-side loop yet — Meta's
+    // per-batch 25-lead cap makes the "select all matching" pattern less
+    // useful here; BD picks a manageable batch and fires).
+    document.getElementById('bulkSendWaBtn')?.addEventListener('click', function () {
+        const picker = document.getElementById('bulkTemplate');
+        const templateName = picker.value;
+        if (!templateName) { alert('Pick a WhatsApp template to send.'); return; }
+        const opt = picker.options[picker.selectedIndex];
+        const templateLabel = opt.text.trim();
+        const withCatalogue = opt.getAttribute('data-needs-document') === 'true';
+
+        const ids = Array.from(selectedSet);
+        if (ids.length === 0) { alert('Select at least one lead.'); return; }
+
+        // Meta cap — server truncates but warn the BD before firing so
+        // they know the tail won't send.
+        const CAP = 25;
+        const willTruncate = ids.length > CAP;
+        let msg = `Send the "${templateLabel}" WhatsApp template to ${Math.min(ids.length, CAP)} lead(s)`;
+        if (withCatalogue) msg += ' with the catalogue PDF attached';
+        msg += '?';
+        if (willTruncate) msg += `\n\nOnly the first ${CAP} of ${ids.length} selected will be sent (Meta batch cap).`;
+        if (!confirm(msg)) return;
+
+        const btn = this;
+        btn.disabled = true;
+        btn.querySelector('.bulk-wa-text').style.display = 'none';
+        btn.querySelector('.bulk-wa-spinner').style.display = 'inline-block';
+
+        const fd = new FormData();
+        fd.append('template_name', templateName);
+        ids.forEach(id => fd.append('lead_ids[]', id));
+
+        fetch('{{ url_for("leads_bulk_send_template") }}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const parts = [
+                        `Sent: ${data.sent}`,
+                        `Failed: ${data.failed}`,
+                        `Skipped (no phone): ${data.skipped}`,
+                    ];
+                    if (data.truncated) parts.push(`Truncated at ${data.cap} (Meta batch cap).`);
+                    if (data.failures && data.failures.length) {
+                        parts.push('');
+                        parts.push('First failures:');
+                        data.failures.slice(0, 5).forEach(f => {
+                            parts.push(`  #${f.lead_id} ${f.name || '(no name)'} — ${f.error}`);
+                        });
+                    }
+                    alert(parts.join('\n'));
+                    // Clear the selection + reload so the "WhatsApp Sent"
+                    // column reflects the new activity.
+                    clearPersisted();
+                    location.reload();
+                } else {
+                    alert('❌ ' + (data.error || 'Failed to send.'));
+                    btn.disabled = false;
+                    btn.querySelector('.bulk-wa-text').style.display = 'inline-block';
+                    btn.querySelector('.bulk-wa-spinner').style.display = 'none';
+                }
+            })
+            .catch(() => {
+                alert('Network error. Please try again.');
+                btn.disabled = false;
+                btn.querySelector('.bulk-wa-text').style.display = 'inline-block';
+                btn.querySelector('.bulk-wa-spinner').style.display = 'none';
             });
     });
 

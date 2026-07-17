@@ -46,6 +46,24 @@
     </div>
 </div>
 
+{% if quotes and current_user.is_manager_or_admin() %}
+{# Bulk WhatsApp bar — manager/admin only. Cap 25 per batch (matches backend). #}
+<div id="bqBulkBar" class="card mb-3" style="display:none;">
+    <div class="card-body py-2 d-flex align-items-center gap-2 flex-wrap">
+        <span class="fw-bold"><i class="bi bi-check2-square"></i> <span id="bqBulkCount">0</span> selected</span>
+        <span class="text-muted small">|</span>
+        <input type="text" class="form-control form-control-sm" id="bqBulkTemplate" value="welcome"
+               title="Approved WhatsApp template name" style="max-width:150px;">
+        <button type="button" class="btn btn-success btn-sm" id="bqBulkWaBtn">
+            <span class="bulk-wa-text"><i class="bi bi-whatsapp"></i> Send WhatsApp</span>
+            <span class="bulk-wa-spinner" style="display:none;"><span class="spinner-border spinner-border-sm"></span> Sending...</span>
+        </button>
+        <button type="button" class="btn btn-link btn-sm text-muted" id="bqBulkClear">Clear</button>
+        <span class="text-muted small ms-auto">Cap 25 per batch · sends from Bathqube WABA</span>
+    </div>
+</div>
+{% endif %}
+
 <div class="card">
     <div class="card-body">
         {% if quotes %}
@@ -53,6 +71,9 @@
             <table class="table table-hover">
                 <thead>
                     <tr>
+                        {% if current_user.is_manager_or_admin() %}
+                        <th style="width:36px;"><input type="checkbox" class="form-check-input" id="bqSelectAll"></th>
+                        {% endif %}
                         <th>Estimate #</th>
                         <th>Received</th>
                         <th>Customer</th>
@@ -65,6 +86,9 @@
                 <tbody>
                     {% for q in quotes %}
                     <tr>
+                        {% if current_user.is_manager_or_admin() %}
+                        <td><input type="checkbox" class="form-check-input bq-check" data-quote-id="{{ q.id }}"></td>
+                        {% endif %}
                         <td><strong>{{ q.estimate_number or ('BQ-' ~ q.id) }}</strong></td>
                         <td>{{ q.created_at.strftime('%d %b %Y') }}</td>
                         <td>{{ q.customer_name }}</td>
@@ -100,4 +124,89 @@
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/list_filter_persistence.js') }}"></script>
 <script>ListFilterPersist.init({ key: 'bathqube_quotes_filter_params' });</script>
+
+{% if current_user.is_manager_or_admin() %}
+<script>
+// Bulk WhatsApp send from Bathqube Quotations. Brand = Bathqube (implicit
+// server-side). Cap 25 per batch (matches backend MAX_BULK_WA_QUOTES).
+(function () {
+    const bar = document.getElementById('bqBulkBar');
+    const countEl = document.getElementById('bqBulkCount');
+    const checks = () => Array.from(document.querySelectorAll('.bq-check'));
+    const selectedIds = () => checks().filter(c => c.checked).map(c => c.dataset.quoteId);
+
+    function refreshBar() {
+        const n = selectedIds().length;
+        countEl.textContent = n;
+        bar.style.display = n > 0 ? '' : 'none';
+    }
+
+    document.getElementById('bqSelectAll')?.addEventListener('change', function () {
+        checks().forEach(c => { c.checked = this.checked; });
+        refreshBar();
+    });
+    checks().forEach(c => c.addEventListener('change', refreshBar));
+
+    document.getElementById('bqBulkClear')?.addEventListener('click', function () {
+        checks().forEach(c => { c.checked = false; });
+        const master = document.getElementById('bqSelectAll');
+        if (master) master.checked = false;
+        refreshBar();
+    });
+
+    document.getElementById('bqBulkWaBtn')?.addEventListener('click', function () {
+        const ids = selectedIds();
+        if (ids.length === 0) { alert('Select at least one quote.'); return; }
+
+        const templateName = (document.getElementById('bqBulkTemplate').value || 'welcome').trim();
+        if (!templateName) { alert('Template name is required.'); return; }
+
+        const CAP = 25;
+        const cappedNote = ids.length > CAP
+            ? `\n\nOnly the first ${CAP} will be sent this batch — pick the rest and repeat.`
+            : '';
+        if (!confirm(`Send Bathqube "${templateName}" to ${ids.length} customer(s)?${cappedNote}`)) return;
+
+        const fd = new FormData();
+        fd.append('template_name', templateName);
+        ids.forEach(id => fd.append('quote_ids', id));
+
+        const btn = this;
+        btn.disabled = true;
+        btn.querySelector('.bulk-wa-text').style.display = 'none';
+        btn.querySelector('.bulk-wa-spinner').style.display = 'inline-block';
+
+        fetch('{{ url_for("bathqube_bulk_send_whatsapp") }}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.querySelector('.bulk-wa-text').style.display = 'inline-block';
+                btn.querySelector('.bulk-wa-spinner').style.display = 'none';
+                if (!data.success) {
+                    alert('❌ ' + (data.error || 'Failed to send.'));
+                    return;
+                }
+                const parts = [
+                    `Sent: ${data.sent}`,
+                    `Failed: ${data.failed}`,
+                    `Skipped (no phone): ${data.skipped}`,
+                ];
+                if (data.truncated) parts.push(`\n(Capped at ${data.cap} — pick the next batch and repeat.)`);
+                if (data.failures && data.failures.length) {
+                    parts.push('\nFirst failures:');
+                    data.failures.slice(0, 5).forEach(f => parts.push(`• ${f.name || 'Quote #' + f.quote_id}: ${f.error}`));
+                }
+                alert(parts.join('\n'));
+                location.reload();
+            })
+            .catch(() => {
+                alert('Network error. Please try again.');
+                btn.disabled = false;
+                btn.querySelector('.bulk-wa-text').style.display = 'inline-block';
+                btn.querySelector('.bulk-wa-spinner').style.display = 'none';
+            });
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}

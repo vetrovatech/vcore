@@ -246,6 +246,66 @@
             </div>
         </div>
 
+        {# ── WhatsApp Sent card — reads from whatsapp_messages backref ─── #}
+        {% set wa_msgs = (quote.whatsapp_messages or [])|sort(attribute='sent_at', reverse=true) %}
+        {% set wa_sent = wa_msgs|selectattr('status', 'in', ['sent','delivered','read'])|list|length %}
+        {% set wa_failed = wa_msgs|selectattr('status', 'equalto', 'failed')|list|length %}
+        {% if wa_msgs %}
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong><i class="bi bi-whatsapp text-success"></i> WhatsApp sent</strong>
+                <span class="text-muted small">{{ wa_msgs|length }} total attempt{{ '' if wa_msgs|length == 1 else 's' }}</span>
+            </div>
+            <div class="card-body">
+                <div class="d-flex align-items-baseline gap-4 mb-2">
+                    <div>
+                        <div class="fw-bold text-success" style="font-size:1.6rem; line-height:1;">{{ wa_sent }}</div>
+                        <div class="text-muted small">sent to this customer</div>
+                    </div>
+                    {% if wa_failed > 0 %}
+                    <div>
+                        <div class="fw-bold text-danger" style="font-size:1.1rem; line-height:1;">{{ wa_failed }}</div>
+                        <div class="text-muted small">failed</div>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0" style="font-size:0.82rem;">
+                        <thead>
+                            <tr>
+                                <th>Template</th>
+                                <th>Brand</th>
+                                <th>When</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for m in wa_msgs[:8] %}
+                            <tr>
+                                <td>{{ m.template_name }}</td>
+                                <td>{{ m.brand.name if m.brand else '—' }}</td>
+                                <td>{{ m.sent_at.strftime('%d %b, %H:%M') }}</td>
+                                <td>
+                                    {% if m.status in ('sent','delivered','read') %}
+                                    <span class="badge bg-success">{{ m.status }}</span>
+                                    {% elif m.status == 'failed' %}
+                                    <span class="badge bg-danger" title="{{ m.error_message or '' }}">failed</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">{{ m.status }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% if wa_msgs|length > 8 %}
+                <div class="text-muted small mt-1">+{{ wa_msgs|length - 8 }} older</div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
         <div class="card mb-3">
             <div class="card-header"><strong>Pricing</strong></div>
             <div class="card-body">

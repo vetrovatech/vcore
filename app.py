@@ -122,6 +122,17 @@ def panel_display_filter(panel, unit):
     return format_panel_display(panel.get('width'), panel.get('height'), unit)
 
 
+# Expose the lead-facing WhatsApp template catalogue to every template so
+# both /leads (bulk send) and /leads/<id> (single send) can render the
+# picker dropdown without each route having to pass it in explicitly.
+@app.context_processor
+def _inject_lead_templates():
+    from utils.lead_templates import LEAD_TEMPLATES
+    return {
+        'lead_templates': [t.to_dropdown_dict() for t in LEAD_TEMPLATES],
+    }
+
+
 # Lambda-specific: Dispose connections before each request
 @app.before_request
 def before_request():
@@ -4092,72 +4103,264 @@ def lead_set_customer_type(id):
     return jsonify({'success': True, 'customer_type': lead.customer_type})
 
 
-@app.route('/leads/<int:id>/send-welcome', methods=['POST'])
-@login_required
-def lead_send_welcome(id):
-    """Send the approved 'welcome' WhatsApp utility template to a lead.
+def _send_lead_template(lead, template, cached_media_id=None):
+    """Send one approved WhatsApp template to one lead. Return (msg, ok).
 
-    Template name was 'welcome_new_lead' (marketing category) until BD
-    reprovisioned it as 'welcome' (utility category) on 2026-06-30.
-    Utility templates have laxer 24-hour-window rules than marketing —
-    they can go to any user without a prior conversation.
+    Handles the branching between plain-body templates and document-header
+    templates (catalogue attached), the "no {{1}} placeholder" retry, and
+    the `whatsapp_messages` audit row. Shared by both the single-lead
+    (`lead_send_template`) and the bulk (`leads_bulk_send_template`)
+    endpoints so the send logic stays identical everywhere.
 
-    The template body may or may not have a `{{1}}` placeholder. We try
-    WITH first_name first; if Meta rejects with a "parameter structure"
-    error we retry WITHOUT variables so a static "welcome" template
-    still sends.
+    Args:
+        lead: Lead ORM instance with .id, .name, .contact.
+        template: LeadTemplate from utils.lead_templates.
+        cached_media_id: optional media_id already uploaded to Meta this
+            request — pass through in bulk sends so we don't re-upload the
+            catalogue N times. When None and the template needs a document,
+            we upload here.
+
+    Returns:
+        (WhatsAppMessage row, ok:bool). Row is db.session.added AND
+        flushed; caller commits.
     """
-    from models import Lead, WhatsAppMessage
-    from utils.whatsapp import send_template, normalize_phone
+    from models import WhatsAppMessage
+    from utils.whatsapp import (
+        send_template,
+        send_template_with_document,
+        upload_media,
+        normalize_phone,
+    )
+    from utils.lead_templates import build_body_variables
 
-    lead = Lead.query.get_or_404(id)
-    if not lead.contact:
-        return jsonify({'success': False, 'error': 'Lead has no phone number'}), 400
-
-    first_name = (lead.name or 'there').strip().split()[0]
-    variables = [first_name]
-
+    variables = build_body_variables(template, lead)
     msg = WhatsAppMessage(
         lead_id=lead.id,
         to_number=normalize_phone(lead.contact) or lead.contact,
-        template_name='welcome',
-        language='en',
+        template_name=template.name,
+        language=template.language,
         variables_json=json.dumps(variables),
         sent_by=current_user.id,
         status='queued',
     )
     db.session.add(msg)
-    db.session.flush()  # get msg.id without committing the send-attempt yet
+    db.session.flush()
 
-    result = send_template(
-        to=lead.contact,
-        template_name='welcome',
-        language='en',
-        variables=variables,
-    )
-    # Auto-retry without variables if the template body has no {{1}}.
-    if not result.get('success') and 'parameter' in (result.get('error') or '').lower():
+    # Document-header template (e.g. general_followup with catalogue).
+    if template.needs_document:
+        media_id = cached_media_id
+        if not media_id:
+            try:
+                with open(template.document_path, 'rb') as f:
+                    pdf_bytes = f.read()
+            except OSError as e:
+                msg.status = 'failed'
+                msg.error_message = f'Catalogue file missing: {e}'
+                return msg, False
+            up = upload_media(pdf_bytes, template.document_filename, mime_type='application/pdf')
+            if not up.get('success'):
+                msg.status = 'failed'
+                msg.error_message = f'Media upload failed: {up.get("error", "unknown")}'
+                return msg, False
+            media_id = up['media_id']
+
+        result = send_template_with_document(
+            to=lead.contact,
+            template_name=template.name,
+            media_id=media_id,
+            filename=template.document_filename,
+            language=template.language,
+            body_variables=variables if variables else None,
+        )
+    else:
         result = send_template(
             to=lead.contact,
-            template_name='welcome',
-            language='en',
-            variables=None,
+            template_name=template.name,
+            language=template.language,
+            variables=variables,
         )
-        if result.get('success'):
-            msg.variables_json = json.dumps([])
+        # Body-only templates: retry without vars if Meta complains the
+        # template has no {{1}} slot. Only meaningful for the plain-body
+        # branch — document templates always specify their header params
+        # so the "no placeholder" case doesn't apply.
+        if not result.get('success') and 'parameter' in (result.get('error') or '').lower():
+            result = send_template(
+                to=lead.contact,
+                template_name=template.name,
+                language=template.language,
+                variables=None,
+            )
+            if result.get('success'):
+                msg.variables_json = json.dumps([])
 
     if result.get('success'):
         msg.status = 'sent'
         msg.wamid = result.get('wamid')
-    else:
-        msg.status = 'failed'
-        msg.error_message = result.get('error', 'Unknown error')
+        return msg, True
+
+    msg.status = 'failed'
+    msg.error_message = result.get('error', 'Unknown error')
+    return msg, False
+
+
+@app.route('/leads/<int:id>/send-template', methods=['POST'])
+@login_required
+def lead_send_template(id):
+    """Send a BD-picked approved WhatsApp template to one lead.
+
+    Input (POST form):
+        template_name — one of the LEAD_TEMPLATES entries (welcome,
+                        general_followup, ...). Defaults to 'welcome' so
+                        existing single-button callers keep working.
+
+    See utils/lead_templates.py for the registry + how to add a template.
+    Document-header templates (e.g. `general_followup`) automatically
+    upload the bundled catalogue PDF to Meta and reference it in the
+    template's document slot.
+    """
+    from models import Lead
+    from utils.lead_templates import get_lead_template
+
+    lead = Lead.query.get_or_404(id)
+    if not lead.contact:
+        return jsonify({'success': False, 'error': 'Lead has no phone number'}), 400
+
+    template_name = (request.form.get('template_name') or 'welcome').strip()
+    template = get_lead_template(template_name)
+    if not template:
+        return jsonify({'success': False, 'error': f'Unknown template: {template_name!r}'}), 400
+
+    msg, ok = _send_lead_template(lead, template)
+    db.session.commit()
+
+    if ok:
+        return jsonify({'success': True, 'wamid': msg.wamid, 'to': msg.to_number, 'template': template.name})
+    return jsonify({'success': False, 'error': msg.error_message, 'template': template.name}), 502
+
+
+@app.route('/leads/<int:id>/send-welcome', methods=['POST'])
+@login_required
+def lead_send_welcome(id):
+    """Legacy alias for `lead_send_template` with template_name='welcome'.
+
+    Kept so existing JS callers (templates/leads/view.html's older
+    sendWelcome() button, any bookmarks) don't 404 during the rollout.
+    New UIs should POST directly to /leads/<id>/send-template with a
+    template_name form field.
+    """
+    from models import Lead
+    from utils.lead_templates import get_lead_template
+
+    lead = Lead.query.get_or_404(id)
+    if not lead.contact:
+        return jsonify({'success': False, 'error': 'Lead has no phone number'}), 400
+
+    template = get_lead_template('welcome')
+    if not template:
+        return jsonify({'success': False, 'error': 'Welcome template not configured'}), 500
+
+    msg, ok = _send_lead_template(lead, template)
+    db.session.commit()
+
+    if ok:
+        return jsonify({'success': True, 'wamid': msg.wamid, 'to': msg.to_number})
+    return jsonify({'success': False, 'error': msg.error_message}), 502
+
+
+# ── Bulk WhatsApp template send from /leads ─────────────────────────────────
+# BD picks leads via the checkbox column on /leads (same cross-page selection
+# infra as bulk-assign) and picks a template from the dropdown in the bulk
+# bar. Same 25-per-batch cap as the bathqube bulk send. Document-header
+# templates (general_followup) upload the catalogue ONCE per batch and
+# reuse the media_id for every recipient — saves ~24 uploads to Meta.
+
+MAX_BULK_WA_LEADS = 25
+
+
+@app.route('/leads/bulk-send-template', methods=['POST'])
+@login_required
+def leads_bulk_send_template():
+    """Bulk-send a picked WhatsApp template to selected leads.
+
+    Input (POST form):
+        lead_ids[]     — lead IDs picked via the checkbox column
+        template_name  — one of the LEAD_TEMPLATES entries (required)
+
+    Behaviour:
+        - Cap at MAX_BULK_WA_LEADS (25) per request; truncation is flagged.
+        - Skip leads with no phone number.
+        - Upload the catalogue PDF ONCE per batch when the template has a
+          document header — reuse the media_id for every recipient.
+        - Each attempt logs to `whatsapp_messages` with sent_by=BD user
+          so /leads/agent-log activity accounting stays honest.
+    """
+    from models import Lead
+    from utils.lead_templates import get_lead_template
+    from utils.whatsapp import upload_media
+
+    template_name = (request.form.get('template_name') or '').strip()
+    template = get_lead_template(template_name)
+    if not template:
+        return jsonify({'success': False, 'error': f'Unknown template: {template_name!r}'}), 400
+
+    lead_ids = request.form.getlist('lead_ids[]') or request.form.getlist('lead_ids')
+    if not lead_ids:
+        return jsonify({'success': False, 'error': 'No leads selected.'}), 400
+    try:
+        lead_ids = [int(x) for x in lead_ids]
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid lead ids.'}), 400
+
+    leads = (Lead.query
+             .filter(Lead.id.in_(lead_ids))
+             .limit(MAX_BULK_WA_LEADS + 1)
+             .all())
+    truncated = len(leads) > MAX_BULK_WA_LEADS
+    leads = leads[:MAX_BULK_WA_LEADS]
+
+    # Upload the catalogue once per batch (document templates only).
+    cached_media_id = None
+    if template.needs_document:
+        try:
+            with open(template.document_path, 'rb') as f:
+                pdf_bytes = f.read()
+        except OSError as e:
+            return jsonify({'success': False, 'error': f'Catalogue file missing: {e}'}), 500
+        up = upload_media(pdf_bytes, template.document_filename, mime_type='application/pdf')
+        if not up.get('success'):
+            return jsonify({'success': False, 'error': f'Media upload failed: {up.get("error", "unknown")}'}), 502
+        cached_media_id = up['media_id']
+
+    sent = 0
+    failed = 0
+    skipped = 0
+    failures = []
+
+    for lead in leads:
+        if not lead.contact:
+            skipped += 1
+            failures.append({'lead_id': lead.id, 'name': lead.name, 'error': 'no phone number'})
+            continue
+        msg, ok = _send_lead_template(lead, template, cached_media_id=cached_media_id)
+        if ok:
+            sent += 1
+        else:
+            failed += 1
+            failures.append({'lead_id': lead.id, 'name': lead.name, 'error': msg.error_message})
 
     db.session.commit()
 
-    if result.get('success'):
-        return jsonify({'success': True, 'wamid': msg.wamid, 'to': msg.to_number})
-    return jsonify({'success': False, 'error': msg.error_message}), 502
+    return jsonify({
+        'success': True,
+        'sent': sent,
+        'failed': failed,
+        'skipped': skipped,
+        'attempted': len(leads),
+        'truncated': truncated,
+        'cap': MAX_BULK_WA_LEADS,
+        'template': template.name,
+        'failures': failures[:20],
+    })
 
 
 def _fb_page_tokens():
@@ -7827,6 +8030,129 @@ def bathqube_quotes_list():
                            quotes=quotes, search=search, stage=stage,
                            include_archived=include_archived,
                            stage_labels=STAGE_LABELS, stages=BATHQUBE_STAGES)
+
+
+# ── Bulk WhatsApp template send from Bathqube Quotations ─────────────────────
+# BD picks Bathqube quotes to blast with an approved template (default:
+# 'welcome'). The brand is IMPLICIT — always Bathqube, since every row on
+# this list is a Bathqube customer. Same 25-per-batch cap as any bulk send.
+
+MAX_BULK_WA_QUOTES = 25
+
+
+@app.route('/quotes/bathqube/bulk-send-whatsapp', methods=['POST'])
+@login_required
+def bathqube_bulk_send_whatsapp():
+    """Bulk-send an approved WhatsApp template to selected Bathqube quotes.
+
+    Input (POST form):
+        quote_ids[]     — the bathqube_quote IDs to send to
+        template_name   (optional, default 'welcome')
+        language        (optional, default 'en')
+
+    Behaviour:
+        - Sender is the Bathqube Brand row (looked up by slug='bathqube').
+        - Loops sequentially, capped at MAX_BULK_WA_QUOTES per request.
+        - Skips quotes with no phone.
+        - Passes the customer's first_name as {{1}} with a param-error
+          fallback (matches lead_send_welcome for parity).
+        - Logs each attempt to whatsapp_messages with brand_id + the
+          new bathqube_quote_id so the per-quote 'sent' count works.
+    """
+    from models import Brand, BathqubeQuote, WhatsAppMessage
+    from utils.whatsapp import send_template, normalize_phone
+
+    brand = Brand.query.filter_by(slug='bathqube', is_active=True).first()
+    if not brand:
+        return jsonify({'success': False, 'error': 'Bathqube brand is not configured. Add a row to brands with slug=bathqube.'}), 500
+
+    template_name = (request.form.get('template_name') or 'welcome').strip()
+    language = (request.form.get('language') or 'en').strip()
+
+    quote_ids = request.form.getlist('quote_ids')
+    if not quote_ids:
+        return jsonify({'success': False, 'error': 'No quotes selected.'}), 400
+    try:
+        quote_ids = [int(x) for x in quote_ids]
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid quote ids.'}), 400
+
+    quotes = (BathqubeQuote.query
+              .filter(BathqubeQuote.id.in_(quote_ids))
+              .limit(MAX_BULK_WA_QUOTES + 1)
+              .all())
+    truncated = len(quotes) > MAX_BULK_WA_QUOTES
+    quotes = quotes[:MAX_BULK_WA_QUOTES]
+
+    sent = 0
+    failed = 0
+    skipped = 0
+    failures = []
+
+    for quote in quotes:
+        if not quote.phone:
+            skipped += 1
+            failures.append({'quote_id': quote.id, 'name': quote.customer_name, 'error': 'no phone number'})
+            continue
+
+        first_name = (quote.customer_name or 'there').strip().split()[0]
+        variables = [first_name]
+
+        msg = WhatsAppMessage(
+            bathqube_quote_id=quote.id,
+            brand_id=brand.id,
+            to_number=normalize_phone(quote.phone) or quote.phone,
+            template_name=template_name,
+            language=language,
+            variables_json=json.dumps(variables),
+            sent_by=current_user.id,
+            status='queued',
+        )
+        db.session.add(msg)
+        db.session.flush()
+
+        result = send_template(
+            to=quote.phone,
+            template_name=template_name,
+            language=language,
+            variables=variables,
+            brand=brand,
+        )
+        if not result.get('success') and 'parameter' in (result.get('error') or '').lower():
+            result = send_template(
+                to=quote.phone,
+                template_name=template_name,
+                language=language,
+                variables=None,
+                brand=brand,
+            )
+            if result.get('success'):
+                msg.variables_json = json.dumps([])
+
+        if result.get('success'):
+            msg.status = 'sent'
+            msg.wamid = result.get('wamid')
+            sent += 1
+        else:
+            msg.status = 'failed'
+            msg.error_message = result.get('error', 'Unknown error')
+            failed += 1
+            failures.append({'quote_id': quote.id, 'name': quote.customer_name, 'error': msg.error_message})
+
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'sent': sent,
+        'failed': failed,
+        'skipped': skipped,
+        'attempted': len(quotes),
+        'truncated': truncated,
+        'cap': MAX_BULK_WA_QUOTES,
+        'brand': brand.slug,
+        'template': template_name,
+        'failures': failures[:20],
+    })
 
 
 # ─── Vetrova Quotes — configurator quotes from vetrova.in ────────────────────
