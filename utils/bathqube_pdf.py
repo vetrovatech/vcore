@@ -303,9 +303,14 @@ def generate_bathqube_pdf(quote):
     items = list(quote.items) if quote.items else []
     groups, extras = _bq_group_items_by_enclosure(items)
 
-    # Compute subject-line stats
-    total_panels = sum(len(g['items']) for g in groups)
-    total_sqft   = sum(p['sqft'] for g in groups for (_it, p) in g['items'])
+    # Compute subject-line stats. Each item row represents ONE panel of an
+    # enclosure priced for `it.quantity` identical sets — so a physical
+    # count multiplies by qty, matching the fresh estimatePdf.tsx totals
+    # (glassyplatform src/lib/estimatePdf.tsx:237-241). Without this, an
+    # enclosure marked qty=2 would understate panels + sqft in the subject
+    # line and the on-row arithmetic (sqft × rate) wouldn't tie to amount.
+    total_panels = sum(int(it.quantity or 1) for g in groups for (it, _p) in g['items'])
+    total_sqft   = sum(p['sqft'] * float(it.quantity or 1) for g in groups for (it, p) in g['items'])
 
     # Subject row — short summary of the bill in human terms
     subj_label = ParagraphStyle('sjl', parent=h_sub, fontSize=9, textColor=MUTED)
@@ -369,12 +374,22 @@ def generate_bathqube_pdf(quote):
 
         global_idx = 0
         for g_idx, g in enumerate(groups, start=1):
-            # Group header card (Enclosure N + name/type + spec line)
+            # Group header card (Enclosure N + name/type + spec line).
+            # Every item in a group came from the same enclosure so they
+            # share the enclosure quantity — surface it on the header when
+            # qty > 1 so the customer sees "× 2 sets" up-front (mirrors
+            # estimatePdf.tsx :330).
             spec_line = g['spec'] or ''
+            enc_qty = int(g['items'][0][0].quantity or 1) if g['items'] else 1
+            spec_with_qty = (
+                f"{spec_line} · Qty: {enc_qty} set{'s' if enc_qty > 1 else ''}"
+                if enc_qty > 1
+                else spec_line
+            )
             grp_card = Table([[
                 [Paragraph(f"Enclosure {g_idx}", grp_lbl),
                  Paragraph(f"{g['enc_name']} — {g['type_label']}", grp_name),
-                 Paragraph(spec_line, grp_spec) if spec_line else Paragraph('', grp_spec)],
+                 Paragraph(spec_with_qty, grp_spec) if spec_with_qty else Paragraph('', grp_spec)],
             ]], colWidths=[sum(col_widths)])
             grp_card.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F0F5FA')),
@@ -386,23 +401,38 @@ def generate_bathqube_pdf(quote):
             ]))
             story.append(grp_card)
 
-            # Panel rows
+            # Panel rows. When the enclosure quantity is > 1 each item row
+            # represents that panel × N identical sets — amount was already
+            # stored as (single-panel-sqft × rate × qty) at seed time
+            # (`_bathqube_seed_items_from_config`). The Sq ft column shows
+            # the effective (× qty) sqft so on-row math (sqft × rate =
+            # amount) ties out; otherwise a qty>1 row reads as if the
+            # numbers don't add up. Mirrors estimatePdf.tsx :340-364.
             rows = []
             for (it, p) in g['items']:
                 global_idx += 1
-                # Description column — bold title + muted material/spec/size lines
-                desc_block = [
-                    Paragraph(f"{g['type_label']} — Panel {p['panel_no']}", desc_title),
-                ]
+                qty = int(it.quantity or 1)
+                eff_sqft = p['sqft'] * qty
+
+                title = (
+                    f"{g['type_label']} — Panel {p['panel_no']}"
+                    + (f" × {qty} sets" if qty > 1 else "")
+                )
+                desc_block = [Paragraph(title, desc_title)]
                 if g['spec']:
                     desc_block.append(Paragraph(g['spec'], desc_line))
-                desc_block.append(Paragraph(f"Size: {p['size_str']}", desc_line))
+                size_text = f"Size: {p['size_str']}"
+                if qty > 1:
+                    size_text += (
+                        f" · {p['sqft']:.2f} sqft × {qty} sets = {eff_sqft:.2f} sqft"
+                    )
+                desc_block.append(Paragraph(size_text, desc_line))
 
                 rate_cell = f"{p['rate']:,.0f}" if p['rate'] is not None else '—'
                 rows.append([
                     str(global_idx),
                     desc_block,
-                    f"{p['sqft']:.2f}",
+                    f"{eff_sqft:.2f}",
                     rate_cell,
                     f"{float(it.amount or 0):,.2f}",
                 ])
