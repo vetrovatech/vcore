@@ -4363,6 +4363,269 @@ def leads_bulk_send_template():
     })
 
 
+# ── WhatsApp inbound webhook ──────────────────────────────────────────────
+# Meta's WhatsApp Cloud API POSTs here for every event we're subscribed to
+# on the WABA config screen — customer replies (messages), delivery /
+# read receipts (statuses), and (rarely) template quality updates.
+#
+# Two request patterns land on this URL:
+#
+#   GET  /api/whatsapp/webhook  ?hub.mode=subscribe
+#                               &hub.verify_token=<t>
+#                               &hub.challenge=<c>
+#     — Meta's one-time subscription challenge. Echoes hub.challenge
+#       when hub.verify_token matches WHATSAPP_WEBHOOK_VERIFY_TOKEN.
+#
+#   POST /api/whatsapp/webhook  (JSON body signed via X-Hub-Signature-256)
+#     — real events. Signature is verified against WHATSAPP_APP_SECRET
+#       (falling back to FB_APP_SECRET, which is the same value when the
+#       WABA + Facebook page share one Meta app — the usual setup).
+#
+# Meta expects a 200 within seconds regardless of internal errors,
+# otherwise it retries with backoff — so parsing bugs must not raise
+# out. We catch + log and still return 200.
+
+def _whatsapp_app_secret():
+    """Return the shared secret Meta signs webhook payloads with.
+    Prefer the WhatsApp-specific env var, fall back to the Facebook
+    app secret (usually the same value — Meta apps have one App Secret
+    for both surfaces)."""
+    return (os.getenv('WHATSAPP_APP_SECRET')
+            or os.getenv('FB_APP_SECRET')
+            or '').strip()
+
+
+def _verify_meta_signature(raw_body: bytes, signature_header: str) -> bool:
+    """Constant-time HMAC-SHA256 verify of X-Hub-Signature-256.
+    Header shape is 'sha256=<hex>'. Returns False on any mismatch or
+    missing secret."""
+    import hmac
+    import hashlib
+    secret = _whatsapp_app_secret()
+    if not secret or not signature_header:
+        return False
+    if not signature_header.startswith('sha256='):
+        return False
+    expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    supplied = signature_header.split('=', 1)[1]
+    return hmac.compare_digest(expected, supplied)
+
+
+def _lookup_lead_by_phone(phone: str):
+    """Match Meta's `from` (E.164 digits, no '+') to a Lead by contact.
+    Normalises the DB side the same way `normalize_phone` does at send
+    time — Indian 10-digit numbers get '91' prepended, everything else
+    stays as-is. Returns the newest matching lead when multiple share
+    a phone, or None."""
+    from models import Lead
+    from utils.whatsapp import normalize_phone
+    normalized = normalize_phone(phone)
+    if not normalized:
+        return None
+    # Query for any Lead whose normalized contact matches.
+    #   contact could have been stored as raw '9876543210', '+91 9876543210',
+    #   '919876543210', etc — we compare against both the raw and the
+    #   normalized form.
+    #
+    # PostgreSQL: regexp_replace strips everything non-digit; then we
+    # optionally prepend '91' when the resulting string is 10 chars long.
+    # Everything happens server-side so no full-table scan in Python.
+    rows = db.session.execute(
+        db.text("""
+            SELECT id
+              FROM leads
+             WHERE contact IS NOT NULL
+               AND (
+                     regexp_replace(contact, '[^0-9]', '', 'g') = :n
+                  OR '91' || regexp_replace(contact, '[^0-9]', '', 'g') = :n
+                  OR regexp_replace(contact, '[^0-9]', '', 'g') = substr(:n, 3)
+                   )
+             ORDER BY id DESC
+             LIMIT 1
+        """),
+        {'n': normalized},
+    ).first()
+    if rows is None:
+        return None
+    return Lead.query.get(rows[0])
+
+
+def _download_meta_media(media_id: str):
+    """Fetch the Meta media-download URL for a given media id, using the
+    WhatsApp Cloud API token. We only STORE the URL (short-lived, ~5 min)
+    for phase-1; a follow-up patch can copy the bytes into S3 for
+    permanence. Returns (url, mime) or (None, None) on failure."""
+    token = os.getenv('WHATSAPP_TOKEN', '').strip()
+    api_ver = os.getenv('WHATSAPP_API_VERSION', 'v21.0')
+    if not token or not media_id:
+        return None, None
+    try:
+        r = requests.get(
+            f'https://graph.facebook.com/{api_ver}/{media_id}',
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=6,
+        )
+        if r.status_code != 200:
+            return None, None
+        j = r.json() or {}
+        return j.get('url'), j.get('mime_type')
+    except Exception as e:
+        app.logger.error(f'[whatsapp-webhook] media lookup failed: {e}')
+        return None, None
+
+
+def _handle_inbound_message(msg: dict, meta_from: str, contact_name: str = None):
+    """Persist one inbound `message` object from Meta's webhook payload.
+    Idempotent on `wamid` — if Meta re-delivers we no-op."""
+    from models import WhatsAppMessage
+    from datetime import datetime as _dt
+    wamid = msg.get('id')
+    if not wamid:
+        return
+    # Idempotent guard
+    existing = WhatsAppMessage.query.filter_by(wamid=wamid).first()
+    if existing:
+        return
+
+    msg_type = msg.get('type') or 'text'
+    body_text = None
+    media_url = None
+    media_mime = None
+    media_caption = None
+
+    if msg_type == 'text':
+        body_text = (msg.get('text') or {}).get('body')
+    elif msg_type in ('image', 'video', 'audio', 'document', 'sticker'):
+        obj = msg.get(msg_type) or {}
+        media_id = obj.get('id')
+        media_caption = obj.get('caption')
+        media_url, media_mime = _download_meta_media(media_id)
+    elif msg_type == 'button':
+        body_text = (msg.get('button') or {}).get('text')
+    elif msg_type == 'interactive':
+        # Interactive replies (button + list). Meta packs the reply
+        # payload under `interactive.button_reply.title` etc.
+        inter = msg.get('interactive') or {}
+        for sub in ('button_reply', 'list_reply'):
+            v = inter.get(sub) or {}
+            if v.get('title'):
+                body_text = v['title']
+                break
+    else:
+        body_text = f'[{msg_type} message]'
+
+    # Meta timestamp is unix seconds as a string.
+    ts_str = msg.get('timestamp')
+    try:
+        recv_at = _dt.utcfromtimestamp(int(ts_str)) if ts_str else _dt.utcnow()
+    except (TypeError, ValueError):
+        recv_at = _dt.utcnow()
+
+    lead = _lookup_lead_by_phone(meta_from)
+
+    row = WhatsAppMessage(
+        lead_id=lead.id if lead else None,
+        direction='in',
+        from_number=meta_from,
+        body_text=body_text,
+        media_url=media_url,
+        media_mime=media_mime,
+        media_caption=media_caption,
+        received_at=recv_at,
+        sent_at=recv_at,   # so ORDER BY sent_at gives a chronological chat
+        wamid=wamid,
+        status='received',
+        # sent_by is nullable for inbound
+    )
+    db.session.add(row)
+
+
+def _handle_status_update(st: dict):
+    """Update an outbound row's status from a Meta status event."""
+    from models import WhatsAppMessage
+    wamid = st.get('id')
+    status = st.get('status')  # sent | delivered | read | failed
+    if not wamid or not status:
+        return
+    row = WhatsAppMessage.query.filter_by(wamid=wamid).first()
+    if not row:
+        return  # a status event for a message we don't have — ignore
+    # Don't move backwards: read > delivered > sent > queued.
+    order = {'queued': 0, 'sent': 1, 'delivered': 2, 'read': 3, 'failed': 9}
+    if order.get(status, -1) < order.get(row.status, -1):
+        return
+    row.status = status
+    if status == 'failed':
+        errs = st.get('errors') or []
+        if errs:
+            row.error_message = (errs[0].get('title') or errs[0].get('message')
+                                  or 'Meta reported failure')
+
+
+@app.route('/api/whatsapp/webhook', methods=['GET', 'POST'])
+def whatsapp_webhook():
+    """Meta WhatsApp Cloud API webhook receiver.
+
+    GET  → subscription challenge; echo `hub.challenge` when the token
+           matches WHATSAPP_WEBHOOK_VERIFY_TOKEN.
+    POST → real events. Verify HMAC-SHA256 signature, parse
+           entry[].changes[].value, dispatch to _handle_inbound_message /
+           _handle_status_update. Always returns 200 (Meta retries on any
+           non-2xx, which just multiplies our error rate)."""
+    if request.method == 'GET':
+        # Meta subscription challenge
+        mode      = request.args.get('hub.mode')
+        token     = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        expected  = os.getenv('WHATSAPP_WEBHOOK_VERIFY_TOKEN', '').strip()
+        if mode == 'subscribe' and expected and token == expected:
+            # Meta wants a plain-text response with just the challenge.
+            return challenge or '', 200
+        return 'forbidden', 403
+
+    # POST — event delivery
+    raw = request.get_data() or b''
+    sig = request.headers.get('X-Hub-Signature-256', '')
+
+    if not _verify_meta_signature(raw, sig):
+        # Don't 401 in production — Meta backs off aggressively on 4xx.
+        # Log and 200. If someone's spoofing, the signature check has
+        # already stopped them from writing anything.
+        app.logger.warning('[whatsapp-webhook] signature check failed — dropping event')
+        return '', 200
+
+    try:
+        payload = request.get_json(silent=True) or {}
+    except Exception:
+        payload = {}
+
+    try:
+        for entry in payload.get('entry', []) or []:
+            for change in entry.get('changes', []) or []:
+                value = change.get('value') or {}
+                # Contact block gives us `wa_id` (phone) + optional name;
+                # we only need the wa_id since the message.from carries it too.
+                contacts = value.get('contacts') or []
+                contact_name = None
+                if contacts and isinstance(contacts[0], dict):
+                    contact_name = (contacts[0].get('profile') or {}).get('name')
+
+                # Inbound messages
+                for msg in value.get('messages') or []:
+                    frm = msg.get('from') or (contacts[0].get('wa_id') if contacts else None)
+                    _handle_inbound_message(msg, frm, contact_name=contact_name)
+
+                # Outbound status updates
+                for st in value.get('statuses') or []:
+                    _handle_status_update(st)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'[whatsapp-webhook] handler crashed: {e}')
+
+    return '', 200
+
+
 def _fb_page_tokens():
     """Return {page_id: page_access_token} for every Page vcore is wired to.
 

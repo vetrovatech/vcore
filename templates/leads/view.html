@@ -290,61 +290,87 @@
         </div>
         {% endif %}
 
-        {# ── WhatsApp Sent card ────────────────────────────────────────
-           Total successful sends + a compact log of the last 5 attempts.
-           Reads from the whatsapp_messages backref — no extra query. #}
-        {% set wa_all = lead.whatsapp_messages|sort(attribute='sent_at', reverse=true) %}
-        {% set wa_sent_count = wa_all|selectattr('status', 'equalto', 'sent')|list|length %}
-        {% set wa_failed_count = wa_all|selectattr('status', 'equalto', 'failed')|list|length %}
-        {% if wa_all %}
+        {# ── WhatsApp Conversation ───────────────────────────────────
+           Chronological chat panel — outbound (BD → customer) bubbles
+           right, inbound (customer → BD) bubbles left. Reads the
+           lead.whatsapp_messages backref which now carries both
+           directions (see migrate_add_whatsapp_inbound.py). Empty when
+           there's been no WhatsApp activity on the lead. #}
+        {% set wa_msgs = lead.whatsapp_messages|sort(attribute='sent_at') %}
+        {% if wa_msgs %}
+        {% set wa_in_count  = wa_msgs|selectattr('direction', 'equalto', 'in')|list|length %}
+        {% set wa_out_count = wa_msgs|length - wa_in_count %}
         <div class="info-card">
-            <h6><i class="bi bi-whatsapp text-success"></i> WhatsApp Sent</h6>
-            <div class="d-flex align-items-baseline gap-3 mb-2">
-                <div>
-                    <div class="fw-bold" style="font-size:1.6rem; line-height:1;">{{ wa_sent_count }}</div>
-                    <div class="text-muted small">messages sent</div>
-                </div>
-                {% if wa_failed_count > 0 %}
-                <div>
-                    <div class="fw-bold text-danger" style="font-size:1.1rem; line-height:1;">{{ wa_failed_count }}</div>
-                    <div class="text-muted small">failed</div>
-                </div>
+            <h6>
+                <i class="bi bi-whatsapp text-success"></i>
+                Conversation
+                <span class="text-muted small" style="font-weight:normal;">
+                    &nbsp;·&nbsp; {{ wa_out_count }} sent, {{ wa_in_count }} received
+                </span>
+            </h6>
+            <div class="wa-chat" id="waChat">
+              {% for m in wa_msgs %}
+              <div class="wa-bubble wa-{{ 'in' if m.direction == 'in' else 'out' }}">
+                {% if m.direction != 'in' and m.template_name %}
+                <div class="wa-tpl">Template · <b>{{ m.template_name }}</b></div>
                 {% endif %}
+                {% if m.body_text or m.display_body %}
+                <div class="wa-body">{{ m.body_text or m.display_body }}</div>
+                {% endif %}
+                {% if m.media_url %}
+                  {% if m.media_mime and m.media_mime.startswith('image/') %}
+                    <a href="{{ m.media_url }}" target="_blank" rel="noopener">
+                      <img src="{{ m.media_url }}" alt="attachment"
+                           style="max-width:100%; max-height:180px; border-radius:6px; margin-top:4px;">
+                    </a>
+                  {% else %}
+                    <div class="mt-1">
+                      <a href="{{ m.media_url }}" target="_blank" rel="noopener">
+                        <i class="bi bi-paperclip"></i>
+                        {{ m.media_caption or (m.media_mime or 'attachment') }}
+                      </a>
+                    </div>
+                  {% endif %}
+                {% endif %}
+                <div class="wa-meta">
+                  {{ m.sent_at.strftime('%d %b, %H:%M') }}
+                  {% if m.direction != 'in' %}
+                    ·
+                    {% if m.status == 'read' %}<span title="read" style="color:#0b8;">✓✓</span>
+                    {% elif m.status == 'delivered' %}<span title="delivered">✓✓</span>
+                    {% elif m.status == 'sent' %}<span title="sent">✓</span>
+                    {% elif m.status == 'failed' %}<span title="{{ m.error_message or '' }}" style="color:#c33;">failed</span>
+                    {% else %}<span>{{ m.status }}</span>{% endif %}
+                  {% endif %}
+                </div>
+              </div>
+              {% endfor %}
             </div>
-            <div class="table-responsive">
-                <table class="table table-sm mb-0" style="font-size:0.8rem;">
-                    <thead>
-                        <tr>
-                            <th>Template</th>
-                            <th>Brand</th>
-                            <th>When</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for m in wa_all[:5] %}
-                        <tr>
-                            <td>{{ m.template_name }}</td>
-                            <td>{{ m.brand.name if m.brand else '—' }}</td>
-                            <td>{{ m.sent_at.strftime('%d %b, %H:%M') }}</td>
-                            <td>
-                                {% if m.status == 'sent' or m.status == 'delivered' or m.status == 'read' %}
-                                <span class="badge bg-success">{{ m.status }}</span>
-                                {% elif m.status == 'failed' %}
-                                <span class="badge bg-danger" title="{{ m.error_message or '' }}">failed</span>
-                                {% else %}
-                                <span class="badge bg-secondary">{{ m.status }}</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% if wa_all|length > 5 %}
-            <div class="text-muted small mt-1">+{{ wa_all|length - 5 }} older</div>
-            {% endif %}
         </div>
+        <style>
+          .wa-chat {
+            display:flex; flex-direction:column; gap:6px;
+            padding:10px; background:#ECE5DD; border-radius:6px;
+            max-height:420px; overflow-y:auto;
+          }
+          .wa-bubble {
+            max-width:85%; padding:6px 10px; border-radius:8px;
+            font-size:0.85rem; line-height:1.35;
+            box-shadow:0 1px 1px rgba(0,0,0,0.05);
+          }
+          .wa-bubble.wa-out { align-self:flex-end; background:#DCF8C6; }
+          .wa-bubble.wa-in  { align-self:flex-start; background:#FFFFFF; }
+          .wa-tpl  { font-size:0.7rem; color:#0b8b3a; margin-bottom:3px; }
+          .wa-body { white-space:pre-wrap; word-break:break-word; }
+          .wa-meta { font-size:0.68rem; color:#666; margin-top:3px; text-align:right; }
+        </style>
+        <script>
+          // Auto-scroll the chat panel to the latest message on load.
+          (function () {
+            var el = document.getElementById('waChat');
+            if (el) el.scrollTop = el.scrollHeight;
+          })();
+        </script>
         {% endif %}
 
         <!-- Contact Details -->

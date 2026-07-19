@@ -1229,11 +1229,21 @@ class Brand(db.Model):
 
 
 class WhatsAppMessage(db.Model):
-    """Audit log of every WhatsApp template message sent via the Cloud API.
+    """Every WhatsApp event (outbound send + inbound reply + status
+    update) recorded on one table.
 
-    One row per send attempt — `wamid` is Meta's message id (populated on
-    success) and `status` is updated by the webhook receiver as delivery
-    events arrive (sent → delivered → read, or failed).
+    `direction` splits the two directions:
+      - 'out' : we sent it (template send). `sent_by`, `template_name`,
+                `to_number`, and `wamid` are meaningful. `status` cycles
+                queued → sent → delivered → read (or failed), driven
+                by the Meta webhook status updates.
+      - 'in'  : the customer sent it. `from_number`, `body_text`,
+                `media_url` / `media_mime` are meaningful. Rendered on
+                the lead-view chat panel alongside outbound rows.
+
+    The `sent_at` column is used for ordering in both directions — for
+    inbound rows we set it to the message's `received_at`, so a single
+    ORDER BY on sent_at gives us the chronological chat timeline.
     """
     __tablename__ = 'whatsapp_messages'
 
@@ -1246,15 +1256,29 @@ class WhatsAppMessage(db.Model):
     # Which brand's WABA sent this message. Nullable for legacy rows sent
     # before the Brand table existed (env-var single-tenant era).
     brand_id        = db.Column(db.Integer, db.ForeignKey('brands.id', ondelete='SET NULL'), nullable=True, index=True)
-    to_number       = db.Column(db.String(20),  nullable=False, index=True)
-    template_name   = db.Column(db.String(100), nullable=False)
+
+    # 'out' | 'in'. Defaults to 'out' so pre-webhook rows keep the right
+    # semantics. See migrate_add_whatsapp_inbound.py for details.
+    direction       = db.Column(db.String(3),   nullable=False, default='out', index=True)
+
+    to_number       = db.Column(db.String(20),  nullable=True,  index=True)   # populated on outbound
+    from_number     = db.Column(db.String(20),  nullable=True,  index=True)   # populated on inbound
+    template_name   = db.Column(db.String(100), nullable=True)                # NULL on inbound
     language        = db.Column(db.String(10),  nullable=False, default='en')
-    variables_json  = db.Column(db.Text,        nullable=True)  # JSON-encoded list of body params
+    variables_json  = db.Column(db.Text,        nullable=True)                # JSON-encoded body params (outbound)
+
+    # Inbound-only payload
+    body_text       = db.Column(db.Text,        nullable=True)
+    media_url       = db.Column(db.Text,        nullable=True)                # Meta media-download URL, short-lived
+    media_mime      = db.Column(db.String(60),  nullable=True)                # image/jpeg, application/pdf, audio/ogg …
+    media_caption   = db.Column(db.Text,        nullable=True)
+    received_at     = db.Column(db.DateTime,    nullable=True)                # Meta's `timestamp` on the message
+
     wamid           = db.Column(db.String(120), nullable=True, unique=True, index=True)
     status          = db.Column(db.String(20),  nullable=False, default='queued', index=True)
-                                                                 # queued | sent | delivered | read | failed
+                                                                 # queued | sent | delivered | read | failed | received
     error_message   = db.Column(db.Text,        nullable=True)
-    sent_by         = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    sent_by         = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)   # NULL on inbound
     sent_at         = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at      = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -1264,8 +1288,46 @@ class WhatsAppMessage(db.Model):
     brand           = db.relationship('Brand',   foreign_keys=[brand_id])
     sender          = db.relationship('User',    foreign_keys=[sent_by])
 
+    @property
+    def is_inbound(self):
+        return self.direction == 'in'
+
+    @property
+    def is_outbound(self):
+        return self.direction == 'out'
+
+    @property
+    def display_body(self):
+        """One-line body for chat bubble rendering. Inbound uses
+        body_text (media caption if body_text empty); outbound rebuilds
+        from template_name + first variable so the chat panel shows the
+        gist of what was sent without a template lookup."""
+        if self.direction == 'in':
+            if self.body_text:
+                return self.body_text
+            if self.media_caption:
+                return self.media_caption
+            if self.media_mime:
+                kind = (self.media_mime or '').split('/')[0]
+                return f'[{kind} attachment]'
+            return '[empty]'
+        # outbound: prefer a template descriptor
+        first_var = ''
+        if self.variables_json:
+            try:
+                import json as _json
+                arr = _json.loads(self.variables_json)
+                if isinstance(arr, list) and arr:
+                    first_var = str(arr[0])
+            except Exception:
+                pass
+        base = f'[Template: {self.template_name}]' if self.template_name else '[Message]'
+        return f'{base} {first_var}'.strip()
+
     def __repr__(self):
-        return f'<WhatsAppMessage {self.id} {self.template_name} → {self.to_number} [{self.status}]>'
+        if self.direction == 'in':
+            return f'<WhatsAppMessage in {self.id} ← {self.from_number} [{self.status}]>'
+        return f'<WhatsAppMessage out {self.id} {self.template_name} → {self.to_number} [{self.status}]>'
 
 
 class Client(db.Model):
