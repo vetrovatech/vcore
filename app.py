@@ -4949,11 +4949,44 @@ def _handle_inbound_message(msg: dict, meta_from: str, contact_name: str = None)
     except (TypeError, ValueError):
         recv_at = _dt.utcnow()
 
-    # Match the sender to a Lead first (real customer with full CRM
-    # context wins). Only if no Lead matches, check the marketing
-    # `bulk_contacts` list. A phone can legitimately exist in both.
-    lead = _lookup_lead_by_phone(meta_from)
-    bulk_contact = None if lead else _lookup_bulk_contact_by_phone(meta_from)
+    # Route the reply to whatever context the LAST outbound to this
+    # phone was in — the reply is a continuation of that conversation,
+    # not an unrelated event. If the last outbound was a bulk-send, the
+    # reply attaches to the BulkContact; if it was a lead-send, to the
+    # Lead. Only when there's no prior outbound do we fall back to the
+    # look-up-Lead-first priority.
+    #
+    # Prior design (Leads win unconditionally) broke Bulk Send when
+    # BD imported existing customers — replies to marketing blasts
+    # would silently attach to the lead's chat panel and never show
+    # up on the bulk contact.
+    from models import WhatsAppMessage
+    from utils.whatsapp import normalize_phone
+    lead = None
+    bulk_contact = None
+    normalized_from = normalize_phone(meta_from)
+    if normalized_from:
+        last_out = (WhatsAppMessage.query
+                    .filter(WhatsAppMessage.direction == 'out')
+                    .filter(WhatsAppMessage.to_number == normalized_from)
+                    .filter(db.or_(
+                        WhatsAppMessage.bulk_contact_id.isnot(None),
+                        WhatsAppMessage.lead_id.isnot(None),
+                    ))
+                    .order_by(WhatsAppMessage.sent_at.desc())
+                    .first())
+        if last_out:
+            if last_out.bulk_contact_id:
+                from models import BulkContact
+                bulk_contact = BulkContact.query.get(last_out.bulk_contact_id)
+            elif last_out.lead_id:
+                from models import Lead
+                lead = Lead.query.get(last_out.lead_id)
+    # Fallback when there's no prior outbound to this phone —
+    # match by contact/phone across leads first, then bulk_contacts.
+    if not lead and not bulk_contact:
+        lead = _lookup_lead_by_phone(meta_from)
+        bulk_contact = None if lead else _lookup_bulk_contact_by_phone(meta_from)
 
     # Auto opt-out: if this is a plain-text reply from a bulk marketing
     # contact and the first token matches a STOP-word, flip the
