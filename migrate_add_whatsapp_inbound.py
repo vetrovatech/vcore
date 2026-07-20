@@ -70,6 +70,27 @@ NEW_COLUMNS = [
 ]
 
 
+def column_is_nullable(table: str, column: str) -> bool:
+    row = db.session.execute(
+        text(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name = :t AND column_name = :c"
+        ),
+        {'t': table, 'c': column},
+    ).first()
+    return row is not None and row[0] == 'YES'
+
+
+# Columns that used to be NOT NULL for outbound-only rows but must be
+# nullable now that the same table stores inbound customer replies too:
+#   to_number      — populated on outbound only (from_number carries the
+#                    customer number on inbound).
+#   template_name  — outbound-only (inbound is free-form text/media).
+#   sent_by        — the vcore user who initiated the send; NULL for
+#                    inbound (nobody initiated on our side).
+RELAX_NOT_NULL = ['to_number', 'template_name', 'sent_by']
+
+
 def migrate():
     with app.app_context():
         print('=== WhatsApp inbound migration ===')
@@ -82,6 +103,19 @@ def migrate():
             with db.engine.begin() as conn:
                 conn.execute(text(
                     f'ALTER TABLE whatsapp_messages ADD COLUMN {col} {ddl}'
+                ))
+
+        # Drop NOT NULL on the three outbound-only columns.
+        # Meta's webhook inserts with these NULL (customer replies have
+        # no `template_name`, no `to_number` from our end, no `sent_by`).
+        for col in RELAX_NOT_NULL:
+            if column_is_nullable('whatsapp_messages', col):
+                print(f'  ✓ {col} already nullable, skipping')
+                continue
+            print(f'  relaxing NOT NULL on whatsapp_messages.{col} ...')
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    f'ALTER TABLE whatsapp_messages ALTER COLUMN {col} DROP NOT NULL'
                 ))
 
         # Index for the lead-view timeline: pull inbound + outbound

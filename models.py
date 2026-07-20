@@ -1249,6 +1249,11 @@ class WhatsAppMessage(db.Model):
 
     id              = db.Column(db.Integer, primary_key=True)
     lead_id         = db.Column(db.Integer, db.ForeignKey('leads.id', ondelete='SET NULL'), nullable=True, index=True)
+    # Marketing bulk-contact this message belongs to (Bulk Send feature).
+    # Nullable — populated when the inbound `from` matches a BulkContact
+    # phone (Leads take priority on collision) or when a bulk-send route
+    # logs an outbound.
+    bulk_contact_id = db.Column(db.Integer, db.ForeignKey('bulk_contacts.id', ondelete='SET NULL'), nullable=True, index=True)
     meeting_id      = db.Column(db.Integer, db.ForeignKey('meetings.id', ondelete='SET NULL'), nullable=True, index=True)
     # Which Bathqube quote this send belongs to (bulk-send from the Bathqube
     # inbox). Nullable for lead-only sends (single-send from lead view).
@@ -1287,6 +1292,7 @@ class WhatsAppMessage(db.Model):
     bathqube_quote  = db.relationship('BathqubeQuote', foreign_keys=[bathqube_quote_id], backref='whatsapp_messages')
     brand           = db.relationship('Brand',   foreign_keys=[brand_id])
     sender          = db.relationship('User',    foreign_keys=[sent_by])
+    bulk_contact    = db.relationship('BulkContact', foreign_keys=[bulk_contact_id], backref='whatsapp_messages')
 
     @property
     def is_inbound(self):
@@ -1328,6 +1334,42 @@ class WhatsAppMessage(db.Model):
         if self.direction == 'in':
             return f'<WhatsAppMessage in {self.id} ← {self.from_number} [{self.status}]>'
         return f'<WhatsAppMessage out {self.id} {self.template_name} → {self.to_number} [{self.status}]>'
+
+
+class BulkContact(db.Model):
+    """One row per phone number imported for the Bulk Send marketing
+    feature (name + phone Excel upload → template blast → chat replies).
+
+    Deliberately separate from Lead: BD's marketing contacts don't need
+    stage / owner / product interest fields; they need only enough to
+    dispatch a template and route replies back to a chat panel.
+
+    `campaign` is a free-text grouping tag (e.g. "Sept-promo") set at
+    import time so BD can filter the list.
+
+    `is_opted_out` flips to True when the webhook parses "STOP" /
+    "unsubscribe" / "remove me" in a reply. Bulk-send routes skip
+    opted-out rows silently.
+
+    See migrate_add_bulk_contacts.py for the schema.
+    """
+    __tablename__ = 'bulk_contacts'
+
+    id           = db.Column(db.Integer, primary_key=True)
+    name         = db.Column(db.String(200), nullable=False)
+    phone        = db.Column(db.String(20),  nullable=False, index=True)
+    campaign     = db.Column(db.String(100), nullable=True, index=True)
+    is_opted_out = db.Column(db.Boolean,     nullable=False, default=False, index=True)
+    imported_by  = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    imported_at  = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at   = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    importer     = db.relationship('User', foreign_keys=[imported_by])
+
+    def __repr__(self):
+        tag = f' [{self.campaign}]' if self.campaign else ''
+        opt = ' OPTED-OUT' if self.is_opted_out else ''
+        return f'<BulkContact {self.id} {self.name} {self.phone}{tag}{opt}>'
 
 
 class Client(db.Model):

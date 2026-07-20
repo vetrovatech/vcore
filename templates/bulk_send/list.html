@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% block title %}Bulk Send{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3">
+
+  {# ── Header row: title + KPI counts ────────────────────────────── #}
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h4 class="mb-0">
+        <i class="bi bi-megaphone text-success"></i>
+        Bulk Send
+      </h4>
+      <div class="text-muted small">
+        Marketing WhatsApp blasts — import contacts, pick a template, send.
+      </div>
+    </div>
+    <div class="d-flex gap-3 align-items-baseline">
+      <div class="text-center">
+        <div class="fw-bold" style="font-size:1.4rem; line-height:1;">{{ total }}</div>
+        <div class="text-muted small">contacts</div>
+      </div>
+      {% if opted_out_count %}
+      <div class="text-center">
+        <div class="fw-bold text-danger" style="font-size:1.4rem; line-height:1;">{{ opted_out_count }}</div>
+        <div class="text-muted small">opted out</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── Import strip ──────────────────────────────────────────────── #}
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-center gap-3">
+        <a href="{{ url_for('bulk_send_template_download') }}"
+           class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-file-earmark-arrow-down"></i>
+          Download blank Excel template
+        </a>
+        <span class="text-muted small">then …</span>
+        <form method="POST" action="{{ url_for('bulk_send_import') }}"
+              enctype="multipart/form-data"
+              class="d-flex flex-wrap align-items-center gap-2 flex-grow-1">
+          <input type="text" name="campaign" class="form-control form-control-sm"
+                 style="max-width:220px;"
+                 placeholder="Campaign tag (e.g. Sept-promo)">
+          <input type="file" name="file" accept=".xlsx,.xls,.csv"
+                 class="form-control form-control-sm" style="max-width:280px;" required>
+          <button type="submit" class="btn btn-success btn-sm">
+            <i class="bi bi-upload"></i> Upload contacts
+          </button>
+          <span class="text-muted small">
+            .xlsx / .csv &nbsp;·&nbsp; columns: <code>name</code>, <code>phone</code>
+          </span>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {# ── Filter row ───────────────────────────────────────────────── #}
+  <form method="GET" class="d-flex flex-wrap align-items-center gap-2 mb-3">
+    <input type="text" name="search" value="{{ search }}"
+           class="form-control form-control-sm" style="max-width:240px;"
+           placeholder="Search name or phone">
+    <select name="campaign" class="form-select form-select-sm" style="max-width:220px;"
+            onchange="this.form.submit()">
+      <option value="">All campaigns</option>
+      {% for c in campaigns %}
+      <option value="{{ c }}" {% if campaign_filter == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <div class="form-check form-switch mb-0">
+      <input class="form-check-input" type="checkbox" id="showOpted"
+             name="show_opted" value="1" {% if show_opted %}checked{% endif %}
+             onchange="this.form.submit()">
+      <label class="form-check-label small text-muted" for="showOpted">
+        Include opted-out
+      </label>
+    </div>
+    <button type="submit" class="btn btn-outline-primary btn-sm">Apply</button>
+    {% if search or campaign_filter or show_opted %}
+    <a href="{{ url_for('bulk_send_list') }}" class="btn btn-link btn-sm">Clear</a>
+    {% endif %}
+  </form>
+
+  {# ── Contacts table + bulk-send bar (both live inside one <form>) #}
+  {% if not contacts %}
+    <div class="alert alert-info">
+      No contacts yet. Download the template above, fill in <code>name</code> and
+      <code>phone</code> columns, then upload.
+    </div>
+  {% else %}
+  <form id="bulkForm">
+    <div class="card">
+      <div class="card-body p-0">
+
+        {# ── Bulk-send action bar (only shown when rows selected) ── #}
+        <div id="bulkBar" class="p-2 border-bottom bg-light d-none">
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            <span class="fw-semibold small">
+              <span id="selCount">0</span> selected
+            </span>
+            <select id="bulkTpl" class="form-select form-select-sm" style="max-width:280px;">
+              <option value="">Pick a template …</option>
+              {% for t in lead_templates or [] %}
+              <option value="{{ t.name }}">{{ t.label }}</option>
+              {% endfor %}
+            </select>
+            <button id="bulkSend" type="button" class="btn btn-success btn-sm">
+              <i class="bi bi-whatsapp"></i> Send WhatsApp
+            </button>
+            <span class="text-muted small">
+              Cap: 25 per send &nbsp;·&nbsp; opted-out are skipped automatically.
+            </span>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th style="width:32px;">
+                  <input type="checkbox" id="selAll" class="form-check-input">
+                </th>
+                <th>Name</th>
+                <th>Phone</th>
+                <th>Campaign</th>
+                <th>Imported</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for c in contacts %}
+              <tr class="{% if c.is_opted_out %}text-muted{% endif %}">
+                <td>
+                  {% if not c.is_opted_out %}
+                  <input type="checkbox" class="form-check-input row-check"
+                         name="contact_ids[]" value="{{ c.id }}">
+                  {% else %}
+                  <i class="bi bi-slash-circle text-danger" title="opted out"></i>
+                  {% endif %}
+                </td>
+                <td>
+                  <a href="{{ url_for('bulk_send_view', id=c.id) }}"
+                     class="text-decoration-none">
+                    {{ c.name }}
+                  </a>
+                  {% if c.is_opted_out %}
+                  <span class="badge bg-danger-subtle text-danger-emphasis border ms-1">
+                    opted out
+                  </span>
+                  {% endif %}
+                </td>
+                <td><span class="font-monospace small">{{ c.phone }}</span></td>
+                <td>
+                  {% if c.campaign %}
+                  <span class="badge bg-secondary-subtle text-secondary-emphasis border">
+                    {{ c.campaign }}
+                  </span>
+                  {% endif %}
+                </td>
+                <td class="text-muted small">
+                  {{ c.imported_at.strftime('%d %b, %H:%M') }}
+                </td>
+                <td class="text-end">
+                  <a href="{{ url_for('bulk_send_view', id=c.id) }}"
+                     class="btn btn-link btn-sm py-0" title="Open chat">
+                    <i class="bi bi-chat-left-text"></i>
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </form>
+  {% endif %}
+</div>
+
+{# ── Bulk-select + send JS ──────────────────────────────────────── #}
+<script>
+(function () {
+  const selAll = document.getElementById('selAll');
+  const selCountEl = document.getElementById('selCount');
+  const bar = document.getElementById('bulkBar');
+  const bulkForm = document.getElementById('bulkForm');
+  const bulkTpl = document.getElementById('bulkTpl');
+  const bulkSend = document.getElementById('bulkSend');
+
+  if (!bulkForm) return;
+
+  const checks = () => bulkForm.querySelectorAll('.row-check');
+  const selected = () => Array.from(checks()).filter((c) => c.checked);
+
+  const update = () => {
+    const n = selected().length;
+    selCountEl.textContent = n;
+    bar.classList.toggle('d-none', n === 0);
+  };
+
+  selAll?.addEventListener('change', (e) => {
+    checks().forEach((c) => (c.checked = e.target.checked));
+    update();
+  });
+  bulkForm.addEventListener('change', (e) => {
+    if (e.target.classList.contains('row-check')) update();
+  });
+
+  bulkSend?.addEventListener('click', async () => {
+    const ids = selected().map((c) => c.value);
+    if (!ids.length) return alert('Select at least one contact.');
+    const tpl = bulkTpl.value;
+    if (!tpl) return alert('Pick a template first.');
+    if (!confirm(`Send "${tpl}" to ${ids.length} contact(s)?`)) return;
+
+    const fd = new FormData();
+    ids.forEach((id) => fd.append('contact_ids[]', id));
+    fd.append('template_name', tpl);
+
+    bulkSend.disabled = true;
+    bulkSend.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Sending…';
+    try {
+      const res = await fetch('{{ url_for("bulk_send_bulk_template") }}',
+                              { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.success) {
+        const bits = [`${data.sent} sent`];
+        if (data.failed) bits.push(`${data.failed} failed`);
+        if (data.truncated) bits.push(`capped at ${data.cap}`);
+        alert(bits.join(' · '));
+        location.reload();
+      } else {
+        alert('Send failed: ' + (data.error || 'unknown'));
+      }
+    } catch (e) {
+      alert('Send failed: ' + e.message);
+    } finally {
+      bulkSend.disabled = false;
+      bulkSend.innerHTML = '<i class="bi bi-whatsapp"></i> Send WhatsApp';
+    }
+  });
+})();
+</script>
+{% endblock %}

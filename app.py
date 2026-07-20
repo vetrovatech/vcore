@@ -4363,6 +4363,396 @@ def leads_bulk_send_template():
     })
 
 
+# ── Bulk Send (marketing) ────────────────────────────────────────────────
+# Standalone marketing feature — BD downloads an Excel template, fills in
+# name + phone rows for a campaign, uploads, selects recipients, picks a
+# marketing WhatsApp template, and sends. Replies land via webhook and
+# render on the contact detail page's chat panel.
+#
+# Contacts live in a dedicated `bulk_contacts` table (NOT `leads`) so BD's
+# real CRM funnel isn't polluted by marketing lists. See models.BulkContact.
+
+MAX_BULK_CONTACTS_UPLOAD = 1000
+MAX_BULK_CONTACTS_SEND   = 25   # per-request cap; same as MAX_BULK_WA_LEADS
+
+
+def _bulk_contact_excel_template_bytes():
+    """Return an .xlsx workbook with a `name` / `phone` header row +
+    two example rows. BD downloads this, fills it in, uploads back."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Contacts'
+
+    header_font = Font(bold=True, color='FFFFFF')
+    header_fill = PatternFill('solid', fgColor='0B8B3A')
+    center      = Alignment(horizontal='center')
+
+    ws['A1'] = 'name'
+    ws['B1'] = 'phone'
+    for c in ('A1', 'B1'):
+        ws[c].font = header_font
+        ws[c].fill = header_fill
+        ws[c].alignment = center
+
+    # Two example rows so BD sees the expected shape.
+    ws['A2'] = 'Ansar Shaik'
+    ws['B2'] = '9876543210'
+    ws['A3'] = 'Priya Kumar'
+    ws['B3'] = '+91 98765 43211'
+
+    ws.column_dimensions['A'].width = 32
+    ws.column_dimensions['B'].width = 20
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _parse_bulk_contacts_upload(file_storage):
+    """Read an uploaded .xlsx or .csv into a list of {name, phone} dicts.
+    Returns (rows, warnings). `warnings` is a list of strings surfaced to
+    BD on the import screen ("row 47 skipped — missing phone", etc)."""
+    import openpyxl
+    from utils.whatsapp import normalize_phone
+
+    filename = (file_storage.filename or '').lower()
+    rows = []
+    warnings = []
+
+    def _push(idx, name, phone_raw):
+        if not name and not phone_raw:
+            return  # blank row — skip silently
+        if not name:
+            warnings.append(f'row {idx}: skipped (name missing)')
+            return
+        if not phone_raw:
+            warnings.append(f'row {idx}: skipped (phone missing)')
+            return
+        normalized = normalize_phone(str(phone_raw))
+        if not normalized or len(normalized) < 10:
+            warnings.append(f'row {idx}: skipped (phone {phone_raw!r} invalid)')
+            return
+        rows.append({'name': str(name).strip(), 'phone': normalized})
+
+    if filename.endswith('.csv'):
+        import csv as _csv
+        stream = io.TextIOWrapper(file_storage.stream, encoding='utf-8', errors='replace')
+        reader = _csv.DictReader(stream)
+        for idx, row in enumerate(reader, start=2):
+            # Column names are case-insensitive; also accept common variants.
+            keys = {k.strip().lower(): v for k, v in row.items() if k}
+            name  = keys.get('name') or keys.get('contact name') or ''
+            phone = keys.get('phone') or keys.get('mobile') or keys.get('number') or ''
+            _push(idx, name, phone)
+    else:
+        # Default to Excel — .xlsx / .xls
+        try:
+            wb = openpyxl.load_workbook(file_storage, data_only=True)
+        except Exception as e:
+            raise ValueError(f'Could not read Excel file: {e}')
+        ws = wb.active
+        # Header row = first non-empty row. Match name & phone columns.
+        headers = []
+        for cell in ws[1]:
+            headers.append(str(cell.value or '').strip().lower())
+        try:
+            name_idx  = next(i for i, h in enumerate(headers) if h in ('name','contact name','contact','customer'))
+            phone_idx = next(i for i, h in enumerate(headers) if h in ('phone','mobile','number','contact number','whatsapp'))
+        except StopIteration:
+            raise ValueError(
+                'Expected columns "name" and "phone" in the header row. '
+                'Downloaded template has them — please use that.'
+            )
+        for idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+            name  = row[name_idx].value  if name_idx  < len(row) else None
+            phone = row[phone_idx].value if phone_idx < len(row) else None
+            _push(idx, name, phone)
+
+    return rows, warnings
+
+
+@app.route('/bulk-send')
+@login_required
+def bulk_send_list():
+    """Bulk Send home — list all imported contacts + upload form +
+    template picker + Send button."""
+    from models import BulkContact
+    search   = (request.args.get('search') or '').strip()
+    campaign = (request.args.get('campaign') or '').strip()
+    show_opted = request.args.get('show_opted') == '1'
+
+    q = BulkContact.query
+    if not show_opted:
+        q = q.filter(BulkContact.is_opted_out == False)  # noqa: E712
+    if search:
+        like = f'%{search}%'
+        q = q.filter(db.or_(
+            BulkContact.name.ilike(like),
+            BulkContact.phone.ilike(like),
+        ))
+    if campaign:
+        q = q.filter(BulkContact.campaign == campaign)
+    contacts = q.order_by(BulkContact.id.desc()).limit(2000).all()
+
+    # Campaign chip list — distinct non-null values, sorted.
+    campaigns = [r[0] for r in db.session.query(BulkContact.campaign)
+                                          .filter(BulkContact.campaign.isnot(None))
+                                          .distinct()
+                                          .order_by(BulkContact.campaign)
+                                          .all()]
+    total = BulkContact.query.count()
+    opted_out_count = BulkContact.query.filter_by(is_opted_out=True).count()
+
+    return render_template(
+        'bulk_send/list.html',
+        contacts=contacts, campaigns=campaigns,
+        search=search, campaign_filter=campaign, show_opted=show_opted,
+        total=total, opted_out_count=opted_out_count,
+    )
+
+
+@app.route('/bulk-send/template.xlsx')
+@login_required
+def bulk_send_template_download():
+    """Serve the blank Excel template BD fills in and re-uploads."""
+    from flask import send_file
+    data = _bulk_contact_excel_template_bytes()
+    return send_file(
+        io.BytesIO(data),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name='bulk-send-template.xlsx',
+    )
+
+
+@app.route('/bulk-send/import', methods=['POST'])
+@login_required
+def bulk_send_import():
+    """Upload an Excel/CSV of {name, phone} rows. Tag them with the
+    campaign name supplied in the form; dedupe by phone (updates the
+    campaign tag on collision so BD can re-import to re-tag)."""
+    from models import BulkContact
+
+    f = request.files.get('file')
+    if not f or not f.filename:
+        flash('Please attach an Excel or CSV file.', 'warning')
+        return redirect(url_for('bulk_send_list'))
+
+    campaign = (request.form.get('campaign') or '').strip()[:100] or None
+
+    try:
+        rows, warnings = _parse_bulk_contacts_upload(f)
+    except ValueError as e:
+        flash(str(e), 'danger')
+        return redirect(url_for('bulk_send_list'))
+
+    if not rows:
+        flash('No valid rows found. Check the file and try again.', 'warning')
+        return redirect(url_for('bulk_send_list'))
+
+    if len(rows) > MAX_BULK_CONTACTS_UPLOAD:
+        flash(
+            f'File has {len(rows)} rows; only the first {MAX_BULK_CONTACTS_UPLOAD} '
+            f'will be imported per upload. Split into smaller files if you need more.',
+            'warning',
+        )
+        rows = rows[:MAX_BULK_CONTACTS_UPLOAD]
+
+    # In-file dedup by phone.
+    seen_phones = set()
+    deduped = []
+    for r in rows:
+        if r['phone'] in seen_phones:
+            continue
+        seen_phones.add(r['phone'])
+        deduped.append(r)
+
+    # Match against existing contacts — update campaign tag on collision.
+    existing = {c.phone: c for c in BulkContact.query.filter(
+        BulkContact.phone.in_(list(seen_phones))
+    ).all()}
+
+    inserted = 0
+    updated  = 0
+    for r in deduped:
+        if r['phone'] in existing:
+            row = existing[r['phone']]
+            if campaign and row.campaign != campaign:
+                row.campaign = campaign
+                updated += 1
+        else:
+            db.session.add(BulkContact(
+                name=r['name'],
+                phone=r['phone'],
+                campaign=campaign,
+                imported_by=current_user.id,
+            ))
+            inserted += 1
+    db.session.commit()
+
+    msg_bits = []
+    if inserted: msg_bits.append(f'{inserted} imported')
+    if updated:  msg_bits.append(f'{updated} campaign-tag updated')
+    if warnings: msg_bits.append(f'{len(warnings)} skipped')
+    flash(' · '.join(msg_bits) or 'Nothing to import.', 'success' if inserted else 'info')
+    if warnings:
+        # Surface the first 10 warnings so BD can spot systematic issues
+        # without an infinite flash message.
+        for w in warnings[:10]:
+            flash(w, 'warning')
+
+    return redirect(url_for('bulk_send_list', campaign=campaign or ''))
+
+
+@app.route('/bulk-send/<int:id>')
+@login_required
+def bulk_send_view(id):
+    """One bulk contact + chat panel (same layout as leads view)."""
+    from models import BulkContact
+    contact = BulkContact.query.get_or_404(id)
+    return render_template('bulk_send/view.html', contact=contact)
+
+
+@app.route('/bulk-send/<int:id>/toggle-opt-out', methods=['POST'])
+@login_required
+def bulk_send_toggle_opt_out(id):
+    """Manual opt-out flip — BD can undo a false-positive auto-opt-out
+    or manually opt someone out from their profile page."""
+    from models import BulkContact
+    contact = BulkContact.query.get_or_404(id)
+    contact.is_opted_out = not contact.is_opted_out
+    db.session.commit()
+    flash(
+        f'{contact.name} — {"opted out" if contact.is_opted_out else "opt-out cleared"}.',
+        'info',
+    )
+    return redirect(url_for('bulk_send_view', id=id))
+
+
+@app.route('/bulk-send/bulk-send-template', methods=['POST'])
+@login_required
+def bulk_send_bulk_template():
+    """Send a picked WhatsApp template to selected bulk contacts.
+    Mirrors leads_bulk_send_template but works on the bulk_contacts
+    table and skips opted-out rows."""
+    from models import BulkContact, WhatsAppMessage
+    from utils.lead_templates import get_lead_template, build_body_variables
+    from utils.whatsapp import send_template, send_template_with_document, upload_media, normalize_phone
+
+    template_name = (request.form.get('template_name') or '').strip()
+    template = get_lead_template(template_name)
+    if not template:
+        return jsonify({'success': False, 'error': f'Unknown template: {template_name!r}'}), 400
+
+    contact_ids = request.form.getlist('contact_ids[]') or request.form.getlist('contact_ids')
+    if not contact_ids:
+        return jsonify({'success': False, 'error': 'No contacts selected.'}), 400
+    try:
+        contact_ids = [int(x) for x in contact_ids]
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid contact ids.'}), 400
+
+    contacts = (BulkContact.query
+                .filter(BulkContact.id.in_(contact_ids))
+                .filter(BulkContact.is_opted_out == False)  # noqa: E712
+                .limit(MAX_BULK_CONTACTS_SEND + 1)
+                .all())
+    truncated = len(contacts) > MAX_BULK_CONTACTS_SEND
+    contacts = contacts[:MAX_BULK_CONTACTS_SEND]
+
+    # If the template needs a document header, upload once per batch.
+    cached_media_id = None
+    if template.needs_document:
+        try:
+            with open(template.document_path, 'rb') as fh:
+                pdf_bytes = fh.read()
+        except OSError as e:
+            return jsonify({'success': False, 'error': f'Document missing: {e}'}), 500
+        up = upload_media(pdf_bytes, template.document_filename, mime_type='application/pdf')
+        if not up.get('success'):
+            return jsonify({'success': False, 'error': f'Media upload failed: {up.get("error", "unknown")}'}), 502
+        cached_media_id = up['media_id']
+
+    sent = 0
+    failed = 0
+    failures = []
+
+    for contact in contacts:
+        # Build body variables the same way we do for leads. build_body_variables
+        # only reads .name so a duck-typed BulkContact works — it also has .name.
+        # We pass a small shim object with .name and (for future safety) .contact.
+        class _Shim:
+            pass
+        shim = _Shim()
+        shim.name = contact.name
+        shim.contact = contact.phone
+        shim.id = contact.id
+        variables = build_body_variables(template, shim)
+
+        msg_row = WhatsAppMessage(
+            bulk_contact_id=contact.id,
+            direction='out',
+            to_number=normalize_phone(contact.phone) or contact.phone,
+            template_name=template.name,
+            language=template.language,
+            variables_json=json.dumps(variables),
+            sent_by=current_user.id,
+            status='queued',
+        )
+        db.session.add(msg_row)
+        db.session.flush()
+
+        if template.needs_document:
+            result = send_template_with_document(
+                to=contact.phone, template_name=template.name,
+                media_id=cached_media_id, filename=template.document_filename,
+                language=template.language,
+                body_variables=variables if variables else None,
+            )
+        else:
+            result = send_template(
+                to=contact.phone, template_name=template.name,
+                language=template.language, variables=variables,
+            )
+            # Retry sans-vars when Meta rejects with a param mismatch —
+            # same pattern as _send_lead_template.
+            if not result.get('success') and 'parameter' in (result.get('error') or '').lower():
+                result = send_template(
+                    to=contact.phone, template_name=template.name,
+                    language=template.language, variables=None,
+                )
+                if result.get('success'):
+                    msg_row.variables_json = json.dumps([])
+
+        if result.get('success'):
+            msg_row.status = 'sent'
+            msg_row.wamid = result.get('wamid')
+            sent += 1
+        else:
+            msg_row.status = 'failed'
+            msg_row.error_message = result.get('error', 'Unknown error')
+            failed += 1
+            failures.append({
+                'contact_id': contact.id,
+                'name': contact.name,
+                'error': msg_row.error_message,
+            })
+
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'sent': sent, 'failed': failed,
+        'attempted': len(contacts),
+        'truncated': truncated,
+        'cap': MAX_BULK_CONTACTS_SEND,
+        'template': template.name,
+        'failures': failures[:20],
+    })
+
+
 # ── WhatsApp inbound webhook ──────────────────────────────────────────────
 # Meta's WhatsApp Cloud API POSTs here for every event we're subscribed to
 # on the WABA config screen — customer replies (messages), delivery /
@@ -4450,6 +4840,44 @@ def _lookup_lead_by_phone(phone: str):
     return Lead.query.get(rows[0])
 
 
+def _lookup_bulk_contact_by_phone(phone: str):
+    """Match Meta's `from` to a BulkContact by phone. Runs AFTER the
+    Lead lookup — if a phone lives in both tables (BD imported someone
+    who's already a lead), Leads win because they carry more context
+    (stage, owner, product interest). Returns the newest matching
+    BulkContact or None."""
+    from models import BulkContact
+    from utils.whatsapp import normalize_phone
+    normalized = normalize_phone(phone)
+    if not normalized:
+        return None
+    rows = db.session.execute(
+        db.text("""
+            SELECT id
+              FROM bulk_contacts
+             WHERE phone IS NOT NULL
+               AND (
+                     regexp_replace(phone, '[^0-9]', '', 'g') = :n
+                  OR '91' || regexp_replace(phone, '[^0-9]', '', 'g') = :n
+                  OR regexp_replace(phone, '[^0-9]', '', 'g') = substr(:n, 3)
+                   )
+             ORDER BY id DESC
+             LIMIT 1
+        """),
+        {'n': normalized},
+    ).first()
+    if rows is None:
+        return None
+    return BulkContact.query.get(rows[0])
+
+
+# STOP-word patterns for auto opt-out on marketing replies. Case-insensitive,
+# whole-word match on the first token of the body — so a friendly reply
+# containing the word "stop" mid-sentence doesn't auto-opt-out somebody
+# who's actually engaged. See _handle_inbound_message.
+_STOP_WORDS = {'stop', 'unsubscribe', 'remove', 'optout', 'opt-out', 'end'}
+
+
 def _download_meta_media(media_id: str):
     """Fetch the Meta media-download URL for a given media id, using the
     WhatsApp Cloud API token. We only STORE the URL (short-lived, ~5 min)
@@ -4521,10 +4949,29 @@ def _handle_inbound_message(msg: dict, meta_from: str, contact_name: str = None)
     except (TypeError, ValueError):
         recv_at = _dt.utcnow()
 
+    # Match the sender to a Lead first (real customer with full CRM
+    # context wins). Only if no Lead matches, check the marketing
+    # `bulk_contacts` list. A phone can legitimately exist in both.
     lead = _lookup_lead_by_phone(meta_from)
+    bulk_contact = None if lead else _lookup_bulk_contact_by_phone(meta_from)
+
+    # Auto opt-out: if this is a plain-text reply from a bulk marketing
+    # contact and the first token matches a STOP-word, flip the
+    # contact's is_opted_out flag so future bulk-sends skip them.
+    # We only auto-flip for BulkContacts — Leads have real BD context
+    # and shouldn't be silently muted by a stray "stop".
+    if bulk_contact and body_text:
+        first = (body_text.strip().split() or [''])[0].lower().strip('.,!?')
+        if first in _STOP_WORDS and not bulk_contact.is_opted_out:
+            bulk_contact.is_opted_out = True
+            app.logger.info(
+                f'[whatsapp-webhook] auto-opted-out bulk contact {bulk_contact.id} '
+                f'({bulk_contact.phone}) — first word {first!r}'
+            )
 
     row = WhatsAppMessage(
         lead_id=lead.id if lead else None,
+        bulk_contact_id=bulk_contact.id if bulk_contact else None,
         direction='in',
         from_number=meta_from,
         body_text=body_text,

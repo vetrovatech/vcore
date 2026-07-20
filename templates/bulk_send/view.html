@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}{{ contact.name }} · Bulk Send{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3">
+
+  {# ── Header row ─────────────────────────────────────────────── #}
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <div class="text-muted small">
+        <a href="{{ url_for('bulk_send_list') }}" class="text-decoration-none">
+          <i class="bi bi-arrow-left"></i> Bulk Send
+        </a>
+      </div>
+      <h4 class="mb-0">
+        {{ contact.name }}
+        {% if contact.is_opted_out %}
+        <span class="badge bg-danger-subtle text-danger-emphasis border ms-1">opted out</span>
+        {% endif %}
+      </h4>
+      <div class="text-muted small">
+        <i class="bi bi-telephone"></i> <span class="font-monospace">{{ contact.phone }}</span>
+        {% if contact.campaign %}
+        &nbsp;·&nbsp;
+        <span class="badge bg-secondary-subtle text-secondary-emphasis border">
+          {{ contact.campaign }}
+        </span>
+        {% endif %}
+        &nbsp;·&nbsp;
+        Imported {{ contact.imported_at.strftime('%d %b %Y, %H:%M') }}
+        {% if contact.importer %} by {{ contact.importer.username }}{% endif %}
+      </div>
+    </div>
+    <form method="POST" action="{{ url_for('bulk_send_toggle_opt_out', id=contact.id) }}">
+      <button type="submit"
+              class="btn btn-sm {% if contact.is_opted_out %}btn-outline-success{% else %}btn-outline-danger{% endif %}">
+        {% if contact.is_opted_out %}
+          <i class="bi bi-arrow-counterclockwise"></i> Clear opt-out
+        {% else %}
+          <i class="bi bi-slash-circle"></i> Opt out
+        {% endif %}
+      </button>
+    </form>
+  </div>
+
+  {# ── Conversation chat panel — same layout as leads/view.html ── #}
+  {% set wa_msgs = contact.whatsapp_messages|sort(attribute='sent_at') %}
+  {% set wa_in_count  = wa_msgs|selectattr('direction', 'equalto', 'in')|list|length %}
+  {% set wa_out_count = wa_msgs|length - wa_in_count %}
+  <div class="card">
+    <div class="card-body">
+      <h6 class="mb-3">
+        <i class="bi bi-whatsapp text-success"></i>
+        Conversation
+        {% if wa_msgs %}
+        <span class="text-muted small" style="font-weight:normal;">
+          &nbsp;·&nbsp; {{ wa_out_count }} sent, {{ wa_in_count }} received
+        </span>
+        {% endif %}
+      </h6>
+
+      {% if not wa_msgs %}
+      <div class="text-muted small fst-italic">
+        No messages yet. Select this contact on the Bulk Send list and send a template
+        to start the conversation.
+      </div>
+      {% else %}
+      <div class="wa-chat" id="waChat">
+        {% for m in wa_msgs %}
+        <div class="wa-bubble wa-{{ 'in' if m.direction == 'in' else 'out' }}">
+          {% if m.direction != 'in' and m.template_name %}
+          <div class="wa-tpl">Template · <b>{{ m.template_name }}</b></div>
+          {% endif %}
+          {% if m.body_text or m.display_body %}
+          <div class="wa-body">{{ m.body_text or m.display_body }}</div>
+          {% endif %}
+          {% if m.media_url %}
+            {% if m.media_mime and m.media_mime.startswith('image/') %}
+            <a href="{{ m.media_url }}" target="_blank" rel="noopener">
+              <img src="{{ m.media_url }}" alt="attachment"
+                   style="max-width:100%; max-height:180px; border-radius:6px; margin-top:4px;">
+            </a>
+            {% else %}
+            <div class="mt-1">
+              <a href="{{ m.media_url }}" target="_blank" rel="noopener">
+                <i class="bi bi-paperclip"></i>
+                {{ m.media_caption or (m.media_mime or 'attachment') }}
+              </a>
+            </div>
+            {% endif %}
+          {% endif %}
+          <div class="wa-meta">
+            {{ m.sent_at.strftime('%d %b, %H:%M') }}
+            {% if m.direction != 'in' %}
+              ·
+              {% if m.status == 'read' %}<span title="read" style="color:#0b8;">✓✓</span>
+              {% elif m.status == 'delivered' %}<span title="delivered">✓✓</span>
+              {% elif m.status == 'sent' %}<span title="sent">✓</span>
+              {% elif m.status == 'failed' %}<span title="{{ m.error_message or '' }}" style="color:#c33;">failed</span>
+              {% else %}<span>{{ m.status }}</span>{% endif %}
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<style>
+  .wa-chat {
+    display:flex; flex-direction:column; gap:6px;
+    padding:10px; background:#ECE5DD; border-radius:6px;
+    max-height:520px; overflow-y:auto;
+  }
+  .wa-bubble {
+    max-width:75%; padding:6px 10px; border-radius:8px;
+    font-size:0.9rem; line-height:1.35;
+    box-shadow:0 1px 1px rgba(0,0,0,0.05);
+  }
+  .wa-bubble.wa-out { align-self:flex-end; background:#DCF8C6; }
+  .wa-bubble.wa-in  { align-self:flex-start; background:#FFFFFF; }
+  .wa-tpl  { font-size:0.72rem; color:#0b8b3a; margin-bottom:3px; }
+  .wa-body { white-space:pre-wrap; word-break:break-word; }
+  .wa-meta { font-size:0.7rem; color:#666; margin-top:3px; text-align:right; }
+</style>
+<script>
+  // Auto-scroll to latest message on load.
+  (function () {
+    var el = document.getElementById('waChat');
+    if (el) el.scrollTop = el.scrollHeight;
+  })();
+</script>
+{% endblock %}

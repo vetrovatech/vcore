@@ -320,6 +320,12 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('bulk_send') %}active{% endif %}"
+                                href="{{ url_for('bulk_send_list') }}">
+                                <i class="bi bi-megaphone"></i> Bulk Send
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {% if request.endpoint and 'meeting' in request.endpoint %}active{% endif %}"
                                 href="{{ url_for('meetings_list') }}">
                                 <i class="bi bi-geo-alt"></i> Meetings
