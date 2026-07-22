@@ -173,8 +173,16 @@
                     <div class="col-7 text-muted">Total sqft <small>(qty-weighted)</small></div>
                     <div class="col-5 text-end fw-bold">{{ '{:,.2f}'.format(total_sqft_sum) }}</div>
 
-                    <div class="col-7 text-muted">Subtotal (taxable)</div>
+                    <div class="col-7 text-muted">Subtotal (items)</div>
                     <div class="col-5 text-end fw-bold">₹{{ '{:,.2f}'.format(quote.subtotal or 0) }}</div>
+
+                    {% if (quote.transport_charges or 0)|float > 0 %}
+                    <div class="col-7 text-muted">Transportation</div>
+                    <div class="col-5 text-end">₹{{ '{:,.2f}'.format(quote.transport_charges or 0) }}</div>
+
+                    <div class="col-7 text-muted">Taxable amount</div>
+                    <div class="col-5 text-end fw-bold">₹{{ '{:,.2f}'.format((quote.subtotal or 0)|float + (quote.transport_charges or 0)|float) }}</div>
+                    {% endif %}
 
                     <div class="col-7 text-muted">CGST ({{ '%g'|format(((quote.gst_percentage or 0)|float)/2) }}%)</div>
                     <div class="col-5 text-end">₹{{ '{:,.2f}'.format(quote.cgst or 0) }}</div>

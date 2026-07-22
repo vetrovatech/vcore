@@ -142,8 +142,20 @@
                         <div class="col-7 text-muted small">Total sqft <small>(across all openings, qty-weighted)</small></div>
                         <div class="col-5 text-end fw-bold" id="totalSqftCell">0.00</div>
 
-                        <div class="col-7 text-muted small">Subtotal (taxable)</div>
+                        <div class="col-7 text-muted small">Subtotal (items)</div>
                         <div class="col-5 text-end fw-bold" id="subtotalCell">₹0</div>
+
+                        <div class="col-7"><label class="form-label mb-0 small">Transportation <span class="text-muted">(₹)</span></label></div>
+                        <div class="col-5">
+                            <input type="number" step="0.01" min="0"
+                                   class="form-control form-control-sm"
+                                   name="transport_charges" id="transportInput"
+                                   value="{{ default_transport_charges }}"
+                                   placeholder="0">
+                        </div>
+
+                        <div class="col-7 text-muted small">Taxable amount</div>
+                        <div class="col-5 text-end" id="taxableCell">₹0</div>
 
                         <div class="col-7 text-muted small">CGST <span id="halfGstLabel">(9%)</span></div>
                         <div class="col-5 text-end" id="cgstCell">₹0</div>
@@ -234,10 +246,12 @@
     const addBtn   = document.getElementById('addRowBtn');
     const totalSqftEl = document.getElementById('totalSqftCell');
     const subEl    = document.getElementById('subtotalCell');
+    const taxEl    = document.getElementById('taxableCell');
     const cgstEl   = document.getElementById('cgstCell');
     const sgstEl   = document.getElementById('sgstCell');
     const grandEl  = document.getElementById('grandTotalCell');
     const gstInput = document.getElementById('gstInput');
+    const transportInput = document.getElementById('transportInput');
     const halfL1   = document.getElementById('halfGstLabel');
     const halfL2   = document.getElementById('halfGstLabel2');
     const countEl  = document.getElementById('rowCount');
@@ -367,10 +381,15 @@
         const halfPct = (gstPct / 2).toFixed(2).replace(/\.?0+$/, '');
         halfL1.textContent = `(${halfPct}%)`;
         halfL2.textContent = `(${halfPct}%)`;
-        const cgst = subtotal * gstPct / 200;
+        // Transportation → added to taxable base BEFORE GST, so
+        // the CGST/SGST rate applies to (subtotal + transport).
+        const transport = Math.max(0, parseFloat(transportInput.value) || 0);
+        const taxable = subtotal + transport;
+        const cgst = taxable * gstPct / 200;
         const sgst = cgst;
-        const total = subtotal + cgst + sgst;
+        const total = taxable + cgst + sgst;
         subEl.textContent   = money(subtotal);
+        if (taxEl) taxEl.textContent = money(taxable);
         cgstEl.textContent  = money(cgst);
         sgstEl.textContent  = money(sgst);
         grandEl.textContent = money(total);
@@ -380,6 +399,7 @@
 
     addBtn.addEventListener('click', () => { buildRow(); });
     gstInput.addEventListener('input', recomputeTotals);
+    if (transportInput) transportInput.addEventListener('input', recomputeTotals);
 
     // Seed rows
     let initial = [];

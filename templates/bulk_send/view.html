@@ -20,6 +20,12 @@
       </h4>
       <div class="text-muted small">
         <i class="bi bi-telephone"></i> <span class="font-monospace">{{ contact.phone }}</span>
+        {% if contact.star_rating is not none %}
+        &nbsp;·&nbsp; <span title="Google rating">⭐ {{ '%.1f'|format(contact.star_rating|float) if (contact.star_rating|float % 1) else (contact.star_rating|int) }}</span>
+        {% if contact.reviews_count %}
+        <span class="text-muted">({{ contact.reviews_count }} reviews)</span>
+        {% endif %}
+        {% endif %}
         {% if contact.campaign %}
         &nbsp;·&nbsp;
         <span class="badge bg-secondary-subtle text-secondary-emphasis border">
@@ -30,6 +36,30 @@
         Imported {{ contact.imported_at.strftime('%d %b %Y, %H:%M') }}
         {% if contact.importer %} by {{ contact.importer.username }}{% endif %}
       </div>
+      {% if contact.business_category or contact.location %}
+      <div class="text-muted small mt-1">
+        {% if contact.business_category %}<i class="bi bi-tag"></i> {{ contact.business_category }}{% endif %}
+        {% if contact.location %}
+        {% if contact.business_category %} &nbsp;·&nbsp; {% endif %}
+        <i class="bi bi-geo-alt"></i> {{ contact.location }}
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if contact.listing_url or contact.website %}
+      <div class="mt-1 small">
+        {% if contact.listing_url %}
+        <a href="{{ contact.listing_url }}" target="_blank" rel="noopener" class="me-2">
+          <i class="bi bi-box-arrow-up-right"></i> Glassy listing
+        </a>
+        {% endif %}
+        {% if contact.website %}
+        <a href="{% if contact.website.startswith('http') %}{{ contact.website }}{% else %}https://{{ contact.website }}{% endif %}"
+           target="_blank" rel="noopener">
+          <i class="bi bi-globe"></i> {{ contact.website }}
+        </a>
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
     <form method="POST" action="{{ url_for('bulk_send_toggle_opt_out', id=contact.id) }}">
       <button type="submit"

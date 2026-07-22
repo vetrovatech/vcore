@@ -4131,9 +4131,29 @@ def _send_lead_template(lead, template, cached_media_id=None):
         upload_media,
         normalize_phone,
     )
-    from utils.lead_templates import build_body_variables
+    from utils.lead_templates import build_body_variables, MissingVariable
 
-    variables = build_body_variables(template, lead)
+    try:
+        variables = build_body_variables(template, lead)
+    except MissingVariable as e:
+        # The picked template needs a field the Lead doesn't carry
+        # (e.g. glassy_onboarding_invite wants star_rating/listing_url,
+        # which only BulkContacts have). Record a failed row for the
+        # audit log and return without hitting Meta.
+        msg = WhatsAppMessage(
+            lead_id=lead.id,
+            to_number=normalize_phone(lead.contact) or lead.contact,
+            template_name=template.name,
+            language=template.language,
+            variables_json=None,
+            sent_by=current_user.id,
+            status='failed',
+            error_message=f'template {template.name!r} needs {e.field} — not on Lead',
+        )
+        db.session.add(msg)
+        db.session.flush()
+        return msg, False
+
     msg = WhatsAppMessage(
         lead_id=lead.id,
         to_number=normalize_phone(lead.contact) or lead.contact,
@@ -4376,9 +4396,26 @@ MAX_BULK_CONTACTS_UPLOAD = 1000
 MAX_BULK_CONTACTS_SEND   = 25   # per-request cap; same as MAX_BULK_WA_LEADS
 
 
+# ── Bulk-contact Excel columns (canonical + accepted header aliases) ──
+# Two required (name + phone) so simple imports still work. The other
+# six are business-directory fields the `glassy_onboarding_invite`
+# template uses — populated when BD uploads a directory export.
+_BULK_COL_ALIASES = {
+    'name':         ('name', 'contact name', 'contact', 'customer', 'business', 'business name', 'business (category)'),
+    'phone':        ('phone', 'mobile', 'number', 'contact number', 'whatsapp', 'whatsapp number', 'mobile number'),
+    'star_rating':  ('star_rating', 'star', 'stars', 'rating', 'google rating', 'star rating'),
+    'listing_url':  ('listing_url', 'listing', 'glassy listing url', 'glassy listing', 'glassy url', 'directory url'),
+    'category':     ('category', 'business category', 'type'),
+    'location':     ('location', 'city', 'area', 'address'),
+    'reviews_count':('reviews_count', 'reviews', 'review count', 'number of reviews'),
+    'website':      ('website', 'url', 'site', 'business website'),
+}
+
+
 def _bulk_contact_excel_template_bytes():
-    """Return an .xlsx workbook with a `name` / `phone` header row +
-    two example rows. BD downloads this, fills it in, uploads back."""
+    """Return an .xlsx workbook with the full column set (name, phone,
+    star_rating, listing_url + 4 optional business fields) and two
+    sample rows. BD downloads this, fills it in, uploads back."""
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
     wb = openpyxl.Workbook()
@@ -4389,31 +4426,73 @@ def _bulk_contact_excel_template_bytes():
     header_fill = PatternFill('solid', fgColor='0B8B3A')
     center      = Alignment(horizontal='center')
 
-    ws['A1'] = 'name'
-    ws['B1'] = 'phone'
-    for c in ('A1', 'B1'):
-        ws[c].font = header_font
-        ws[c].fill = header_fill
-        ws[c].alignment = center
+    headers = ['name', 'phone', 'star_rating', 'listing_url',
+               'category', 'location', 'reviews_count', 'website']
+    for i, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=i, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
 
-    # Two example rows so BD sees the expected shape.
-    ws['A2'] = 'Ansar Shaik'
-    ws['B2'] = '9876543210'
-    ws['A3'] = 'Priya Kumar'
-    ws['B3'] = '+91 98765 43211'
+    # Sample rows modeled on the Glassy India directory shape BD uploads.
+    ws.append([
+        'THE MARINA MALL CHENNAI', '+91 44 4017 3017', 4.4,
+        'https://glassy.in/glass-business/the-marina-mall-chennai/',
+        'shop/dealer', 'Old Mahabalipuram Road, Chennai', 31746,
+        'marinamallchennai.com',
+    ])
+    ws.append([
+        'Livspace Home', '+91 80 4697 1177', 4.7,
+        'https://glassy.in/glass-business/livspace-home-yousuf/',
+        'interior designer', 'Marathahalli, Bengaluru', 16201,
+        'www.livspace.com/in/interior-design',
+    ])
 
-    ws.column_dimensions['A'].width = 32
-    ws.column_dimensions['B'].width = 20
+    widths = [30, 22, 12, 60, 22, 30, 12, 34]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
 
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
+def _split_name_and_category(raw_name: str):
+    """Column B in the Glassy directory sheet packs 'Business — category'
+    (em-dash-space or hyphen-space). If BD's upload preserves that
+    formatting, split it so contact.name = business, contact.category =
+    category. Returns (name, category_or_None). No-op when no separator
+    is present."""
+    if not raw_name:
+        return raw_name, None
+    for sep in (' — ', ' – ', ' - '):
+        if sep in raw_name:
+            left, right = raw_name.split(sep, 1)
+            left = left.strip()
+            right = right.strip()
+            if left and right and len(right) < 80:
+                return left, right
+    return raw_name.strip(), None
+
+
+def _match_column(headers: list[str], canonical: str):
+    """Return the column index for `canonical` given a list of lowercased
+    header strings. Uses the alias table; returns None on no match."""
+    aliases = _BULK_COL_ALIASES.get(canonical, (canonical,))
+    for i, h in enumerate(headers):
+        if h in aliases:
+            return i
+    return None
+
+
 def _parse_bulk_contacts_upload(file_storage):
-    """Read an uploaded .xlsx or .csv into a list of {name, phone} dicts.
-    Returns (rows, warnings). `warnings` is a list of strings surfaced to
-    BD on the import screen ("row 47 skipped — missing phone", etc)."""
+    """Read an uploaded .xlsx or .csv into a list of contact-shaped
+    dicts. Two required columns (name + phone); when present, the
+    remaining business-directory columns (star_rating, listing_url,
+    category, location, reviews_count, website) are also captured.
+
+    Returns (rows, warnings). `warnings` are per-row strings the
+    import screen surfaces to BD ("row 47 skipped — missing phone")."""
     import openpyxl
     from utils.whatsapp import normalize_phone
 
@@ -4421,9 +4500,27 @@ def _parse_bulk_contacts_upload(file_storage):
     rows = []
     warnings = []
 
-    def _push(idx, name, phone_raw):
+    def _as_float(v):
+        if v is None or v == '':
+            return None
+        try:
+            return float(str(v).strip())
+        except (TypeError, ValueError):
+            return None
+
+    def _as_int(v):
+        if v is None or v == '':
+            return None
+        try:
+            return int(float(str(v).strip().replace(',', '')))
+        except (TypeError, ValueError):
+            return None
+
+    def _push(idx, values):
+        name, phone_raw = values.get('name'), values.get('phone')
+        # Blank row — silently skip
         if not name and not phone_raw:
-            return  # blank row — skip silently
+            return
         if not name:
             warnings.append(f'row {idx}: skipped (name missing)')
             return
@@ -4434,41 +4531,55 @@ def _parse_bulk_contacts_upload(file_storage):
         if not normalized or len(normalized) < 10:
             warnings.append(f'row {idx}: skipped (phone {phone_raw!r} invalid)')
             return
-        rows.append({'name': str(name).strip(), 'phone': normalized})
+        # Auto-split "Business — category" (Glassy directory shape).
+        split_name, split_cat = _split_name_and_category(str(name))
+        rows.append({
+            'name': split_name,
+            'phone': normalized,
+            'star_rating': _as_float(values.get('star_rating')),
+            'listing_url': (str(values['listing_url']).strip() if values.get('listing_url') else None),
+            'business_category': (str(values.get('category')).strip() if values.get('category')
+                                   else split_cat),
+            'location': (str(values['location']).strip() if values.get('location') else None),
+            'reviews_count': _as_int(values.get('reviews_count')),
+            'website': (str(values['website']).strip() if values.get('website') else None),
+        })
 
     if filename.endswith('.csv'):
         import csv as _csv
         stream = io.TextIOWrapper(file_storage.stream, encoding='utf-8', errors='replace')
         reader = _csv.DictReader(stream)
         for idx, row in enumerate(reader, start=2):
-            # Column names are case-insensitive; also accept common variants.
-            keys = {k.strip().lower(): v for k, v in row.items() if k}
-            name  = keys.get('name') or keys.get('contact name') or ''
-            phone = keys.get('phone') or keys.get('mobile') or keys.get('number') or ''
-            _push(idx, name, phone)
+            keys = {(k or '').strip().lower(): v for k, v in row.items() if k}
+            values = {}
+            for canonical in _BULK_COL_ALIASES:
+                for alias in _BULK_COL_ALIASES[canonical]:
+                    if alias in keys and keys[alias] not in (None, ''):
+                        values[canonical] = keys[alias]
+                        break
+            _push(idx, values)
     else:
-        # Default to Excel — .xlsx / .xls
         try:
             wb = openpyxl.load_workbook(file_storage, data_only=True)
         except Exception as e:
             raise ValueError(f'Could not read Excel file: {e}')
         ws = wb.active
-        # Header row = first non-empty row. Match name & phone columns.
-        headers = []
-        for cell in ws[1]:
-            headers.append(str(cell.value or '').strip().lower())
-        try:
-            name_idx  = next(i for i, h in enumerate(headers) if h in ('name','contact name','contact','customer'))
-            phone_idx = next(i for i, h in enumerate(headers) if h in ('phone','mobile','number','contact number','whatsapp'))
-        except StopIteration:
+        headers = [str(cell.value or '').strip().lower() for cell in ws[1]]
+        idx_map = {c: _match_column(headers, c) for c in _BULK_COL_ALIASES}
+        if idx_map.get('name') is None or idx_map.get('phone') is None:
             raise ValueError(
                 'Expected columns "name" and "phone" in the header row. '
-                'Downloaded template has them — please use that.'
+                'The download template has these plus optional star_rating, '
+                'listing_url, category, location, reviews_count, website.'
             )
-        for idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
-            name  = row[name_idx].value  if name_idx  < len(row) else None
-            phone = row[phone_idx].value if phone_idx < len(row) else None
-            _push(idx, name, phone)
+        for r_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+            values = {}
+            for canonical, col_idx in idx_map.items():
+                if col_idx is not None and col_idx < len(row):
+                    v = row[col_idx].value
+                    if v not in (None, ''):
+                        values[canonical] = v
+            _push(r_idx, values)
 
     return rows, warnings
 
@@ -4579,8 +4690,20 @@ def bulk_send_import():
     for r in deduped:
         if r['phone'] in existing:
             row = existing[r['phone']]
+            row_dirty = False
             if campaign and row.campaign != campaign:
                 row.campaign = campaign
+                row_dirty = True
+            # Enrich empty business-directory fields on collision so a
+            # re-import can top-up ratings / listing URLs without wiping
+            # anything BD may have manually edited.
+            for field in ('star_rating', 'listing_url', 'business_category',
+                          'location', 'reviews_count', 'website'):
+                incoming = r.get(field)
+                if incoming is not None and getattr(row, field) in (None, ''):
+                    setattr(row, field, incoming)
+                    row_dirty = True
+            if row_dirty:
                 updated += 1
         else:
             db.session.add(BulkContact(
@@ -4588,6 +4711,12 @@ def bulk_send_import():
                 phone=r['phone'],
                 campaign=campaign,
                 imported_by=current_user.id,
+                star_rating=r.get('star_rating'),
+                listing_url=r.get('listing_url'),
+                business_category=r.get('business_category'),
+                location=r.get('location'),
+                reviews_count=r.get('reviews_count'),
+                website=r.get('website'),
             ))
             inserted += 1
     db.session.commit()
@@ -4638,7 +4767,9 @@ def bulk_send_bulk_template():
     Mirrors leads_bulk_send_template but works on the bulk_contacts
     table and skips opted-out rows."""
     from models import BulkContact, WhatsAppMessage
-    from utils.lead_templates import get_lead_template, build_body_variables
+    from utils.lead_templates import (
+        get_lead_template, build_body_variables, MissingVariable,
+    )
     from utils.whatsapp import send_template, send_template_with_document, upload_media, normalize_phone
 
     template_name = (request.form.get('template_name') or '').strip()
@@ -4679,17 +4810,24 @@ def bulk_send_bulk_template():
     failed = 0
     failures = []
 
+    skipped = 0
     for contact in contacts:
-        # Build body variables the same way we do for leads. build_body_variables
-        # only reads .name so a duck-typed BulkContact works — it also has .name.
-        # We pass a small shim object with .name and (for future safety) .contact.
-        class _Shim:
-            pass
-        shim = _Shim()
-        shim.name = contact.name
-        shim.contact = contact.phone
-        shim.id = contact.id
-        variables = build_body_variables(template, shim)
+        # Build body variables for this contact. Templates with a
+        # per-template var_builder read business-directory fields
+        # straight off the BulkContact — we don't need a shim, the
+        # BulkContact already exposes .name / .star_rating / .listing_url.
+        # MissingVariable raised by the builder → skip this row with a
+        # per-row failure entry so BD sees WHY (missing field name).
+        try:
+            variables = build_body_variables(template, contact)
+        except MissingVariable as e:
+            skipped += 1
+            failures.append({
+                'contact_id': contact.id,
+                'name': contact.name,
+                'error': f'missing {e.field}',
+            })
+            continue
 
         msg_row = WhatsAppMessage(
             bulk_contact_id=contact.id,
@@ -4744,7 +4882,7 @@ def bulk_send_bulk_template():
 
     return jsonify({
         'success': True,
-        'sent': sent, 'failed': failed,
+        'sent': sent, 'failed': failed, 'skipped': skipped,
         'attempted': len(contacts),
         'truncated': truncated,
         'cap': MAX_BULK_CONTACTS_SEND,
@@ -10311,24 +10449,32 @@ def _next_upvc_estimate_number():
 
 
 def _upvc_recompute_totals(quote):
-    """Sum item amounts → subtotal; apply GST → total.
+    """Sum item amounts → subtotal; add transport; apply GST → total.
 
     Per KAN-67 answer #1: BD's per-line price IS the taxable amount, GST
-    calculated on top. No discount field on the bill (KAN-67 doesn't ask
-    for one); add later via revisions table if BD asks.
+    calculated on top. Transportation charge added 2026-07-21 — folded
+    into the taxable base BEFORE GST so the PDF shows:
+        Subtotal
+        Transportation
+        CGST/SGST (on subtotal + transport)
+        Grand Total
 
-        subtotal      = Σ items.amount
-        cgst = sgst   = subtotal × (gst_percent / 2 / 100)
-        total         = subtotal + cgst + sgst
+    Math:
+        subtotal      = Σ items.amount                        (unchanged)
+        taxable       = subtotal + transport_charges          (new)
+        cgst = sgst   = taxable × (gst_percent / 2 / 100)
+        total         = taxable + cgst + sgst
     """
-    subtotal = sum(float(it.amount or 0) for it in quote.items)
-    gst_pct  = float(quote.gst_percentage or 0)
-    cgst     = round(subtotal * gst_pct / 2 / 100, 2)
-    sgst     = round(subtotal * gst_pct / 2 / 100, 2)
+    subtotal  = sum(float(it.amount or 0) for it in quote.items)
+    transport = float(quote.transport_charges or 0)
+    taxable   = subtotal + transport
+    gst_pct   = float(quote.gst_percentage or 0)
+    cgst      = round(taxable * gst_pct / 2 / 100, 2)
+    sgst      = round(taxable * gst_pct / 2 / 100, 2)
     quote.subtotal = subtotal
     quote.cgst = cgst
     quote.sgst = sgst
-    quote.total = round(subtotal + cgst + sgst, 2)
+    quote.total = round(taxable + cgst + sgst, 2)
 
 
 def _upvc_parse_items_from_form(form):
@@ -10576,6 +10722,7 @@ def upvc_quote_create():
                                colours=UPVC_COLOURS,
                                units=UPVC_UNITS,
                                default_gst=18,
+                               default_transport_charges=0,
                                default_validity_days=10)
 
     # POST — create
@@ -10600,6 +10747,13 @@ def upvc_quote_create():
     except ValueError:
         validity = 10
 
+    try:
+        transport_charges = float(form.get('transport_charges') or 0)
+        if transport_charges < 0:
+            transport_charges = 0
+    except ValueError:
+        transport_charges = 0
+
     quote = UpvcQuote(
         estimate_number=_next_upvc_estimate_number(),
         customer_name=customer_name,
@@ -10609,6 +10763,7 @@ def upvc_quote_create():
         customer_pan=(form.get('customer_pan') or '').strip().upper() or None,
         site_address=(form.get('site_address') or '').strip() or None,
         gst_percentage=gst_pct,
+        transport_charges=transport_charges,
         validity_days=validity,
         notes=(form.get('notes') or '').strip() or None,
         stage='draft',
@@ -10679,6 +10834,7 @@ def _upvc_save_form(quote, form, *, mode):
             'rate': float(it.rate or 0), 'amount': float(it.amount or 0),
         } for it in quote.items],
         'gst_percentage': float(quote.gst_percentage or 0),
+        'transport_charges': float(quote.transport_charges or 0),
     }
 
     quote.customer_name = customer_name
@@ -10695,6 +10851,13 @@ def _upvc_save_form(quote, form, *, mode):
     try:
         quote.validity_days = int(form.get('validity_days') or quote.validity_days or 10)
     except ValueError:
+        pass
+    try:
+        transport_charges = float(form.get('transport_charges') or 0)
+        quote.transport_charges = max(0, transport_charges)
+    except ValueError:
+        # Leave the existing value untouched on bad input rather than
+        # silently zeroing out a previously-typed transport charge.
         pass
 
     _upvc_apply_items(quote, item_dicts)
@@ -10747,6 +10910,7 @@ def upvc_quote_edit(id):
                                colours=UPVC_COLOURS,
                                units=UPVC_UNITS,
                                default_gst=float(quote.gst_percentage or 18),
+                               default_transport_charges=float(quote.transport_charges or 0),
                                default_validity_days=int(quote.validity_days or 10))
 
     msg, level = _upvc_save_form(quote, request.form, mode='edit')
@@ -10777,6 +10941,7 @@ def upvc_quote_revise(id):
                                colours=UPVC_COLOURS,
                                units=UPVC_UNITS,
                                default_gst=float(quote.gst_percentage or 18),
+                               default_transport_charges=float(quote.transport_charges or 0),
                                default_validity_days=int(quote.validity_days or 10))
 
     msg, level = _upvc_save_form(quote, request.form, mode='revise')

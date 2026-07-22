@@ -1364,6 +1364,18 @@ class BulkContact(db.Model):
     imported_at  = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at   = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Business-directory fields — populated by the Glassy India campaign
+    # upload. `star_rating` + `listing_url` feed the
+    # `glassy_onboarding_invite` template's {{2}} and {{3}} body vars;
+    # the rest are stored for BD's cross-referencing + future filters.
+    # All nullable so simple name+phone imports still work.
+    star_rating       = db.Column(db.Numeric(3, 1), nullable=True)
+    listing_url       = db.Column(db.Text,          nullable=True)
+    business_category = db.Column(db.String(120),   nullable=True)
+    location          = db.Column(db.String(200),   nullable=True)
+    reviews_count     = db.Column(db.Integer,       nullable=True)
+    website           = db.Column(db.String(500),   nullable=True)
+
     importer     = db.relationship('User', foreign_keys=[imported_by])
 
     def __repr__(self):
@@ -1952,6 +1964,10 @@ class UpvcQuote(db.Model):
     # sum of line amounts; GST applies on top per the directive that
     # "whatever he writes is taxable, tax is calculated after that value".
     subtotal = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    # Optional BD-typed transport/delivery charge — added to the taxable
+    # base BEFORE GST. Shown as a separate line on the customer PDF
+    # between Subtotal and CGST. Defaults 0 so old quotes read fine.
+    transport_charges = db.Column(db.Numeric(10, 2), default=0, nullable=False)
     cgst = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     sgst = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     total = db.Column(db.Numeric(12, 2), default=0, nullable=False)

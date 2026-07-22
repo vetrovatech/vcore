@@ -527,13 +527,20 @@ def generate_upvc_quote_pdf(quote):
     # Qty-weighted total sqft across all openings — same number the
     # view-page totals card shows + the form previewed live.
     total_sqft = sum(float(it.sqft or 0) * float(it.quantity or 1) for it in items)
+    transport  = float(getattr(quote, 'transport_charges', 0) or 0)
+    taxable    = float(quote.subtotal or 0) + transport
     totals_rows = [
         ['Total Sqft',                f'{total_sqft:,.2f}'],
-        ['Subtotal (taxable)',        _money(quote.subtotal)],
+        ['Subtotal (items)',          _money(quote.subtotal)],
+    ]
+    if transport > 0:
+        totals_rows.append(['Transportation', _money(transport)])
+        totals_rows.append(['Taxable Amount', _money(taxable)])
+    totals_rows.extend([
         [f'CGST ({gst_half:g}%)',     _money(quote.cgst)],
         [f'SGST ({gst_half:g}%)',     _money(quote.sgst)],
         ['Grand Total',               _money(quote.total)],
-    ]
+    ])
     totals_tbl = Table(totals_rows, colWidths=[40 * mm, 40 * mm])
     totals_tbl.setStyle(TableStyle([
         ('TEXTCOLOR', (0, 0), (0, -2), VI_MUTED),

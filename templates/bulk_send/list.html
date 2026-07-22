@@ -146,6 +146,19 @@
                      class="text-decoration-none">
                     {{ c.name }}
                   </a>
+                  {% if c.star_rating is not none %}
+                  <span class="badge bg-warning-subtle text-warning-emphasis border ms-1"
+                        title="Google rating">
+                    ⭐ {{ '%.1f'|format(c.star_rating|float) if (c.star_rating|float % 1) else (c.star_rating|int) }}
+                  </span>
+                  {% endif %}
+                  {% if c.business_category %}
+                  <div class="text-muted small">{{ c.business_category }}
+                    {% if c.location %} · {{ c.location }}{% endif %}
+                  </div>
+                  {% elif c.location %}
+                  <div class="text-muted small">{{ c.location }}</div>
+                  {% endif %}
                   {% if c.is_opted_out %}
                   <span class="badge bg-danger-subtle text-danger-emphasis border ms-1">
                     opted out
