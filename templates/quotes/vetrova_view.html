@@ -164,6 +164,10 @@
                     <dt class="col-6">Transport</dt>
                     <dd class="col-6 text-end">₹{{ '{:,.0f}'.format(quote.transport_charges|float) }}</dd>
                     {% endif %}
+                    {% if quote.delivery_charge and quote.delivery_charge|float > 0 %}
+                    <dt class="col-6" title="Auto-added when subtotal &lt; ₹20,000">Delivery <span class="text-muted" style="font-weight:normal">(sub-₹20k orders)</span></dt>
+                    <dd class="col-6 text-end">₹{{ '{:,.0f}'.format(quote.delivery_charge|float) }}</dd>
+                    {% endif %}
                     <dt class="col-6">CGST @ {{ (quote.gst_percentage|float / 2) }}%</dt>
                     <dd class="col-6 text-end">₹{{ '{:,.0f}'.format(quote.cgst|float) }}</dd>
                     <dt class="col-6">SGST @ {{ (quote.gst_percentage|float / 2) }}%</dt>

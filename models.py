@@ -2587,6 +2587,13 @@ class VetrovaQuote(db.Model):
     total = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     subtotal = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     transport_charges = db.Column(db.Numeric(10, 2), default=0, nullable=False)
+    # Delivery charge (2026-07-27 BD rule). Auto-added by recompute_totals()
+    # when subtotal < ₹20,000: fixed ₹2,000 delivery. When subtotal ≥ 20k
+    # the delivery is on the house (auto-cleared to 0). Distinct from
+    # `transport_charges` — transport is BD-editable freight for out-of-
+    # city sites; delivery is a threshold-driven small-order fee. Both
+    # add to the taxable base before GST.
+    delivery_charge = db.Column(db.Numeric(10, 2), default=0, nullable=False)
     cgst = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     sgst = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     gst_percentage = db.Column(db.Numeric(5, 2), default=18, nullable=False)
@@ -2637,21 +2644,32 @@ class VetrovaQuote(db.Model):
             return None
         return self.created_at + timedelta(days=int(self.validity_days or 10))
 
+    # Delivery-charge rule (BD 2026-07-27): orders below ₹20,000 subtotal
+    # carry a ₹2,000 delivery fee. Kept as module-level constants so BD
+    # can change them by editing one place if the policy shifts.
+    DELIVERY_THRESHOLD = 20000.0
+    DELIVERY_FEE       = 2000.0
+
     def recompute_totals(self):
-        """Recalculate subtotal + GST + grand_total from the current items.
+        """Recalculate subtotal + delivery + GST + grand_total from items.
 
         Called by the ingest handler + the revise-save handler so any time
         items change, the parent's money fields stay in sync. Uses whole
         rupees to match the customer-facing PDF (which never shows paise).
+        `delivery_charge` is rule-driven — not manually adjustable via the
+        revise form — so BD can't accidentally waive it below threshold.
         """
         subtotal = sum(float(i.subtotal or 0) for i in (self.items or []))
         transport = float(self.transport_charges or 0)
+        # BD rule: ₹2,000 delivery on sub-₹20k orders; free above.
+        delivery = self.DELIVERY_FEE if subtotal < self.DELIVERY_THRESHOLD else 0.0
         gst_pct = float(self.gst_percentage or 18)
-        taxable = subtotal + transport
+        taxable = subtotal + transport + delivery
         # Split GST evenly across CGST/SGST for intra-state (default).
         cgst = round(taxable * (gst_pct / 200), 2)
         sgst = round(taxable * (gst_pct / 200), 2)
         self.subtotal = round(subtotal, 2)
+        self.delivery_charge = round(delivery, 2)
         self.cgst = cgst
         self.sgst = sgst
         self.grand_total = round(taxable + cgst + sgst, 2)

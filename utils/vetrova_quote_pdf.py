@@ -282,6 +282,10 @@ def generate_vetrova_quote_pdf(quote):
     # ── Totals ────────────────────────────────────────────────────────
     subtotal = float(quote.subtotal or 0)
     transport = float(quote.transport_charges or 0)
+    # Delivery charge — rule-driven, added by VetrovaQuote.recompute_totals()
+    # when subtotal < ₹20,000. Renders here as its own line so the customer
+    # sees why a small order costs a bit more (2026-07-27 BD rule).
+    delivery = float(getattr(quote, 'delivery_charge', 0) or 0)
     cgst = float(quote.cgst or 0)
     sgst = float(quote.sgst or 0)
     grand = float(quote.grand_total or 0)
@@ -293,6 +297,8 @@ def generate_vetrova_quote_pdf(quote):
     ]
     if transport > 0:
         tot_rows.append(['Transport charges', _inr(transport)])
+    if delivery > 0:
+        tot_rows.append(['Delivery charges', _inr(delivery)])
     tot_rows.append([f'CGST @ {gst_pct/2:g}%', _inr(cgst)])
     tot_rows.append([f'SGST @ {gst_pct/2:g}%', _inr(sgst)])
     tot_rows.append(['Grand total (incl. GST)', _inr(grand)])
