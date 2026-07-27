@@ -3905,13 +3905,32 @@ def _parse_fb_created_time(s):
 
 
 def _do_indiamart_sync(owner_id, created_by_id):
-    """Core sync logic. Returns (new_count, skipped_count, error_msg)"""
-    from models import IndiamartToken, Lead
+    """Core sync logic. Returns (new_count, skipped_count, error_msg)
+
+    Ownership rule (2026-07-26): when a user is flagged as the
+    IndiaMart default owner (`users.is_indiamart_default_owner = TRUE`),
+    every newly-imported lead is assigned to THAT user regardless of who
+    triggered the sync (button click OR hourly cron). If nobody carries
+    the flag, we fall back to the `owner_id` argument the caller passed
+    (which is currently always `None` from both call sites — leaves
+    leads unowned for a manager to route manually).
+    """
+    from models import IndiamartToken, Lead, User
     import requests as req_lib
 
     token = IndiamartToken.query.first()
     if not token:
         return 0, 0, 'No IndiaMart token saved.'
+
+    # Resolve the effective owner ONCE up front so we don't re-query per
+    # contact (a busy sync page can carry 50 rows). Default-owner flag
+    # wins over the passed argument — the whole point is "every lead
+    # from this integration lands with the same person".
+    default_owner = User.query.filter_by(is_indiamart_default_owner=True, is_active=True).first()
+    if default_owner is not None:
+        effective_owner_id = default_owner.id
+    else:
+        effective_owner_id = owner_id
 
     headers = {
         'user-agent': 'IndiaMart/13.6.4 (com.indiamart.m; build:4; iOS 16.6.0) Alamofire/5.0.0-rc.2',
@@ -4005,7 +4024,7 @@ def _do_indiamart_sync(owner_id, created_by_id):
                 origin='IndiaMart',
                 stage='New Lead',
                 indiamart_id=im_id,
-                owner_id=owner_id,
+                owner_id=effective_owner_id,
                 created_by=created_by_id,
                 created_at=im_added or datetime.utcnow(),
             )
@@ -4059,13 +4078,25 @@ def indiamart_refresh_token_route():
         })
 
 
-@app.route('/leads/indiamart/sync', methods=['POST'])
+@app.route('/leads/indiamart/sync', methods=['GET', 'POST'])
 @login_required
 def indiamart_sync():
-    # Manager+ only — hammering this button by a sales user could rate-limit
-    # the paid IndiaMart API and briefly break the hourly cron ingest.
-    if not current_user.is_manager_or_admin():
-        flash('Only managers or admins can trigger IndiaMart sync.', 'danger')
+    # Manager+ by default — hammering this button by a sales user could
+    # rate-limit the paid IndiaMart API and briefly break the hourly cron
+    # ingest. Individual Promotors can be granted access via the per-user
+    # `can_indiamart_sync` flag (User admin form) without also inheriting
+    # the rest of the Manager toolkit.
+    #
+    # Route also accepts GET as a safe "swallow" (2026-07-26 UX fix). The
+    # sync fetches a paginated IndiaMart API and can take 30-60s+ — when
+    # the user hit refresh mid-request the browser re-issued the same URL
+    # as GET, and Flask's POST-only rule surfaced a 405 "Method Not
+    # Allowed" page. GET now just bounces back to the leads list without
+    # kicking off a sync, so the refresh becomes idempotent.
+    if request.method == 'GET':
+        return redirect(url_for('leads_list'))
+    if not current_user.can_run_indiamart_sync():
+        flash('You don’t have permission to trigger IndiaMart sync. Ask an admin to enable it on your account.', 'danger')
         return redirect(url_for('leads_list'))
     new_count, skipped_count, err = _do_indiamart_sync(None, current_user.id)
     if err:
@@ -8437,7 +8468,7 @@ from models import (
     BATHQUBE_STAGES, BATHQUBE_OPS_STAGES, BATHQUBE_OPS_ACTIVE_STAGES,
     UpvcQuote, UpvcQuoteItem, UpvcQuoteRevision, UpvcStatusEvent,
     UPVC_STAGES, UPVC_ACTIVE_STAGES,
-    VetrovaQuote, VetrovaStatusEvent,
+    VetrovaQuote, VetrovaQuoteItem, VetrovaStatusEvent,
     VETROVA_STAGES, VETROVA_ACTIVE_STAGES, VETROVA_STAGE_LABELS,
     VETROVA_CATEGORIES, VETROVA_CATEGORY_LABELS,
 )
@@ -9043,7 +9074,21 @@ def bathqube_bulk_send_whatsapp():
 @app.route('/api/vetrova/quotes/ingest', methods=['POST'])
 @limiter.limit("60 per minute")
 def vetrova_ingest():
-    """Webhook from glassyplatform: create/upsert a VetrovaQuote."""
+    """Webhook from glassyplatform: create/upsert a VetrovaQuote + items.
+
+    Accepts BOTH payload shapes glassyplatform sends:
+      - Multi-run: `runs: [{ categorySlug, selections, runningFt, quantity,
+                            subtotal, panels[], fabricCode,
+                            uploadedImageDataUrl, dimensionKind,
+                            dimensionUnit }, …]`
+      - Legacy single-run: top-level `categorySlug/selections/runningFt/
+        quantity/total` (synthesized into a single run before persist).
+
+    Upserts by `quote_ref`. On re-ingest of the same ref we WIPE the
+    existing items and re-create — the vetrova.in wire payload is the
+    source of truth for a "fresh" submission; BD edits happen after via
+    the revise route, and those never re-trigger ingest.
+    """
     raw = request.get_data(cache=True)
     sig = request.headers.get('X-Bathqube-Signature', '')
     if not _bathqube_verify_signature(raw, sig):
@@ -9064,15 +9109,24 @@ def vetrova_ingest():
     if not name or not phone:
         return jsonify({'error': 'name and phone required'}), 400
 
-    category_slug = (data.get('categorySlug') or '').strip()
-    if not category_slug:
-        return jsonify({'error': 'categorySlug required'}), 400
-
-    selections = data.get('selections') or {}
-    if not isinstance(selections, dict):
-        selections = {}
-
     external_id = str(data.get('externalId') or quote_ref)
+
+    # Normalise to runs[] regardless of payload shape.
+    runs_raw = data.get('runs')
+    if not isinstance(runs_raw, list) or not runs_raw:
+        # Legacy single-run fallback — synthesize from top-level fields.
+        legacy_slug = (data.get('categorySlug') or '').strip()
+        if not legacy_slug:
+            return jsonify({'error': 'runs[] or categorySlug required'}), 400
+        runs_raw = [{
+            'categorySlug':  legacy_slug,
+            'categoryLabel': data.get('categoryLabel')
+                             or VETROVA_CATEGORY_LABELS.get(legacy_slug, legacy_slug.title()),
+            'selections':    data.get('selections') or {},
+            'runningFt':     data.get('runningFt') or 0,
+            'quantity':      data.get('quantity') or 1,
+            'subtotal':      data.get('total') or 0,
+        }]
 
     quote = VetrovaQuote.query.filter_by(quote_ref=quote_ref).first()
     is_new = quote is None
@@ -9081,26 +9135,88 @@ def vetrova_ingest():
         db.session.add(quote)
 
     quote.external_id = external_id
-    quote.category_slug = category_slug
-    quote.category_label = data.get('categoryLabel') or VETROVA_CATEGORY_LABELS.get(category_slug, category_slug.title())
     quote.customer_name = name
     quote.phone = phone
     quote.email = contact.get('email') or None
     quote.pincode = contact.get('pincode') or None
     quote.site_address = contact.get('siteAddress') or None
     quote.notes = contact.get('notes') or None
-    quote.selections = json.dumps(selections) if selections else None
-    quote.running_ft = data.get('runningFt') or 0
-    quote.quantity = data.get('quantity') or 1
-    quote.total = data.get('total') or 0
+
+    # Header category — first run's slug (matches glassyplatform's own
+    # convention that VQ-CAT- ref prefix uses runs[0]'s categorySlug).
+    first_slug = (runs_raw[0].get('categorySlug') or '').strip() or 'unknown'
+    quote.category_slug = first_slug
+    # Multi-run label — "Multi-configuration" when runs span categories.
+    uniq_labels = {(r.get('categoryLabel') or VETROVA_CATEGORY_LABELS.get(
+        (r.get('categorySlug') or '').strip(),
+        (r.get('categorySlug') or '').strip().title())) for r in runs_raw}
+    quote.category_label = next(iter(uniq_labels)) if len(uniq_labels) == 1 else 'Multi-configuration'
+
+    # Wipe + re-create items on every ingest (fresh submission).
+    if not is_new:
+        VetrovaQuoteItem.query.filter_by(quote_id=quote.id).delete()
+
+    for idx, r in enumerate(runs_raw):
+        slug = (r.get('categorySlug') or '').strip() or first_slug
+        label = r.get('categoryLabel') or VETROVA_CATEGORY_LABELS.get(slug, slug.title())
+        selections = r.get('selections') if isinstance(r.get('selections'), dict) else {}
+        panels = r.get('panels') if isinstance(r.get('panels'), list) else None
+        running_ft = float(r.get('runningFt') or 0)
+        qty = float(r.get('quantity') or 1)
+        item_subtotal = float(r.get('subtotal') or 0)
+        # Rate derivation mirrors glassyplatform's PDF math: panelsMode
+        # runs pre-bake qty into runningFt so divide by runningFt alone;
+        # single-row runs multiply externally so divide by both.
+        if panels:
+            denom = running_ft
+        else:
+            denom = running_ft * qty
+        rate = round(item_subtotal / denom, 2) if denom > 0 else 0
+
+        img_data_url = r.get('uploadedImageDataUrl')
+        # Guard rail: only accept data:image/* URLs so we don't accidentally
+        # persist an attacker-supplied http:// URL.
+        if not (isinstance(img_data_url, str) and img_data_url.startswith('data:image/')):
+            img_data_url = None
+
+        item = VetrovaQuoteItem(
+            quote_id=quote.id,
+            sort_order=idx + 1,
+            category_slug=slug,
+            category_label=label,
+            selections=json.dumps(selections) if selections else None,
+            dimension_kind=r.get('dimensionKind') or 'square_feet',
+            dimension_unit=r.get('dimensionUnit') or 'ft',
+            running_ft=running_ft,
+            quantity=qty,
+            panels=json.dumps(panels) if panels else None,
+            fabric_code=(r.get('fabricCode') or None),
+            uploaded_image_data_url=img_data_url,
+            rate_per_unit=rate,
+            subtotal=item_subtotal,
+        )
+        db.session.add(item)
+
+    # Legacy per-quote fields — populated from run[0] so the list view keeps
+    # working. Multi-run quotes still show first-run summary in the header.
+    r0 = runs_raw[0]
+    quote.selections = json.dumps(r0.get('selections') or {}) if r0.get('selections') else None
+    quote.running_ft = r0.get('runningFt') or 0
+    quote.quantity = int(r0.get('quantity') or 1)
+    quote.total = data.get('total') or sum(float(r.get('subtotal') or 0) for r in runs_raw)
 
     try:
+        db.session.flush()  # get item PKs so recompute_totals sees them
+        # Reload items via relationship so recompute_totals picks them up.
+        db.session.refresh(quote)
+        quote.recompute_totals()
         db.session.commit()
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'db error', 'detail': str(e)}), 500
 
-    return jsonify({'ok': True, 'id': quote.id, 'created': is_new}), 200
+    return jsonify({'ok': True, 'id': quote.id, 'created': is_new,
+                    'itemCount': len(runs_raw)}), 200
 
 
 @app.route('/quotes/vetrova')
@@ -9181,6 +9297,187 @@ def vetrova_quote_delete(id):
     db.session.commit()
     flash(f'Deleted {ref}.', 'success')
     return redirect(url_for('vetrova_quotes_list'))
+
+
+@app.route('/quotes/vetrova/<int:id>/revise', methods=['GET', 'POST'])
+@login_required
+def vetrova_quote_revise(id):
+    """Full editor for a Vetrova quote.
+
+    GET  — renders the form pre-populated with current quote + items.
+    POST — accepts application/json:
+      {
+        customer: {name, phone, email, pincode, siteAddress, notes},
+        pricing:  {transportCharges, gstPercentage, revisedTotal, amountReceived},
+        items:    [
+          { id?: int,           # existing item id; omit for new
+            sortOrder: int,
+            categorySlug: str, categoryLabel: str,
+            label?: str,
+            selections: { key: value, … },
+            dimensionKind: 'square_feet' | 'running_feet',
+            dimensionUnit: 'ft' | 'in',
+            runningFt: number, quantity: number,
+            panels: [{ widthFt, heightFt, qty, kind: 'panel'|'door' }, …] | null,
+            fabricCode?: str,
+            ratePerUnit: number, subtotal: number,
+            notes?: str },
+          …
+        ]
+      }
+
+    The server WIPES existing items and re-creates from the payload
+    (items are cheap; keeping this simple avoids per-row diff bugs).
+    Bumps `revision_count` on every save; a Phase-2 revisions table can
+    snapshot the pre-edit state for audit — deferred for now.
+    """
+    quote = VetrovaQuote.query.get_or_404(id)
+
+    if request.method == 'POST':
+        try:
+            data = request.get_json(force=True, silent=False) or {}
+        except Exception:
+            return jsonify({'error': 'invalid json body'}), 400
+
+        cust = data.get('customer') or {}
+        pricing = data.get('pricing') or {}
+        items_in = data.get('items') or []
+        if not isinstance(items_in, list) or not items_in:
+            return jsonify({'error': 'items[] required (need at least one line)'}), 400
+
+        # Customer fields
+        name = (cust.get('name') or '').strip()
+        phone = (cust.get('phone') or '').strip()
+        if not name or not phone:
+            return jsonify({'error': 'customer name + phone required'}), 400
+        quote.customer_name = name
+        quote.phone = phone
+        quote.email = (cust.get('email') or '').strip() or None
+        quote.pincode = (cust.get('pincode') or '').strip() or None
+        quote.site_address = (cust.get('siteAddress') or '').strip() or None
+        quote.notes = (cust.get('notes') or '').strip() or None
+
+        # Pricing overrides
+        try:
+            quote.transport_charges = float(pricing.get('transportCharges') or 0)
+            quote.gst_percentage = float(pricing.get('gstPercentage') or 18)
+            rev = pricing.get('revisedTotal')
+            quote.revised_total = float(rev) if rev not in (None, '', 0, '0') else None
+            quote.amount_received = float(pricing.get('amountReceived') or 0)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'invalid pricing numeric field'}), 400
+
+        # Wipe existing items + insert fresh from payload.
+        VetrovaQuoteItem.query.filter_by(quote_id=quote.id).delete()
+        db.session.flush()
+
+        for idx, r in enumerate(items_in):
+            slug = (r.get('categorySlug') or '').strip() or 'unknown'
+            selections = r.get('selections') if isinstance(r.get('selections'), dict) else {}
+            panels = r.get('panels') if isinstance(r.get('panels'), list) else None
+            try:
+                running_ft = float(r.get('runningFt') or 0)
+                qty = float(r.get('quantity') or 1)
+                rate = float(r.get('ratePerUnit') or 0)
+                subtotal = float(r.get('subtotal') or 0)
+            except (TypeError, ValueError):
+                return jsonify({'error': f'invalid numeric on item {idx + 1}'}), 400
+
+            item = VetrovaQuoteItem(
+                quote_id=quote.id,
+                sort_order=int(r.get('sortOrder') or (idx + 1)),
+                category_slug=slug,
+                category_label=(r.get('categoryLabel') or VETROVA_CATEGORY_LABELS.get(slug, slug.title())),
+                label=(r.get('label') or '').strip() or None,
+                selections=json.dumps(selections) if selections else None,
+                dimension_kind=(r.get('dimensionKind') or 'square_feet'),
+                dimension_unit=(r.get('dimensionUnit') or 'ft'),
+                running_ft=running_ft,
+                quantity=qty,
+                panels=json.dumps(panels) if panels else None,
+                fabric_code=(r.get('fabricCode') or '').strip() or None,
+                # Uploaded image data URL is preserved through revise —
+                # BD isn't expected to re-upload; the client just echoes back
+                # what was already there (form injects it hidden).
+                uploaded_image_data_url=(r.get('uploadedImageDataUrl') or None),
+                rate_per_unit=rate,
+                subtotal=subtotal,
+                notes=(r.get('notes') or '').strip() or None,
+            )
+            db.session.add(item)
+
+        # Bump revision count so BD can see quote has been edited.
+        quote.revision_count = (quote.revision_count or 0) + 1
+
+        # Auto-move to Revision stage on first save (stays put on subsequent
+        # revisions so BD doesn't lose their manual stage moves).
+        if quote.stage == 'quote_generated':
+            evt = VetrovaStatusEvent(
+                quote_id=quote.id,
+                from_stage=quote.stage,
+                to_stage='revision',
+                note=f'Auto: revised by {current_user.email}',
+                triggered_by=current_user.id,
+            )
+            quote.stage = 'revision'
+            db.session.add(evt)
+
+        try:
+            db.session.flush()
+            db.session.refresh(quote)
+            quote.recompute_totals()
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': 'db error', 'detail': str(e)}), 500
+
+        return jsonify({'ok': True, 'id': quote.id,
+                        'revisionCount': quote.revision_count,
+                        'redirect': url_for('vetrova_quote_view', id=quote.id)}), 200
+
+    # GET — render the editor form.
+    # Serialize the items into a JSON structure the client-side JS reads.
+    items_json = []
+    for it in quote.items:
+        items_json.append({
+            'id':             it.id,
+            'sortOrder':      it.sort_order,
+            'categorySlug':   it.category_slug,
+            'categoryLabel':  it.category_label,
+            'label':          it.label,
+            'selections':     it.selections_parsed,
+            'dimensionKind':  it.dimension_kind or 'square_feet',
+            'dimensionUnit':  it.dimension_unit or 'ft',
+            'runningFt':      float(it.running_ft or 0),
+            'quantity':       float(it.quantity or 1),
+            'panels':         it.panels_parsed,
+            'fabricCode':     it.fabric_code,
+            'uploadedImageDataUrl': it.uploaded_image_data_url,
+            'ratePerUnit':    float(it.rate_per_unit or 0),
+            'subtotal':       float(it.subtotal or 0),
+            'notes':          it.notes,
+        })
+    return render_template('quotes/vetrova_revise.html',
+                           quote=quote,
+                           items_json=items_json,
+                           categories=VETROVA_CATEGORIES,
+                           stage_labels=VETROVA_STAGE_LABELS)
+
+
+@app.route('/quotes/vetrova/<int:id>/pdf', methods=['GET'])
+@login_required
+def vetrova_quote_pdf(id):
+    """Regenerate the customer-facing Vetrova quote PDF from current DB
+    state. Uses vcore-side ReportLab (not glassyplatform's @react-pdf)
+    so it reflects whatever BD just edited via revise.
+    """
+    from flask import send_file
+    from utils.vetrova_quote_pdf import generate_vetrova_quote_pdf
+    quote = VetrovaQuote.query.get_or_404(id)
+    pdf_bytes = generate_vetrova_quote_pdf(quote)
+    filename = f'{quote.quote_ref}.pdf'
+    return send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf',
+                     as_attachment=False, download_name=filename)
 
 
 # ─── BD-side Bathqube quote creator routes (KAN-67 follow-up) ────────────────

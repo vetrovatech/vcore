@@ -22,6 +22,21 @@ class User(UserMixin, db.Model):
     # etc). Manager toggles this in the user admin form. False for old team
     # members who no longer need to appear in the daily activity matrix.
     show_in_agent_log = db.Column(db.Boolean, default=True, nullable=False)
+    # Per-user permission override for the IndiaMart sync button (2026-07-26).
+    # Managers/Admins always have access. Set this True on a Promotor to
+    # grant them the sync button + POST endpoint without also giving them
+    # the rest of the Manager toolkit (Agent Log peer visibility, FB sync,
+    # elevated edit permissions, etc.). Least-privilege delegation.
+    can_indiamart_sync = db.Column(db.Boolean, default=False, nullable=False)
+    # Default owner for newly-synced IndiaMart leads (2026-07-26). Exactly
+    # ONE user should have this True at a time; `_do_indiamart_sync` looks
+    # up that user and assigns every new lead to them, regardless of who
+    # triggered the sync (button click OR the hourly cron). If nobody has
+    # the flag set, sync falls back to the pre-existing behaviour (owner
+    # equals the sync trigger, or NULL for cron). Admin toggles via the
+    # user admin form; when moving the flag between users the old user's
+    # flag should be cleared first.
+    is_indiamart_default_owner = db.Column(db.Boolean, default=False, nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
@@ -45,6 +60,16 @@ class User(UserMixin, db.Model):
     def is_manager_or_admin(self):
         """Check if user is manager or admin"""
         return self.role in ['Admin', 'Manager']
+
+    def can_run_indiamart_sync(self):
+        """True if this user may trigger the IndiaMart sync button.
+
+        Managers + Admins always qualify (existing rule). Promotors qualify
+        only when `can_indiamart_sync = True` — a per-user override the
+        admin flips in the user admin form. Kept as a single helper so the
+        route + template + agent log all check the same predicate.
+        """
+        return self.is_manager_or_admin() or bool(self.can_indiamart_sync)
     
     def __repr__(self):
         return f'<User {self.username} ({self.role})>'
@@ -2491,15 +2516,37 @@ VETROVA_STAGE_LABELS = {
 # dropdown and the list-view column. Keep alphabetical after 'balcony' —
 # the three current railings-family categories first.
 VETROVA_CATEGORIES = (
-    ('balcony',   'Balcony'),
-    ('staircase', 'Staircase'),
-    ('pergola',   'Pergola'),
+    ('balcony',           'Balcony'),
+    ('staircase',         'Staircase'),
+    ('pergola',           'Pergola'),
+    ('railings',          'Railings'),
+    ('partitions',        'Partitions'),
+    ('office-cubicles',   'Office Cubicles'),
+    ('doors-and-windows', 'Doors & Windows'),
+    ('printed-glass',     'Printed Glass'),
+    ('laminated-glass',   'Laminated Glass'),
+    ('backsplash',        'Backsplash'),
+    ('feature-walls',     'Feature Walls'),
+    ('storage',           'Storage'),
+    ('smartglass',        'Smart Glass'),
+    ('pool-mosaics',      'Pool Mosaics'),
+    ('wardrobes',         'Wardrobes'),
+    ('folding-glass',     'Folding Glass'),
+    ('upvc',              'UPVC'),
 )
 VETROVA_CATEGORY_LABELS = dict(VETROVA_CATEGORIES)
 
 
 class VetrovaQuote(db.Model):
-    """Configurator quote from vetrova.in, one row per customer submission."""
+    """Configurator quote from vetrova.in — parent row per submission.
+
+    Line items live on `VetrovaQuoteItem` (one per configured category
+    run — customers can add multiple configurations in one basket). The
+    legacy per-quote fields (category_slug, selections, running_ft,
+    quantity) are kept for the SINGLE-run case + back-compat with pre-
+    KAN Phase-1 rows; new ingests populate `items` and leave these
+    fields set to the first run's summary for the list view.
+    """
     __tablename__ = 'vetrova_quotes'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2511,7 +2558,9 @@ class VetrovaQuote(db.Model):
     # still stateless), so it may equal quote_ref for now.
     external_id = db.Column(db.String(64), unique=True, nullable=True, index=True)
 
-    # Which configurator the customer used.
+    # Primary category label — for multi-run quotes it's the FIRST run's
+    # category (or "Multi-configuration" when categories differ). Kept for
+    # the list view; the actual per-item categories live on `items`.
     category_slug = db.Column(db.String(32), nullable=False, index=True)
     category_label = db.Column(db.String(64), nullable=False)
 
@@ -2523,15 +2572,35 @@ class VetrovaQuote(db.Model):
     site_address = db.Column(db.Text, nullable=True)
     notes = db.Column(db.Text, nullable=True)
 
-    # Configurator snapshot (selection slugs as JSON) + dimensions.
+    # ── Legacy single-run snapshot (populated ONLY when the quote has
+    # exactly one item; kept for back-compat with UI/reports that still
+    # read these top-level fields). Multi-run quotes leave these as the
+    # first run's values so the list view still reads sensibly. ────
     selections = db.Column(db.Text, nullable=True)
     running_ft = db.Column(db.Numeric(10, 2), default=0, nullable=False)
     quantity = db.Column(db.Integer, default=1, nullable=False)
 
-    # Money — total is the ₹ figure the customer saw on the configurator.
-    # revised_total is what BD lands on after negotiation.
+    # ── Money — computed as Σ(items.subtotal) via recompute_totals(). ────
+    # `total` is the customer-facing subtotal EXCLUSIVE of tax (what the
+    # customer saw on the configurator PDF). Retained for back-compat;
+    # new callers should prefer `subtotal`.
     total = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    subtotal = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    transport_charges = db.Column(db.Numeric(10, 2), default=0, nullable=False)
+    cgst = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    sgst = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    gst_percentage = db.Column(db.Numeric(5, 2), default=18, nullable=False)
+    grand_total = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    # BD's revised total override — usually NULL (grand_total is authoritative).
+    # Populated when BD wants to negotiate a lump-sum discount without
+    # touching per-item rates.
     revised_total = db.Column(db.Numeric(12, 2), nullable=True)
+    amount_received = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+
+    # Revision bookkeeping — bumped on every save via the revise editor.
+    revision_count = db.Column(db.Integer, default=0, nullable=False)
+    # Validity in days — mirrors UPVC quote (KAN-67).
+    validity_days = db.Column(db.Integer, default=10, nullable=False)
 
     stage = db.Column(db.String(32), nullable=False, default='quote_generated', index=True)
     stage_notes = db.Column(db.Text, nullable=True)
@@ -2539,6 +2608,9 @@ class VetrovaQuote(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
+    items = db.relationship('VetrovaQuoteItem', backref='quote', lazy=True,
+                            cascade='all, delete-orphan',
+                            order_by='VetrovaQuoteItem.sort_order')
     events = db.relationship('VetrovaStatusEvent', backref='quote', lazy=True,
                              cascade='all, delete-orphan',
                              order_by='VetrovaStatusEvent.created_at.desc()')
@@ -2552,8 +2624,133 @@ class VetrovaQuote(db.Model):
         except Exception:
             return {}
 
+    @property
+    def balance_payable(self):
+        target = float(self.revised_total if self.revised_total is not None else self.grand_total or 0)
+        return max(0.0, target - float(self.amount_received or 0))
+
+    @property
+    def valid_until(self):
+        """created_at + validity_days. Used by the PDF + email template."""
+        from datetime import timedelta
+        if not self.created_at:
+            return None
+        return self.created_at + timedelta(days=int(self.validity_days or 10))
+
+    def recompute_totals(self):
+        """Recalculate subtotal + GST + grand_total from the current items.
+
+        Called by the ingest handler + the revise-save handler so any time
+        items change, the parent's money fields stay in sync. Uses whole
+        rupees to match the customer-facing PDF (which never shows paise).
+        """
+        subtotal = sum(float(i.subtotal or 0) for i in (self.items or []))
+        transport = float(self.transport_charges or 0)
+        gst_pct = float(self.gst_percentage or 18)
+        taxable = subtotal + transport
+        # Split GST evenly across CGST/SGST for intra-state (default).
+        cgst = round(taxable * (gst_pct / 200), 2)
+        sgst = round(taxable * (gst_pct / 200), 2)
+        self.subtotal = round(subtotal, 2)
+        self.cgst = cgst
+        self.sgst = sgst
+        self.grand_total = round(taxable + cgst + sgst, 2)
+        # Keep `total` (pre-GST subtotal) in sync — used by legacy list view
+        # + the configurator PDF that customers already have.
+        self.total = round(subtotal, 2)
+
     def __repr__(self):
         return f'<VetrovaQuote {self.quote_ref} {self.category_slug} {self.customer_name} {self.stage}>'
+
+
+class VetrovaQuoteItem(db.Model):
+    """One configured run on a VetrovaQuote.
+
+    A single customer submission from vetrova.in can carry N runs — one
+    per configured category. Each run becomes one row here, mirroring
+    the wire payload shape:
+
+      { categorySlug, selections{...}, runningFt, quantity, panels[],
+        fabricCode, uploadedImageDataUrl, dimensionKind, dimensionUnit,
+        subtotal }
+
+    BD edits each item's rate/qty/selections/panels via the revise
+    route; the parent VetrovaQuote's subtotal is Σ(item.subtotal).
+    """
+    __tablename__ = 'vetrova_quote_items'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('vetrova_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+
+    sort_order = db.Column(db.Integer, default=0, nullable=False)
+
+    # Category this run configures (partitions / laminated-glass / …).
+    category_slug = db.Column(db.String(32), nullable=False)
+    category_label = db.Column(db.String(64), nullable=False)
+
+    # Optional BD-typed label for the line (e.g. "Master bedroom partition").
+    label = db.Column(db.String(200), nullable=True)
+
+    # Swatch picks per axis. JSON dict {axisKey: valueSlug} (matches
+    # glassyplatform's selection shape). BD edits via the revise form —
+    # values are free-form text since the axis catalog is
+    # category-dependent and lives on glassyplatform.
+    selections = db.Column(db.Text, nullable=True)
+
+    # Dimension shape at commit time.
+    dimension_kind = db.Column(db.String(16), nullable=True)  # 'square_feet' | 'running_feet' | ...
+    dimension_unit = db.Column(db.String(4), nullable=True)   # 'ft' | 'in' (only meaningful for panels)
+
+    # Total chargeable area — sqft for square_feet, ft for running_feet.
+    # For panelsMode items this is Σ(panel W × panel H × panel qty).
+    running_ft = db.Column(db.Numeric(10, 2), default=0, nullable=False)
+    quantity = db.Column(db.Numeric(10, 2), default=1, nullable=False)
+
+    # Per-panel (+ per-door) breakdown as JSON array:
+    #   [{ widthFt: 4, heightFt: 6, qty: 2, kind: 'panel'|'door' }, …]
+    # None → single-row item (running_ft × quantity is the entire spec).
+    panels = db.Column(db.Text, nullable=True)
+
+    # Category-specific extras.
+    fabric_code = db.Column(db.String(32), nullable=True)
+    # Full data URL (base64) as sent from the client. Persisted so BD can
+    # eyeball the customer's requested artwork; PDF regen embeds it.
+    uploaded_image_data_url = db.Column(db.Text, nullable=True)
+
+    # Money — BD-editable via revise.
+    rate_per_unit = db.Column(db.Numeric(12, 2), default=0, nullable=False)  # ₹/sqft or ₹/ft
+    subtotal = db.Column(db.Numeric(12, 2), default=0, nullable=False)       # ₹, line-level pre-tax
+    notes = db.Column(db.Text, nullable=True)                                # BD's private note on this line
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    @property
+    def selections_parsed(self):
+        if not self.selections:
+            return {}
+        try:
+            return json.loads(self.selections)
+        except Exception:
+            return {}
+
+    @property
+    def panels_parsed(self):
+        if not self.panels:
+            return []
+        try:
+            v = json.loads(self.panels)
+            return v if isinstance(v, list) else []
+        except Exception:
+            return []
+
+    @property
+    def is_sqft(self):
+        return (self.dimension_kind or '') == 'square_feet'
+
+    def __repr__(self):
+        return f'<VetrovaQuoteItem q={self.quote_id} {self.category_slug} {self.subtotal}>'
 
 
 class VetrovaStatusEvent(db.Model):

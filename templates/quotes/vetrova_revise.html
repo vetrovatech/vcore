@@ -1,0 +1,520 @@
+{% extends "base.html" %}
+{% block title %}Revise {{ quote.quote_ref }} - Vetrova - VCore{% endblock %}
+{% block content %}
+
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb small mb-0">
+        <li class="breadcrumb-item"><a href="{{ url_for('vetrova_quotes_list') }}">Vetrova Quotes</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('vetrova_quote_view', id=quote.id) }}">{{ quote.quote_ref }}</a></li>
+        <li class="breadcrumb-item active">Revise</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+    <h2 class="mb-0">
+        <i class="bi bi-pencil-square"></i> Revise {{ quote.quote_ref }}
+        {% if quote.revision_count and quote.revision_count > 0 %}
+        <span class="badge bg-warning text-dark align-middle">Revision {{ quote.revision_count }}</span>
+        {% endif %}
+    </h2>
+    <a href="{{ url_for('vetrova_quote_view', id=quote.id) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-x-circle"></i> Cancel
+    </a>
+</div>
+
+<div id="alertBox"></div>
+
+<div class="row g-4">
+    <!-- Customer -->
+    <div class="col-lg-6">
+        <div class="card mb-4">
+            <div class="card-header"><strong>Customer</strong></div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Name *</label>
+                        <input class="form-control" id="cName" value="{{ quote.customer_name or '' }}" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Phone *</label>
+                        <input class="form-control" id="cPhone" value="{{ quote.phone or '' }}" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Email</label>
+                        <input class="form-control" id="cEmail" type="email" value="{{ quote.email or '' }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Pincode</label>
+                        <input class="form-control" id="cPincode" value="{{ quote.pincode or '' }}">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small text-muted">Site address</label>
+                        <textarea class="form-control" id="cSiteAddress" rows="2">{{ quote.site_address or '' }}</textarea>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small text-muted">Customer notes</label>
+                        <textarea class="form-control" id="cNotes" rows="2">{{ quote.notes or '' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pricing overrides + totals -->
+    <div class="col-lg-6">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Pricing</strong>
+                <span class="small text-muted">All figures ₹ (whole rupees)</span>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Transport charges</label>
+                        <input class="form-control" id="pTransport" type="number" step="0.01" min="0" value="{{ '%g'|format(quote.transport_charges|float) }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">GST %</label>
+                        <input class="form-control" id="pGst" type="number" step="0.01" min="0" max="100" value="{{ '%g'|format(quote.gst_percentage|float) }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Revised total (override)</label>
+                        <input class="form-control" id="pRevised" type="number" step="0.01" min="0" value="{{ '%g'|format(quote.revised_total|float) if quote.revised_total else '' }}" placeholder="blank = use computed">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Amount received</label>
+                        <input class="form-control" id="pReceived" type="number" step="0.01" min="0" value="{{ '%g'|format(quote.amount_received|float) }}">
+                    </div>
+                </div>
+
+                <hr>
+                <dl class="row mb-0 small">
+                    <dt class="col-6">Subtotal</dt>
+                    <dd class="col-6 text-end" id="tSubtotal">₹0</dd>
+                    <dt class="col-6">CGST</dt>
+                    <dd class="col-6 text-end" id="tCgst">₹0</dd>
+                    <dt class="col-6">SGST</dt>
+                    <dd class="col-6 text-end" id="tSgst">₹0</dd>
+                    <dt class="col-6"><strong>Grand total</strong></dt>
+                    <dd class="col-6 text-end"><strong id="tGrand">₹0</strong></dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Line items -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Line items</strong>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="addItemBtn">
+            <i class="bi bi-plus-circle"></i> Add line item
+        </button>
+    </div>
+    <div class="card-body" id="itemsWrap">
+        <!-- Items rendered here by JS -->
+    </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-5">
+    <div class="text-muted small">
+        Saving bumps Revision counter and moves stage to <strong>Revision</strong> (if currently Quote Generated).
+    </div>
+    <button type="button" class="btn btn-primary btn-lg" id="saveBtn">
+        <i class="bi bi-save"></i> Save revision
+    </button>
+</div>
+
+<template id="panelRowTpl">
+<div class="vq-prow d-flex align-items-center gap-1 mb-1">
+    <span class="badge vq-prow-badge" style="min-width:52px">Panel 1</span>
+    <input class="form-control form-control-sm vq-pw" type="number" step="0.01" min="0" placeholder="W" style="width:70px">
+    <span class="text-muted small">×</span>
+    <input class="form-control form-control-sm vq-ph" type="number" step="0.01" min="0" placeholder="H" style="width:70px">
+    <span class="text-muted small vq-unit-lbl">ft ·</span>
+    <input class="form-control form-control-sm vq-pq" type="number" step="1" min="1" placeholder="Qty" value="1" style="width:60px">
+    <button type="button" class="btn btn-sm btn-outline-danger vq-prow-del" title="Remove">
+        <i class="bi bi-x"></i>
+    </button>
+</div>
+</template>
+
+<template id="itemTpl">
+<div class="border rounded p-3 mb-3 vq-item">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0"><span class="badge bg-secondary vq-idx">1</span> <span class="vq-title">Item</span></h5>
+        <button type="button" class="btn btn-sm btn-outline-danger vq-del">
+            <i class="bi bi-trash"></i> Remove item
+        </button>
+    </div>
+    <div class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label small text-muted">Category *</label>
+            <select class="form-select vq-cat" required>
+                {% for slug, label in categories %}
+                <option value="{{ slug }}">{{ label }}</option>
+                {% endfor %}
+                <option value="unknown">Other / custom</option>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label small text-muted">Line label (optional)</label>
+            <input class="form-control vq-label" placeholder="e.g. Master bedroom">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small text-muted">Dim unit</label>
+            <select class="form-select vq-unit">
+                <option value="ft">Feet</option>
+                <option value="in">Inches</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small text-muted">Dim kind</label>
+            <select class="form-select vq-kind">
+                <option value="square_feet">sqft</option>
+                <option value="running_feet">running ft</option>
+            </select>
+        </div>
+
+        <div class="col-md-6">
+            <label class="form-label small text-muted">Swatch selections (one per line, <code>key: value</code>)</label>
+            <textarea class="form-control font-monospace vq-sel" rows="4" placeholder="glassType: Clear Toughened&#10;glassThickness: 12mm"></textarea>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label small text-muted d-flex justify-content-between align-items-end mb-1">
+                <span>Panels &amp; doors</span>
+                <span class="text-muted" style="font-size: 11px">Leave empty for single-row items</span>
+            </label>
+            <div class="vq-panels-list border rounded p-2" style="min-height:38px; background:#fafafa">
+                <!-- Panel/door rows injected by JS -->
+            </div>
+            <div class="mt-2 d-flex gap-2">
+                <button type="button" class="btn btn-sm btn-outline-primary vq-add-panel">
+                    <i class="bi bi-plus-circle"></i> Add panel
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary vq-add-door">
+                    <i class="bi bi-plus-circle"></i> Add door
+                </button>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <label class="form-label small text-muted">Total area/length</label>
+            <input class="form-control vq-run" type="number" step="0.01" min="0" placeholder="sqft or ft">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small text-muted">Quantity</label>
+            <input class="form-control vq-qty" type="number" step="0.01" min="0.01" value="1">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small text-muted">Rate (₹/unit)</label>
+            <input class="form-control vq-rate" type="number" step="0.01" min="0">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label small text-muted">Line subtotal (₹)</label>
+            <input class="form-control vq-sub" type="number" step="0.01" min="0">
+        </div>
+
+        <div class="col-md-4">
+            <label class="form-label small text-muted">Fabric code (optional)</label>
+            <input class="form-control vq-fabric" placeholder="F-042">
+        </div>
+        <div class="col-md-8">
+            <label class="form-label small text-muted">BD notes on this line (optional)</label>
+            <input class="form-control vq-notes">
+        </div>
+        <input type="hidden" class="vq-id">
+        <input type="hidden" class="vq-img">
+    </div>
+    <div class="vq-img-preview mt-2"></div>
+</div>
+</template>
+
+<script>
+(function () {
+    const initial = {{ items_json|tojson }};
+    const wrap = document.getElementById('itemsWrap');
+    const tpl = document.getElementById('itemTpl');
+
+    function inr(n) { return '₹' + Math.round(n).toLocaleString('en-IN'); }
+
+    const panelRowTpl = document.getElementById('panelRowTpl');
+
+    /* ── Panel/door row helpers ─────────────────────────────────── */
+
+    function renumberPanels(itemNode) {
+        // Independent P1/P2/D1/D2 numbering (matches PDF renderer).
+        let pN = 0, dN = 0;
+        itemNode.querySelectorAll('.vq-prow').forEach((row) => {
+            const isDoor = row.dataset.kind === 'door';
+            const n = isDoor ? ++dN : ++pN;
+            const badge = row.querySelector('.vq-prow-badge');
+            badge.textContent = (isDoor ? 'Door ' : 'Panel ') + n;
+            badge.className = 'badge vq-prow-badge ' + (isDoor ? 'bg-secondary' : 'bg-primary');
+            badge.style.minWidth = '52px';
+        });
+    }
+
+    function updatePanelUnitLabels(itemNode) {
+        const unit = itemNode.querySelector('.vq-unit').value;
+        itemNode.querySelectorAll('.vq-unit-lbl').forEach((s) => {
+            s.textContent = unit + ' ·';
+        });
+    }
+
+    function autoSubFor(itemNode) {
+        const run = parseFloat(itemNode.querySelector('.vq-run').value) || 0;
+        const qty = parseFloat(itemNode.querySelector('.vq-qty').value) || 0;
+        const rate = parseFloat(itemNode.querySelector('.vq-rate').value) || 0;
+        const hasPanels = itemNode.querySelectorAll('.vq-prow').length > 0;
+        // panelsMode: qty is pre-baked into run, so subtotal = rate * run
+        const denom = hasPanels ? run : (run * qty);
+        const subInput = itemNode.querySelector('.vq-sub');
+        if (document.activeElement !== subInput) {
+            subInput.value = Math.round(rate * denom);
+            recomputeTotals();
+        }
+    }
+
+    // When panel rows change, running_ft auto-updates to Σ(w × h × qty) so the
+    // top-level "Total area" field stays consistent with the panels list.
+    function autoRunFromPanels(itemNode) {
+        const rows = itemNode.querySelectorAll('.vq-prow');
+        if (rows.length === 0) return; // leave running_ft alone
+        let total = 0;
+        rows.forEach((row) => {
+            const w = parseFloat(row.querySelector('.vq-pw').value) || 0;
+            const h = parseFloat(row.querySelector('.vq-ph').value) || 0;
+            const q = parseFloat(row.querySelector('.vq-pq').value) || 0;
+            let wf = w, hf = h;
+            if (itemNode.querySelector('.vq-unit').value === 'in') {
+                wf = w / 12;
+                hf = h / 12;
+            }
+            total += wf * hf * q;
+        });
+        itemNode.querySelector('.vq-run').value = total.toFixed(2);
+    }
+
+    function addPanelRow(itemNode, panel, kind) {
+        const row = panelRowTpl.content.cloneNode(true).querySelector('.vq-prow');
+        row.dataset.kind = kind || (panel && panel.kind === 'door' ? 'door' : 'panel');
+        row.querySelector('.vq-pw').value = (panel && panel.widthFt)  != null ? panel.widthFt  : '';
+        row.querySelector('.vq-ph').value = (panel && panel.heightFt) != null ? panel.heightFt : '';
+        row.querySelector('.vq-pq').value = (panel && panel.qty)      != null ? panel.qty      : 1;
+        row.querySelector('.vq-prow-del').addEventListener('click', () => {
+            row.remove();
+            renumberPanels(itemNode);
+            autoRunFromPanels(itemNode);
+            autoSubFor(itemNode);
+        });
+        ['vq-pw', 'vq-ph', 'vq-pq'].forEach((cls) => {
+            row.querySelector('.' + cls).addEventListener('input', () => {
+                autoRunFromPanels(itemNode);
+                autoSubFor(itemNode);
+            });
+        });
+        itemNode.querySelector('.vq-panels-list').appendChild(row);
+        renumberPanels(itemNode);
+        updatePanelUnitLabels(itemNode);
+    }
+
+    function renderItem(item) {
+        const node = tpl.content.cloneNode(true).querySelector('.vq-item');
+        node.querySelector('.vq-id').value       = item.id || '';
+        node.querySelector('.vq-cat').value      = item.categorySlug || 'unknown';
+        node.querySelector('.vq-label').value    = item.label || '';
+        node.querySelector('.vq-unit').value     = item.dimensionUnit || 'ft';
+        node.querySelector('.vq-kind').value     = item.dimensionKind || 'square_feet';
+        // selections dict → key: value lines
+        const sel = item.selections || {};
+        node.querySelector('.vq-sel').value =
+            Object.entries(sel).map(([k, v]) => `${k}: ${v}`).join('\n');
+        node.querySelector('.vq-run').value    = item.runningFt || '';
+        node.querySelector('.vq-qty').value    = item.quantity || 1;
+        node.querySelector('.vq-rate').value   = item.ratePerUnit || '';
+        node.querySelector('.vq-sub').value    = item.subtotal || '';
+        node.querySelector('.vq-fabric').value = item.fabricCode || '';
+        node.querySelector('.vq-notes').value  = item.notes || '';
+        node.querySelector('.vq-img').value    = item.uploadedImageDataUrl || '';
+        if (item.uploadedImageDataUrl) {
+            const preview = node.querySelector('.vq-img-preview');
+            preview.innerHTML = `<span class="small text-muted">Customer artwork:</span><br>
+              <img src="${item.uploadedImageDataUrl}" style="max-height:100px;border:1px solid #ccc;border-radius:4px" />`;
+        }
+        // Wire panel/door row controls first, THEN inject existing panels.
+        node.querySelector('.vq-add-panel').addEventListener('click', () => addPanelRow(node, null, 'panel'));
+        node.querySelector('.vq-add-door').addEventListener('click', () => addPanelRow(node, null, 'door'));
+        (item.panels || []).forEach((p) => addPanelRow(node, p, p.kind || 'panel'));
+
+        node.querySelector('.vq-title').textContent = item.categoryLabel || item.categorySlug || 'Item';
+        node.querySelector('.vq-cat').addEventListener('change', (e) => {
+            node.querySelector('.vq-title').textContent = e.target.options[e.target.selectedIndex].text;
+            recomputeTotals();
+        });
+        node.querySelector('.vq-unit').addEventListener('change', () => updatePanelUnitLabels(node));
+        node.querySelector('.vq-del').addEventListener('click', () => {
+            if (wrap.querySelectorAll('.vq-item').length <= 1) {
+                alert('At least one line item required. Delete the whole quote instead if there\'s nothing to bill.');
+                return;
+            }
+            node.remove();
+            renumber();
+            recomputeTotals();
+        });
+        // Auto-recompute subtotal when rate / run / qty change (or panels).
+        ['vq-run', 'vq-qty', 'vq-rate'].forEach(cls => {
+            node.querySelector('.' + cls).addEventListener('input', () => autoSubFor(node));
+        });
+        node.querySelector('.vq-sub').addEventListener('input', recomputeTotals);
+        wrap.appendChild(node);
+    }
+
+    function renumber() {
+        wrap.querySelectorAll('.vq-item').forEach((n, i) => {
+            n.querySelector('.vq-idx').textContent = i + 1;
+        });
+    }
+
+    function recomputeTotals() {
+        const sub = Array.from(wrap.querySelectorAll('.vq-sub'))
+            .reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
+        const transport = parseFloat(document.getElementById('pTransport').value) || 0;
+        const gstPct = parseFloat(document.getElementById('pGst').value) || 0;
+        const taxable = sub + transport;
+        const cgst = Math.round(taxable * (gstPct / 200));
+        const sgst = Math.round(taxable * (gstPct / 200));
+        document.getElementById('tSubtotal').textContent = inr(sub);
+        document.getElementById('tCgst').textContent = inr(cgst);
+        document.getElementById('tSgst').textContent = inr(sgst);
+        document.getElementById('tGrand').textContent = inr(taxable + cgst + sgst);
+    }
+
+    // Initial render
+    if (initial.length === 0) {
+        renderItem({ categorySlug: 'unknown', categoryLabel: 'Item' });
+    } else {
+        initial.forEach(renderItem);
+    }
+    renumber();
+    recomputeTotals();
+
+    ['pTransport', 'pGst'].forEach(id => {
+        document.getElementById(id).addEventListener('input', recomputeTotals);
+    });
+
+    document.getElementById('addItemBtn').addEventListener('click', () => {
+        renderItem({ categorySlug: 'unknown', categoryLabel: 'New item', quantity: 1 });
+        renumber();
+    });
+
+    function parseSelections(raw) {
+        const out = {};
+        raw.split('\n').map(l => l.trim()).filter(Boolean).forEach(line => {
+            const idx = line.indexOf(':');
+            if (idx > 0) {
+                out[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+            }
+        });
+        return out;
+    }
+
+    function collectItems() {
+        const items = [];
+        for (const node of wrap.querySelectorAll('.vq-item')) {
+            // Build panels[] from the visible rows — no JSON parsing.
+            const panelRows = node.querySelectorAll('.vq-prow');
+            let panels = null;
+            if (panelRows.length > 0) {
+                panels = [];
+                panelRows.forEach((row) => {
+                    const w = parseFloat(row.querySelector('.vq-pw').value);
+                    const h = parseFloat(row.querySelector('.vq-ph').value);
+                    const q = parseFloat(row.querySelector('.vq-pq').value) || 1;
+                    if (!(w > 0) || !(h > 0)) return; // skip incomplete rows
+                    panels.push({
+                        widthFt: w,
+                        heightFt: h,
+                        qty: q,
+                        kind: row.dataset.kind === 'door' ? 'door' : 'panel',
+                    });
+                });
+                if (panels.length === 0) panels = null;
+            }
+            const cat = node.querySelector('.vq-cat');
+            items.push({
+                id:             parseInt(node.querySelector('.vq-id').value) || null,
+                sortOrder:      items.length + 1,
+                categorySlug:   cat.value,
+                categoryLabel:  cat.options[cat.selectedIndex].text,
+                label:          node.querySelector('.vq-label').value.trim(),
+                selections:     parseSelections(node.querySelector('.vq-sel').value),
+                dimensionKind:  node.querySelector('.vq-kind').value,
+                dimensionUnit:  node.querySelector('.vq-unit').value,
+                runningFt:      parseFloat(node.querySelector('.vq-run').value)  || 0,
+                quantity:       parseFloat(node.querySelector('.vq-qty').value)  || 1,
+                panels:         panels,
+                fabricCode:     node.querySelector('.vq-fabric').value.trim(),
+                ratePerUnit:    parseFloat(node.querySelector('.vq-rate').value) || 0,
+                subtotal:       parseFloat(node.querySelector('.vq-sub').value)  || 0,
+                notes:          node.querySelector('.vq-notes').value.trim(),
+                uploadedImageDataUrl: node.querySelector('.vq-img').value || null,
+            });
+        }
+        return items;
+    }
+
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+        const alertBox = document.getElementById('alertBox');
+        alertBox.innerHTML = '';
+        let items;
+        try {
+            items = collectItems();
+        } catch (e) {
+            alertBox.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+            return;
+        }
+        const body = {
+            customer: {
+                name:        document.getElementById('cName').value.trim(),
+                phone:       document.getElementById('cPhone').value.trim(),
+                email:       document.getElementById('cEmail').value.trim(),
+                pincode:     document.getElementById('cPincode').value.trim(),
+                siteAddress: document.getElementById('cSiteAddress').value.trim(),
+                notes:       document.getElementById('cNotes').value.trim(),
+            },
+            pricing: {
+                transportCharges: parseFloat(document.getElementById('pTransport').value) || 0,
+                gstPercentage:    parseFloat(document.getElementById('pGst').value)      || 18,
+                revisedTotal:     document.getElementById('pRevised').value.trim() ? parseFloat(document.getElementById('pRevised').value) : null,
+                amountReceived:   parseFloat(document.getElementById('pReceived').value) || 0,
+            },
+            items,
+        };
+        const btn = document.getElementById('saveBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Saving…';
+        try {
+            const res = await fetch(window.location.href, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (res.ok && data.ok) {
+                window.location.href = data.redirect;
+            } else {
+                alertBox.innerHTML = `<div class="alert alert-danger">${data.error || 'Save failed'}</div>`;
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-save"></i> Save revision';
+            }
+        } catch (e) {
+            alertBox.innerHTML = `<div class="alert alert-danger">Network error: ${e.message}</div>`;
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-save"></i> Save revision';
+        }
+    });
+})();
+</script>
+
+{% endblock %}

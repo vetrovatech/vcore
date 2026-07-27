@@ -13,83 +13,178 @@
     <div>
         <h2 class="mb-1">
             <i class="bi bi-buildings"></i> {{ quote.quote_ref }}
-            <span class="badge bg-secondary align-middle">{{ category_label }}</span>
+            <span class="badge bg-secondary align-middle">{{ quote.category_label }}</span>
             <span class="badge bg-info text-dark align-middle">{{ stage_labels.get(quote.stage, quote.stage) }}</span>
+            {% if quote.revision_count and quote.revision_count > 0 %}
+              <span class="badge bg-warning text-dark align-middle">Revision {{ quote.revision_count }}</span>
+            {% endif %}
         </h2>
         <span class="text-muted small">Received {{ quote.created_at.strftime('%d %b %Y, %I:%M %p') }}</span>
+    </div>
+    <div class="btn-group">
+        <a href="{{ url_for('vetrova_quote_revise', id=quote.id) }}" class="btn btn-primary">
+            <i class="bi bi-pencil-square"></i> Revise / Edit
+        </a>
+        <a href="{{ url_for('vetrova_quote_pdf', id=quote.id) }}" target="_blank" class="btn btn-outline-secondary">
+            <i class="bi bi-file-earmark-pdf"></i> Download PDF
+        </a>
     </div>
 </div>
 
 <div class="row g-4">
-    <div class="col-lg-7">
+    <div class="col-lg-8">
+        <!-- Customer -->
         <div class="card mb-4">
             <div class="card-header"><strong>Customer</strong></div>
             <div class="card-body">
                 <dl class="row mb-0">
-                    <dt class="col-sm-4">Name</dt>
-                    <dd class="col-sm-8">{{ quote.customer_name }}</dd>
-                    <dt class="col-sm-4">Phone</dt>
-                    <dd class="col-sm-8"><a href="tel:{{ quote.phone }}">{{ quote.phone }}</a>
-                        <a href="https://wa.me/{{ quote.phone|replace('+','')|replace(' ','')|replace('-','') }}" target="_blank" class="btn btn-sm btn-outline-success ms-2">
+                    <dt class="col-sm-3">Name</dt>
+                    <dd class="col-sm-9">{{ quote.customer_name }}</dd>
+                    <dt class="col-sm-3">Phone</dt>
+                    <dd class="col-sm-9">
+                        <a href="tel:{{ quote.phone }}">{{ quote.phone }}</a>
+                        <a href="https://wa.me/{{ quote.phone|replace('+','')|replace(' ','')|replace('-','') }}"
+                           target="_blank" class="btn btn-sm btn-outline-success ms-2">
                             <i class="bi bi-whatsapp"></i> WhatsApp
                         </a>
                     </dd>
                     {% if quote.email %}
-                    <dt class="col-sm-4">Email</dt>
-                    <dd class="col-sm-8"><a href="mailto:{{ quote.email }}">{{ quote.email }}</a></dd>
+                    <dt class="col-sm-3">Email</dt>
+                    <dd class="col-sm-9"><a href="mailto:{{ quote.email }}">{{ quote.email }}</a></dd>
                     {% endif %}
                     {% if quote.pincode %}
-                    <dt class="col-sm-4">Pincode</dt>
-                    <dd class="col-sm-8">{{ quote.pincode }}</dd>
+                    <dt class="col-sm-3">Pincode</dt>
+                    <dd class="col-sm-9">{{ quote.pincode }}</dd>
                     {% endif %}
                     {% if quote.site_address %}
-                    <dt class="col-sm-4">Site address</dt>
-                    <dd class="col-sm-8" style="white-space:pre-wrap">{{ quote.site_address }}</dd>
+                    <dt class="col-sm-3">Site address</dt>
+                    <dd class="col-sm-9" style="white-space:pre-wrap">{{ quote.site_address }}</dd>
                     {% endif %}
                     {% if quote.notes %}
-                    <dt class="col-sm-4">Customer notes</dt>
-                    <dd class="col-sm-8" style="white-space:pre-wrap">{{ quote.notes }}</dd>
+                    <dt class="col-sm-3">Customer notes</dt>
+                    <dd class="col-sm-9" style="white-space:pre-wrap">{{ quote.notes }}</dd>
                     {% endif %}
                 </dl>
             </div>
         </div>
 
+        <!-- Line items -->
         <div class="card mb-4">
-            <div class="card-header"><strong>Configuration</strong></div>
-            <div class="card-body">
-                <dl class="row mb-3">
-                    <dt class="col-sm-4">Category</dt>
-                    <dd class="col-sm-8">{{ category_label }}</dd>
-                    <dt class="col-sm-4">Running feet</dt>
-                    <dd class="col-sm-8">{{ '%g'|format(quote.running_ft|float) }} ft</dd>
-                    <dt class="col-sm-4">Quantity</dt>
-                    <dd class="col-sm-8">{{ quote.quantity }}</dd>
-                    <dt class="col-sm-4">Customer-facing total</dt>
-                    <dd class="col-sm-8">₹{{ '{:,.0f}'.format(quote.total|float) }}</dd>
-                    {% if quote.revised_total %}
-                    <dt class="col-sm-4">Revised total</dt>
-                    <dd class="col-sm-8">₹{{ '{:,.0f}'.format(quote.revised_total|float) }}</dd>
-                    {% endif %}
-                </dl>
-
-                {% if quote.selections_parsed %}
-                <h6 class="text-muted small text-uppercase mt-3">Customer's selections</h6>
-                <table class="table table-sm table-striped mb-0">
-                    <tbody>
-                        {% for key, value in quote.selections_parsed.items() %}
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Line items</strong>
+                <span class="text-muted small">{{ quote.items|length }} item{{ '' if quote.items|length == 1 else 's' }}</span>
+            </div>
+            {% if not quote.items %}
+                <div class="card-body">
+                    <p class="text-muted mb-0">This quote has no items yet — either the ingest ran before Phase-1 migration, or something went wrong. Try Revise to add items manually.</p>
+                </div>
+            {% else %}
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 align-top">
+                    <thead class="table-light">
                         <tr>
-                            <td class="text-muted" style="width:40%">{{ key }}</td>
-                            <td>{{ value }}</td>
+                            <th style="width:2rem">#</th>
+                            <th>Category · Config</th>
+                            <th class="text-end" style="width:9rem">Size · Qty</th>
+                            <th class="text-end" style="width:8rem">Rate</th>
+                            <th class="text-end" style="width:9rem">Amount</th>
                         </tr>
-                        {% endfor %}
+                    </thead>
+                    <tbody>
+                    {% for it in quote.items %}
+                        <tr>
+                            <td class="text-muted">{{ it.sort_order }}</td>
+                            <td>
+                                <div><strong>{{ it.category_label }}</strong>{% if it.label %} <span class="text-muted">· {{ it.label }}</span>{% endif %}</div>
+                                {% set sel = it.selections_parsed %}
+                                {% if sel %}
+                                <div class="small text-muted mt-1">
+                                    {% for k, v in sel.items() %}
+                                    <span class="me-2"><span class="text-secondary">{{ k }}:</span> {{ v }}</span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                {% set panels = it.panels_parsed %}
+                                {% if panels %}
+                                <div class="small mt-1">
+                                    {% set panel_n = namespace(v=0) %}
+                                    {% set door_n = namespace(v=0) %}
+                                    {% for p in panels %}
+                                        {% set is_door = p.get('kind') == 'door' %}
+                                        {% if is_door %}{% set _ = door_n.__setattr__('v', door_n.v + 1) %}{% else %}{% set _ = panel_n.__setattr__('v', panel_n.v + 1) %}{% endif %}
+                                        <span class="badge bg-light text-dark me-1">
+                                            {{ 'Door' if is_door else 'Panel' }} {{ door_n.v if is_door else panel_n.v }}:
+                                            {{ p.get('widthFt') }} × {{ p.get('heightFt') }} {{ it.dimension_unit or 'ft' }}{% if p.get('qty', 1) > 1 %} × {{ p.get('qty') }}{% endif %}
+                                        </span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                {% if it.fabric_code %}
+                                <div class="small mt-1"><span class="badge bg-warning text-dark">Fabric: {{ it.fabric_code }}</span></div>
+                                {% endif %}
+                                {% if it.uploaded_image_data_url %}
+                                <div class="mt-2">
+                                    <img src="{{ it.uploaded_image_data_url }}" alt="Customer artwork" style="max-width:120px;max-height:120px;border:1px solid #ccc;border-radius:4px" />
+                                    <div class="small text-muted">Customer-uploaded artwork</div>
+                                </div>
+                                {% endif %}
+                                {% if it.notes %}
+                                <div class="small text-muted fst-italic mt-1">BD note: {{ it.notes }}</div>
+                                {% endif %}
+                            </td>
+                            <td class="text-end small">
+                                {% if it.is_sqft %}
+                                    {{ '%.1f'|format(it.running_ft|float) }} sqft
+                                    {% if panels %}<div class="text-muted">{{ panel_n.v }} panel{{ '' if panel_n.v == 1 else 's' }}{% if door_n.v %} · {{ door_n.v }} door{{ '' if door_n.v == 1 else 's' }}{% endif %}</div>
+                                    {% else %}× {{ '%g'|format(it.quantity|float) }}{% endif %}
+                                {% else %}
+                                    {{ '%g'|format(it.running_ft|float) }} ft × {{ '%g'|format(it.quantity|float) }}
+                                {% endif %}
+                            </td>
+                            <td class="text-end small">₹{{ '{:,.0f}'.format(it.rate_per_unit|float) }}{{ '/sqft' if it.is_sqft else '/ft' }}</td>
+                            <td class="text-end"><strong>₹{{ '{:,.0f}'.format(it.subtotal|float) }}</strong></td>
+                        </tr>
+                    {% endfor %}
                     </tbody>
                 </table>
-                {% endif %}
             </div>
+            {% endif %}
         </div>
     </div>
 
-    <div class="col-lg-5">
+    <div class="col-lg-4">
+        <!-- Money -->
+        <div class="card mb-4">
+            <div class="card-header"><strong>Money</strong></div>
+            <div class="card-body">
+                <dl class="row mb-0 small">
+                    <dt class="col-6">Subtotal</dt>
+                    <dd class="col-6 text-end">₹{{ '{:,.0f}'.format(quote.subtotal|float) }}</dd>
+                    {% if quote.transport_charges and quote.transport_charges|float > 0 %}
+                    <dt class="col-6">Transport</dt>
+                    <dd class="col-6 text-end">₹{{ '{:,.0f}'.format(quote.transport_charges|float) }}</dd>
+                    {% endif %}
+                    <dt class="col-6">CGST @ {{ (quote.gst_percentage|float / 2) }}%</dt>
+                    <dd class="col-6 text-end">₹{{ '{:,.0f}'.format(quote.cgst|float) }}</dd>
+                    <dt class="col-6">SGST @ {{ (quote.gst_percentage|float / 2) }}%</dt>
+                    <dd class="col-6 text-end">₹{{ '{:,.0f}'.format(quote.sgst|float) }}</dd>
+                    <dt class="col-6"><strong>Grand total</strong></dt>
+                    <dd class="col-6 text-end"><strong>₹{{ '{:,.0f}'.format(quote.grand_total|float) }}</strong></dd>
+                    {% if quote.revised_total %}
+                    <dt class="col-6 text-warning-emphasis">Revised total</dt>
+                    <dd class="col-6 text-end text-warning-emphasis">₹{{ '{:,.0f}'.format(quote.revised_total|float) }}</dd>
+                    {% endif %}
+                    {% if quote.amount_received and quote.amount_received|float > 0 %}
+                    <dt class="col-6">Received</dt>
+                    <dd class="col-6 text-end">₹{{ '{:,.0f}'.format(quote.amount_received|float) }}</dd>
+                    <dt class="col-6">Balance</dt>
+                    <dd class="col-6 text-end">₹{{ '{:,.0f}'.format(quote.balance_payable|float) }}</dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+
+        <!-- Move stage -->
         <div class="card mb-4">
             <div class="card-header"><strong>Move stage</strong></div>
             <div class="card-body">
@@ -115,6 +210,7 @@
             </div>
         </div>
 
+        <!-- Stage history -->
         <div class="card">
             <div class="card-header"><strong>Stage history</strong></div>
             <div class="card-body">

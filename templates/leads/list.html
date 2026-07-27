@@ -329,7 +329,7 @@
                 <i class="bi bi-arrow-clockwise"></i> Refresh Token
             </button>
         {% endif %}
-        {% if current_user.is_manager_or_admin() %}
+        {% if current_user.can_run_indiamart_sync() %}
         <form method="POST" action="{{ url_for('indiamart_sync') }}" id="syncForm">
             <button type="submit" class="btn btn-success btn-sm" id="syncBtn">
                 <span class="sync-text"><i class="bi bi-arrow-repeat"></i> Sync IndiaMart</span>
