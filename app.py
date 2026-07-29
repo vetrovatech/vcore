@@ -9642,6 +9642,131 @@ def vetrova_revision_snapshot(id, rid):
     })
 
 
+@app.route('/quotes/vetrova/<int:id>/send-first-quote', methods=['POST'])
+@login_required
+def vetrova_send_first_quote(id):
+    """WhatsApp the customer the current Vetrova estimate PDF using the
+    approved utility template 'first_quote_generated'. Phase 2 addition
+    2026-07-29 — mirrors bathqube_send_first_quote (:9834), reusing the
+    same WABA (Bathqube WhatsApp setup [[bathqube-whatsapp-setup]]) +
+    the same 'first_quote_generated' template (already approved for
+    two body variables: {{1}} first name, {{2}} quote ref).
+
+    Flow:
+      1. Render current customer-facing Vetrova estimate PDF
+      2. Upload to Meta media store → media_id
+      3. Send template with media_id populating the DOCUMENT header
+      4. Log a WhatsAppMessage row (webhook updates status → delivered → read)
+      5. Log a VetrovaStatusEvent with channel='whatsapp' so the
+         Revisions/Stage history panel shows the send outcome
+    """
+    from models import WhatsAppMessage
+    from utils.whatsapp import (upload_media, send_template_with_document,
+                                normalize_phone)
+    from utils.vetrova_quote_pdf import generate_vetrova_quote_pdf
+
+    quote = VetrovaQuote.query.get_or_404(id)
+    if not quote.phone:
+        return jsonify({'success': False, 'error': 'Quote has no customer phone'}), 400
+
+    # 1) Render the customer estimate PDF
+    try:
+        pdf_bytes = generate_vetrova_quote_pdf(quote)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'PDF render failed: {e}'}), 500
+
+    filename = f'{quote.quote_ref or ("Vetrova-Q" + str(quote.id))}.pdf'
+
+    # 2) Upload to Meta media store (media_id valid ~30 days)
+    upload = upload_media(pdf_bytes, filename=filename, mime_type='application/pdf')
+    if not upload.get('success'):
+        # Persist the failure so BD can see it in Stage history.
+        db.session.add(VetrovaStatusEvent(
+            quote_id=quote.id,
+            from_stage=quote.stage,
+            to_stage=quote.stage,
+            channel='whatsapp',
+            subject='first_quote_generated (media upload failed)',
+            send_status='failed',
+            send_error=str(upload.get('error'))[:2000],
+            triggered_by=current_user.id,
+        ))
+        db.session.commit()
+        return jsonify({'success': False, 'error': f'Media upload failed: {upload.get("error")}'}), 502
+    media_id = upload['media_id']
+
+    # 3) Template body has two placeholders (approved on Meta):
+    #    {{1}} = customer first name  {{2}} = quote ref (VQ-CAT-NNNN)
+    first_name = (quote.customer_name or 'there').strip().split()[0]
+    quote_ref  = quote.quote_ref or f'VQ-{quote.id}'
+    body_variables = [first_name, quote_ref]
+
+    to_number = normalize_phone(quote.phone) or quote.phone
+
+    msg = WhatsAppMessage(
+        lead_id=None,
+        to_number=to_number,
+        template_name='first_quote_generated',
+        language='en',
+        variables_json=json.dumps({'body': body_variables,
+                                   'filename': filename,
+                                   'media_id': media_id}),
+        sent_by=current_user.id,
+        status='queued',
+    )
+    db.session.add(msg)
+    db.session.flush()
+
+    # 4) Single send — template body + PDF header in one API call
+    result = send_template_with_document(
+        to=quote.phone,
+        template_name='first_quote_generated',
+        media_id=media_id,
+        filename=filename,
+        language='en',
+        body_variables=body_variables,
+    )
+
+    # 5) Persist WhatsAppMessage + VetrovaStatusEvent audit trail
+    if not result.get('success'):
+        msg.status = 'failed'
+        msg.error_message = result.get('error', 'Unknown error')
+        db.session.add(VetrovaStatusEvent(
+            quote_id=quote.id,
+            from_stage=quote.stage,
+            to_stage=quote.stage,
+            channel='whatsapp',
+            subject=f'first_quote_generated → {to_number}',
+            message=json.dumps(body_variables),
+            send_status='failed',
+            send_error=(msg.error_message or '')[:2000],
+            triggered_by=current_user.id,
+        ))
+        db.session.commit()
+        return jsonify({'success': False, 'error': msg.error_message}), 502
+
+    msg.status = 'sent'
+    msg.wamid = result.get('wamid')
+    db.session.add(VetrovaStatusEvent(
+        quote_id=quote.id,
+        from_stage=quote.stage,
+        to_stage=quote.stage,
+        channel='whatsapp',
+        subject=f'first_quote_generated → {to_number}',
+        message=json.dumps(body_variables),
+        send_status='sent',
+        provider_message_id=msg.wamid,
+        triggered_by=current_user.id,
+    ))
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'wamid': msg.wamid,
+        'to': to_number,
+    })
+
+
 @app.route('/quotes/vetrova/<int:id>/pdf', methods=['GET'])
 @login_required
 def vetrova_quote_pdf(id):

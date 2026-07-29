@@ -44,6 +44,28 @@
     </div>
 </div>
 
+{# ── Phase 2B: WhatsApp send-first-quote CTA ────────────────────────
+     Shown only when the customer has a phone AND the quote is in an
+     early sales stage where a first-touch message still makes sense
+     (quote_generated / revision — post-awaiting_payment we already
+     have the deal in motion, sending a fresh "first quote" is odd).
+     Reuses the Bathqube WABA + first_quote_generated template. See
+     vetrova_send_first_quote (:9640-ish). #}
+{% if quote.stage in ('quote_generated', 'revision') and quote.phone %}
+<div class="alert alert-success d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <strong><i class="bi bi-whatsapp"></i> Send this estimate on WhatsApp</strong>
+        <div class="small mb-0">Sends the <em>first_quote_generated</em> utility template with the current estimate PDF to <strong>{{ quote.phone }}</strong>. Delivered inside the template — works even for cold leads outside the 24 h window.</div>
+    </div>
+    <button type="button" class="btn btn-success"
+            id="vqSendFirstQuoteBtn"
+            data-url="{{ url_for('vetrova_send_first_quote', id=quote.id) }}"
+            data-customer="{{ quote.customer_name }}">
+        <i class="bi bi-send"></i> Send on WhatsApp
+    </button>
+</div>
+{% endif %}
+
 <div class="row g-4">
     <div class="col-lg-8">
         <!-- Customer -->
@@ -322,5 +344,42 @@
         </div>
     </div>
 </div>
+
+<script>
+// Phase 2B: WhatsApp send-first-quote CTA wiring. Same pattern as
+// Bathqube's sendFirstQuoteBtn (bathqube_view.html:629) — fetch POST,
+// inline success/error, no page navigation on failure so BD can see
+// the exact Meta reason.
+document.addEventListener('DOMContentLoaded', function () {
+    var btn = document.getElementById('vqSendFirstQuoteBtn');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+        var customer = btn.dataset.customer || 'customer';
+        if (!confirm('Send the Vetrova estimate PDF on WhatsApp to ' + customer + '?')) return;
+        var original = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Uploading PDF + sending…';
+        fetch(btn.dataset.url, { method: 'POST', headers: { 'X-Requested-With': 'fetch' } })
+            .then(function (r) { return r.json().then(function (j) { return { status: r.status, body: j }; }); })
+            .then(function (res) {
+                if (res.body.success) {
+                    btn.classList.remove('btn-success');
+                    btn.classList.add('btn-outline-success');
+                    btn.innerHTML = '<i class="bi bi-check2-circle"></i> Sent — wamid ' + (res.body.wamid || '').slice(-8);
+                    setTimeout(function () { window.location.reload(); }, 1200);
+                } else {
+                    alert('WhatsApp send failed:\n\n' + (res.body.error || 'Unknown error'));
+                    btn.disabled = false;
+                    btn.innerHTML = original;
+                }
+            })
+            .catch(function (e) {
+                alert('Network error: ' + e);
+                btn.disabled = false;
+                btn.innerHTML = original;
+            });
+    });
+});
+</script>
 
 {% endblock %}
