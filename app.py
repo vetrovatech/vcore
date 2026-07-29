@@ -8468,7 +8468,7 @@ from models import (
     BATHQUBE_STAGES, BATHQUBE_OPS_STAGES, BATHQUBE_OPS_ACTIVE_STAGES,
     UpvcQuote, UpvcQuoteItem, UpvcQuoteRevision, UpvcStatusEvent,
     UPVC_STAGES, UPVC_ACTIVE_STAGES,
-    VetrovaQuote, VetrovaQuoteItem, VetrovaStatusEvent,
+    VetrovaQuote, VetrovaQuoteItem, VetrovaStatusEvent, VetrovaQuoteRevision,
     VETROVA_STAGES, VETROVA_ACTIVE_STAGES, VETROVA_STAGE_LABELS,
     VETROVA_CATEGORIES, VETROVA_CATEGORY_LABELS,
 )
@@ -8665,6 +8665,34 @@ BATHQUBE_ACTIONS = ('awaiting_payment',)
 
 # No-email stage transitions — single-click move via bathqube_quote_set_stage.
 BATHQUBE_STAGE_TRANSITIONS = ('in_pipeline', 'closed_won', 'junk', 'rejected')
+
+# ─── Vetrova stage machine helpers (Phase 2 2026-07-29) ──────────────────────
+# Whitelist of stages a BD may set from the view page's stage-move form.
+# Everything else (revision, quote_generated) is set as a side-effect of
+# other actions (Revise save → revision, ingest → quote_generated).
+VETROVA_STAGE_TRANSITIONS = ('in_pipeline', 'awaiting_payment', 'closed_won', 'junk', 'rejected')
+
+
+def _vetrova_edit_lock_reason(quote, user):
+    """Returns a string reason if the quote is locked from mutation,
+    else None. Admins always bypass.
+
+    Rule: once stage=closed_won, non-admin BDs can neither revise the
+    line items nor move the stage. Prevents accidental clobber of a
+    deal already booked into ops / invoicing.
+
+    Applies to: /revise POST, /stage POST, /delete (delete already
+    admin-only). Read paths are never locked.
+    """
+    try:
+        if user.is_admin():
+            return None
+    except Exception:
+        pass
+    if getattr(quote, 'stage', None) == 'closed_won':
+        return ('This quote is Closed Won — only admins can edit or move it. '
+                'Ask an admin to unlock if you truly need to make a change.')
+    return None
 
 
 # ─── BD-side Bathqube quote creator helpers (KAN-67 follow-up) ────────────────
@@ -9278,14 +9306,29 @@ def vetrova_quote_stage(id):
     if target not in VETROVA_STAGES:
         flash('Invalid stage.', 'danger')
         return redirect(url_for('vetrova_quote_view', id=id))
+    # Phase 2: restrict manual transitions to the whitelist. `revision`
+    # and `quote_generated` are set implicitly by other actions (Revise
+    # save / ingest) and should not appear as click-to-move options.
+    if target not in VETROVA_STAGE_TRANSITIONS:
+        flash(f'Stage "{VETROVA_STAGE_LABELS.get(target, target)}" is not '
+              'directly settable — it moves as a side-effect of other actions.',
+              'warning')
+        return redirect(url_for('vetrova_quote_view', id=id))
     if target == quote.stage:
         flash(f'Already in {VETROVA_STAGE_LABELS.get(target, target)}.', 'info')
+        return redirect(url_for('vetrova_quote_view', id=id))
+    # Phase 2 closed-won lock. Non-admin cannot move a closed_won quote.
+    lock = _vetrova_edit_lock_reason(quote, current_user)
+    if lock:
+        flash(lock, 'warning')
         return redirect(url_for('vetrova_quote_view', id=id))
     event = VetrovaStatusEvent(
         quote_id=quote.id,
         from_stage=quote.stage,
         to_stage=target,
         note=(request.form.get('note') or '').strip() or None,
+        channel='none',
+        send_status='skipped',
         triggered_by=current_user.id,
     )
     quote.stage = target
@@ -9338,12 +9381,24 @@ def vetrova_quote_revise(id):
 
     The server WIPES existing items and re-creates from the payload
     (items are cheap; keeping this simple avoids per-row diff bugs).
-    Bumps `revision_count` on every save; a Phase-2 revisions table can
-    snapshot the pre-edit state for audit — deferred for now.
+    Bumps `revision_count` on every save; Phase-2 snapshots the pre-edit
+    state into `vetrova_quote_revisions` for the audit trail + history
+    panel — see VetrovaQuoteRevision (:2760).
+
+    Phase 2 additions on the POST body (all optional, back-compat):
+      customer.pan            → quote.customer_pan
+      pricing.discountPercent → quote.discount_percent
+      items[i].isExtra        → items[i].is_extra
     """
     quote = VetrovaQuote.query.get_or_404(id)
 
     if request.method == 'POST':
+        # Phase 2 closed-won lock. Non-admin cannot revise a closed_won
+        # quote. Admins are silently allowed (audit trail captures WHO).
+        lock = _vetrova_edit_lock_reason(quote, current_user)
+        if lock:
+            return jsonify({'error': lock, 'locked': True}), 423  # 423 Locked
+
         try:
             data = request.get_json(force=True, silent=False) or {}
         except Exception:
@@ -9354,6 +9409,59 @@ def vetrova_quote_revise(id):
         items_in = data.get('items') or []
         if not isinstance(items_in, list) or not items_in:
             return jsonify({'error': 'items[] required (need at least one line)'}), 400
+
+        # ── Phase 2 audit: snapshot the pre-edit state BEFORE mutating.
+        # If the save later blows up (bad numeric etc.), the snapshot is
+        # only written on the successful commit path below — pending
+        # snapshot object stays in the session.
+        pre_subtotal = float(quote.subtotal or 0)
+        pre_total = float(quote.grand_total or 0)
+        pre_discount_pct = float(quote.discount_percent or 0)
+        pre_snapshot = json.dumps({
+            'customer': {
+                'name': quote.customer_name,
+                'phone': quote.phone,
+                'email': quote.email,
+                'pincode': quote.pincode,
+                'siteAddress': quote.site_address,
+                'notes': quote.notes,
+                'pan': getattr(quote, 'customer_pan', None),
+            },
+            'pricing': {
+                'transportCharges': float(quote.transport_charges or 0),
+                'deliveryCharge': float(quote.delivery_charge or 0),
+                'gstPercentage': float(quote.gst_percentage or 18),
+                'discountPercent': pre_discount_pct,
+                'discountAmount': float(quote.discount_amount or 0),
+                'revisedTotal': (float(quote.revised_total) if quote.revised_total is not None else None),
+                'amountReceived': float(quote.amount_received or 0),
+                'subtotal': pre_subtotal,
+                'cgst': float(quote.cgst or 0),
+                'sgst': float(quote.sgst or 0),
+                'grandTotal': pre_total,
+            },
+            'items': [
+                {
+                    'id': it.id,
+                    'sortOrder': it.sort_order,
+                    'categorySlug': it.category_slug,
+                    'categoryLabel': it.category_label,
+                    'label': it.label,
+                    'selections': it.selections_parsed,
+                    'dimensionKind': it.dimension_kind,
+                    'dimensionUnit': it.dimension_unit,
+                    'runningFt': float(it.running_ft or 0),
+                    'quantity': float(it.quantity or 1),
+                    'panels': it.panels_parsed,
+                    'fabricCode': it.fabric_code,
+                    'uploadedImageDataUrl': it.uploaded_image_data_url,
+                    'ratePerUnit': float(it.rate_per_unit or 0),
+                    'subtotal': float(it.subtotal or 0),
+                    'isExtra': bool(getattr(it, 'is_extra', False)),
+                    'notes': it.notes,
+                } for it in quote.items
+            ],
+        })
 
         # Customer fields
         name = (cust.get('name') or '').strip()
@@ -9366,6 +9474,8 @@ def vetrova_quote_revise(id):
         quote.pincode = (cust.get('pincode') or '').strip() or None
         quote.site_address = (cust.get('siteAddress') or '').strip() or None
         quote.notes = (cust.get('notes') or '').strip() or None
+        # Phase 2: optional PAN for B2B invoice.
+        quote.customer_pan = (cust.get('pan') or '').strip() or None
 
         # Pricing overrides
         try:
@@ -9374,6 +9484,12 @@ def vetrova_quote_revise(id):
             rev = pricing.get('revisedTotal')
             quote.revised_total = float(rev) if rev not in (None, '', 0, '0') else None
             quote.amount_received = float(pricing.get('amountReceived') or 0)
+            # Phase 2: bill-level percent discount (0–100). Snapshotted
+            # into quote.discount_amount by recompute_totals below.
+            dpct = float(pricing.get('discountPercent') or 0)
+            if dpct < 0 or dpct > 100:
+                return jsonify({'error': 'discountPercent must be between 0 and 100'}), 400
+            quote.discount_percent = dpct
         except (TypeError, ValueError):
             return jsonify({'error': 'invalid pricing numeric field'}), 400
 
@@ -9413,6 +9529,8 @@ def vetrova_quote_revise(id):
                 rate_per_unit=rate,
                 subtotal=subtotal,
                 notes=(r.get('notes') or '').strip() or None,
+                # Phase 2: extras/discount marker.
+                is_extra=bool(r.get('isExtra')),
             )
             db.session.add(item)
 
@@ -9427,15 +9545,36 @@ def vetrova_quote_revise(id):
                 from_stage=quote.stage,
                 to_stage='revision',
                 note=f'Auto: revised by {current_user.email}',
+                channel='none',
+                send_status='skipped',
                 triggered_by=current_user.id,
             )
             quote.stage = 'revision'
             db.session.add(evt)
 
+        # Phase 2: snapshot the PRE-edit state into vetrova_quote_revisions.
+        # Added to session BEFORE flush/commit so it commits atomically
+        # with the item/quote mutations — either everything sticks or
+        # nothing does.
         try:
             db.session.flush()
             db.session.refresh(quote)
             quote.recompute_totals()
+
+            revision = VetrovaQuoteRevision(
+                quote_id=quote.id,
+                revision_number=quote.revision_count,
+                prev_subtotal=pre_subtotal,
+                new_subtotal=float(quote.subtotal or 0),
+                prev_total=pre_total,
+                new_total=float(quote.grand_total or 0),
+                discount_percent=pre_discount_pct,
+                snapshot=pre_snapshot,
+                triggered_by=current_user.id,
+                note=(data.get('revisionNote') or '').strip() or None,
+            )
+            db.session.add(revision)
+
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -9472,6 +9611,35 @@ def vetrova_quote_revise(id):
                            items_json=items_json,
                            categories=VETROVA_CATEGORIES,
                            stage_labels=VETROVA_STAGE_LABELS)
+
+
+@app.route('/quotes/vetrova/<int:id>/revisions/<int:rid>/snapshot', methods=['GET'])
+@login_required
+def vetrova_revision_snapshot(id, rid):
+    """View-only JSON dump of a single revision's snapshot.
+
+    Phase 2 audit-trail read path. The snapshot column is stored as
+    JSON text; this route parses + returns the object with `Content-Type:
+    application/json` so BD can eyeball what the quote looked like at
+    that point in history. Deliberately no restore endpoint — history
+    is view-only in Phase 2 (matches Bathqube's model).
+    """
+    revision = VetrovaQuoteRevision.query.filter_by(
+        id=rid, quote_id=id,
+    ).first_or_404()
+    return jsonify({
+        'revisionNumber': revision.revision_number,
+        'quoteId': revision.quote_id,
+        'createdAt': revision.created_at.isoformat() if revision.created_at else None,
+        'triggeredByEmail': (revision.user.email if revision.user else None),
+        'prevSubtotal': float(revision.prev_subtotal or 0),
+        'newSubtotal': float(revision.new_subtotal or 0),
+        'prevTotal': float(revision.prev_total or 0),
+        'newTotal': float(revision.new_total or 0),
+        'discountPercent': float(revision.discount_percent or 0),
+        'note': revision.note,
+        'snapshot': revision.snapshot_parsed,
+    })
 
 
 @app.route('/quotes/vetrova/<int:id>/pdf', methods=['GET'])

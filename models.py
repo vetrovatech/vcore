@@ -2571,6 +2571,10 @@ class VetrovaQuote(db.Model):
     pincode = db.Column(db.String(12), nullable=True)
     site_address = db.Column(db.Text, nullable=True)
     notes = db.Column(db.Text, nullable=True)
+    # Optional PAN — needed by TaxInvoice for B2B customers above the ₹2L
+    # per-invoice threshold. BD fills it during Revise when the customer
+    # supplies one.  Phase 2 2026-07-29.
+    customer_pan = db.Column(db.String(20), nullable=True)
 
     # ── Legacy single-run snapshot (populated ONLY when the quote has
     # exactly one item; kept for back-compat with UI/reports that still
@@ -2604,6 +2608,13 @@ class VetrovaQuote(db.Model):
     revised_total = db.Column(db.Numeric(12, 2), nullable=True)
     amount_received = db.Column(db.Numeric(12, 2), default=0, nullable=False)
 
+    # Bill-level discount (applied to subtotal BEFORE GST split).
+    # `discount_percent` is BD-editable in Revise; `discount_amount` is
+    # the resolved ₹ figure at save time (kept for auditability).
+    # Phase 2 addition 2026-07-29.
+    discount_percent = db.Column(db.Numeric(5, 2), default=0, nullable=False)
+    discount_amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+
     # Revision bookkeeping — bumped on every save via the revise editor.
     revision_count = db.Column(db.Integer, default=0, nullable=False)
     # Validity in days — mirrors UPVC quote (KAN-67).
@@ -2621,6 +2632,10 @@ class VetrovaQuote(db.Model):
     events = db.relationship('VetrovaStatusEvent', backref='quote', lazy=True,
                              cascade='all, delete-orphan',
                              order_by='VetrovaStatusEvent.created_at.desc()')
+    # Phase 2 audit trail — one row per BD save of the Revise editor.
+    revisions = db.relationship('VetrovaQuoteRevision', backref='quote', lazy=True,
+                                cascade='all, delete-orphan',
+                                order_by='VetrovaQuoteRevision.revision_number.desc()')
 
     @property
     def selections_parsed(self):
@@ -2651,31 +2666,52 @@ class VetrovaQuote(db.Model):
     DELIVERY_FEE       = 2000.0
 
     def recompute_totals(self):
-        """Recalculate subtotal + delivery + GST + grand_total from items.
+        """Recalculate subtotal + delivery + discount + GST + grand_total.
 
         Called by the ingest handler + the revise-save handler so any time
         items change, the parent's money fields stay in sync. Uses whole
         rupees to match the customer-facing PDF (which never shows paise).
         `delivery_charge` is rule-driven — not manually adjustable via the
         revise form — so BD can't accidentally waive it below threshold.
+
+        Phase 2 addition: `discount_percent` (BD-editable in Revise) is
+        applied to (items subtotal − item-level extras adjustment) BEFORE
+        the delivery/transport/GST stack, mirroring Bathqube's discount
+        semantics (:1615). `discount_amount` snapshots the resolved ₹
+        figure at save time for the audit trail + invoice line.
         """
-        subtotal = sum(float(i.subtotal or 0) for i in (self.items or []))
+        # Sum of positive line items only (skip `is_extra` negative rows —
+        # they're the extras/discounts pane and fold in below).
+        items_positive = sum(
+            float(i.subtotal or 0) for i in (self.items or [])
+            if not getattr(i, 'is_extra', False)
+        )
+        items_extras = sum(
+            float(i.subtotal or 0) for i in (self.items or [])
+            if getattr(i, 'is_extra', False)
+        )
+        raw_subtotal = items_positive + items_extras
+        # Bill-level percent discount lives on the quote, not per item.
+        discount_pct = float(self.discount_percent or 0)
+        discount_amt = round(raw_subtotal * (discount_pct / 100.0), 2) if discount_pct > 0 else 0.0
+        subtotal_after_discount = raw_subtotal - discount_amt
         transport = float(self.transport_charges or 0)
-        # BD rule: ₹2,000 delivery on sub-₹20k orders; free above.
-        delivery = self.DELIVERY_FEE if subtotal < self.DELIVERY_THRESHOLD else 0.0
+        # BD rule: ₹2,000 delivery on sub-₹20k (post-discount) orders; free above.
+        delivery = self.DELIVERY_FEE if subtotal_after_discount < self.DELIVERY_THRESHOLD else 0.0
         gst_pct = float(self.gst_percentage or 18)
-        taxable = subtotal + transport + delivery
+        taxable = subtotal_after_discount + transport + delivery
         # Split GST evenly across CGST/SGST for intra-state (default).
         cgst = round(taxable * (gst_pct / 200), 2)
         sgst = round(taxable * (gst_pct / 200), 2)
-        self.subtotal = round(subtotal, 2)
+        self.subtotal = round(raw_subtotal, 2)
+        self.discount_amount = round(discount_amt, 2)
         self.delivery_charge = round(delivery, 2)
         self.cgst = cgst
         self.sgst = sgst
         self.grand_total = round(taxable + cgst + sgst, 2)
-        # Keep `total` (pre-GST subtotal) in sync — used by legacy list view
-        # + the configurator PDF that customers already have.
-        self.total = round(subtotal, 2)
+        # Keep `total` (pre-GST subtotal, pre-discount) in sync — used by
+        # legacy list view + the configurator PDF the customer already has.
+        self.total = round(raw_subtotal, 2)
 
     def __repr__(self):
         return f'<VetrovaQuote {self.quote_ref} {self.category_slug} {self.customer_name} {self.stage}>'
@@ -2741,6 +2777,14 @@ class VetrovaQuoteItem(db.Model):
     subtotal = db.Column(db.Numeric(12, 2), default=0, nullable=False)       # ₹, line-level pre-tax
     notes = db.Column(db.Text, nullable=True)                                # BD's private note on this line
 
+    # Phase 2: extras/discount marker. True = BD-added line (installation,
+    # site freight, negotiated line-level discount as a negative
+    # `subtotal`); False = configurator-generated row that comes from the
+    # customer's original ingest + gets regenerated on every revise save.
+    # `is_extra=True` rows are NOT wiped on save (see revise handler); they
+    # only disappear if BD explicitly removes them.
+    is_extra = db.Column(db.Boolean, default=False, nullable=False)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -2772,7 +2816,10 @@ class VetrovaQuoteItem(db.Model):
 
 
 class VetrovaStatusEvent(db.Model):
-    """Audit log of stage transitions on a VetrovaQuote."""
+    """Audit log of stage transitions on a VetrovaQuote — with per-event
+    send tracking (Phase 2). Every WhatsApp / email fired from a stage
+    action logs a row here so BD can see delivery status per touchpoint.
+    Parity with BathqubeStatusEvent (:1686)."""
     __tablename__ = 'vetrova_status_events'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2783,11 +2830,60 @@ class VetrovaStatusEvent(db.Model):
     to_stage = db.Column(db.String(32), nullable=False)
     note = db.Column(db.Text, nullable=True)
 
+    # Phase 2: channel + message + provider tracking.
+    channel = db.Column(db.String(20), nullable=False, default='email')  # email | whatsapp | none
+    subject = db.Column(db.String(255), nullable=True)
+    message = db.Column(db.Text, nullable=True)
+    send_status = db.Column(db.String(20), nullable=False, default='skipped')  # pending|sent|failed|skipped
+    send_error = db.Column(db.Text, nullable=True)
+    provider_message_id = db.Column(db.String(128), nullable=True)
+
     triggered_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     user = db.relationship('User', foreign_keys=[triggered_by])
 
     def __repr__(self):
-        return f'<VetrovaStatusEvent q={self.quote_id} {self.from_stage}->{self.to_stage}>'
+        return f'<VetrovaStatusEvent q={self.quote_id} {self.from_stage}->{self.to_stage} {self.send_status}>'
+
+
+class VetrovaQuoteRevision(db.Model):
+    """One row per Save in the Vetrova Revise editor. Internal audit
+    trail — customer never sees this. Captures before/after totals + a
+    full JSON snapshot of items + customer + pricing at the moment of
+    save, so BD can view what the quote looked like at any revision.
+
+    Phase 2 addition 2026-07-29. Mirror of BathqubeQuoteRevision (:1736).
+    """
+    __tablename__ = 'vetrova_quote_revisions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey('vetrova_quotes.id', ondelete='CASCADE'),
+                         nullable=False, index=True)
+    revision_number = db.Column(db.Integer, nullable=False)  # 1, 2, 3, …
+    prev_subtotal = db.Column(db.Numeric(12, 2), nullable=True)
+    new_subtotal = db.Column(db.Numeric(12, 2), nullable=True)
+    prev_total = db.Column(db.Numeric(12, 2), nullable=True)
+    new_total = db.Column(db.Numeric(12, 2), nullable=True)
+    discount_percent = db.Column(db.Numeric(5, 2), nullable=True)
+    # JSON: {customer: {...}, pricing: {...}, items: [...]}
+    snapshot = db.Column(db.Text, nullable=True)
+    triggered_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = db.relationship('User', foreign_keys=[triggered_by])
+
+    @property
+    def snapshot_parsed(self):
+        """JSON-parsed snapshot; returns {} if missing/invalid."""
+        if not self.snapshot:
+            return {}
+        try:
+            return json.loads(self.snapshot)
+        except Exception:
+            return {}
+
+    def __repr__(self):
+        return f'<VetrovaQuoteRevision q={self.quote_id} rev={self.revision_number} @ {self.created_at.isoformat() if self.created_at else "?"}>'
 

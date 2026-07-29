@@ -18,13 +18,26 @@
             {% if quote.revision_count and quote.revision_count > 0 %}
               <span class="badge bg-warning text-dark align-middle">Revision {{ quote.revision_count }}</span>
             {% endif %}
+            {# Phase 2: lock badge shown when closed_won so BD sees why the Revise button is disabled. #}
+            {% if quote.stage == 'closed_won' and not current_user.is_admin() %}
+              <span class="badge bg-secondary align-middle" title="Only admins can edit a Closed Won quote">
+                <i class="bi bi-lock-fill"></i> Locked
+              </span>
+            {% endif %}
         </h2>
         <span class="text-muted small">Received {{ quote.created_at.strftime('%d %b %Y, %I:%M %p') }}</span>
     </div>
     <div class="btn-group">
-        <a href="{{ url_for('vetrova_quote_revise', id=quote.id) }}" class="btn btn-primary">
+        {% if quote.stage == 'closed_won' and not current_user.is_admin() %}
+          <button type="button" class="btn btn-primary" disabled
+                  title="Closed Won — ask an admin to unlock if you truly need to edit this quote.">
+            <i class="bi bi-lock-fill"></i> Revise / Edit (Locked)
+          </button>
+        {% else %}
+          <a href="{{ url_for('vetrova_quote_revise', id=quote.id) }}" class="btn btn-primary">
             <i class="bi bi-pencil-square"></i> Revise / Edit
-        </a>
+          </a>
+        {% endif %}
         <a href="{{ url_for('vetrova_quote_pdf', id=quote.id) }}" target="_blank" class="btn btn-outline-secondary">
             <i class="bi bi-file-earmark-pdf"></i> Download PDF
         </a>
@@ -215,7 +228,7 @@
         </div>
 
         <!-- Stage history -->
-        <div class="card">
+        <div class="card mb-4">
             <div class="card-header"><strong>Stage history</strong></div>
             <div class="card-body">
                 {% if quote.events %}
@@ -225,6 +238,16 @@
                         <div class="small text-muted">
                             {{ e.created_at.strftime('%d %b %Y, %I:%M %p') }}
                             {% if e.user %} · {{ e.user.name or e.user.email }}{% endif %}
+                            {% if e.channel and e.channel != 'none' %}
+                              <span class="badge bg-light text-dark ms-1" style="font-size:10px">
+                                <i class="bi bi-{{ 'whatsapp' if e.channel == 'whatsapp' else 'envelope' }}"></i> {{ e.channel }}
+                              </span>
+                              {% if e.send_status == 'sent' %}
+                                <span class="badge bg-success" style="font-size:10px">sent</span>
+                              {% elif e.send_status == 'failed' %}
+                                <span class="badge bg-danger" style="font-size:10px" title="{{ e.send_error }}">failed</span>
+                              {% endif %}
+                            {% endif %}
                         </div>
                         <div>
                             {% if e.from_stage %}
@@ -241,6 +264,58 @@
                 </ul>
                 {% else %}
                 <p class="text-muted mb-0 small">No stage changes yet.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {# ── Phase 2: Revisions history panel ──────────────────────────
+             One row per Save in the Revise editor. Each entry shows the
+             prev → new subtotal + total (BD sees at a glance how much
+             the quote moved), who saved it, and their note. Snapshot
+             is stored in the row and can be inspected via the modal
+             (see /revisions/<rid>/snapshot fetch below).
+         #}
+        <div class="card">
+            <div class="card-header"><strong>Revisions history</strong></div>
+            <div class="card-body">
+                {% if quote.revisions %}
+                <ul class="list-unstyled mb-0">
+                    {% for r in quote.revisions %}
+                    <li class="mb-3 pb-3 border-bottom">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <span class="badge bg-warning text-dark">Rev {{ r.revision_number }}</span>
+                                <span class="text-muted small">
+                                    {{ r.created_at.strftime('%d %b %Y, %I:%M %p') }}
+                                    {% if r.user %} · {{ r.user.name or r.user.email }}{% endif %}
+                                </span>
+                            </div>
+                            {% if r.snapshot %}
+                            <a href="{{ url_for('vetrova_revision_snapshot', id=quote.id, rid=r.id) }}"
+                               target="_blank" class="btn btn-sm btn-outline-secondary py-0" title="View full snapshot JSON">
+                                <i class="bi bi-file-earmark-text"></i> Snapshot
+                            </a>
+                            {% endif %}
+                        </div>
+                        <div class="small mt-1">
+                            <span class="text-muted">Subtotal</span>
+                            ₹{{ '{:,.0f}'.format(r.prev_subtotal|float) }}
+                            <i class="bi bi-arrow-right"></i>
+                            ₹{{ '{:,.0f}'.format(r.new_subtotal|float) }}
+                            &nbsp;·&nbsp;
+                            <span class="text-muted">Grand</span>
+                            ₹{{ '{:,.0f}'.format(r.prev_total|float) }}
+                            <i class="bi bi-arrow-right"></i>
+                            ₹{{ '{:,.0f}'.format(r.new_total|float) }}
+                        </div>
+                        {% if r.note %}
+                        <div class="small mt-1 fst-italic text-muted" style="white-space:pre-wrap">"{{ r.note }}"</div>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted mb-0 small">No revisions yet — this quote hasn't been edited since ingest.</p>
                 {% endif %}
             </div>
         </div>
