@@ -9133,6 +9133,13 @@ def vetrova_ingest():
     if is_new:
         quote = VetrovaQuote(quote_ref=quote_ref, stage='quote_generated')
         db.session.add(quote)
+        # Flush so quote.id is populated BEFORE the item loop below
+        # composes VetrovaQuoteItem(quote_id=quote.id, …). Without this,
+        # every brand-new quote from vetrova.in dies with a NOT NULL
+        # violation on vetrova_quote_items.quote_id — re-ingests of an
+        # existing ref survive because .first() returns a row with id.
+        # Same pattern used by upvc_quotes_ingest (line 1538) etc.
+        db.session.flush()
 
     quote.external_id = external_id
     quote.customer_name = name
