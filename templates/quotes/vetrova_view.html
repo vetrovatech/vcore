@@ -124,7 +124,8 @@
                                     {% set door_n = namespace(v=0) %}
                                     {% for p in panels %}
                                         {% set is_door = p.get('kind') == 'door' %}
-                                        {% if is_door %}{% set _ = door_n.__setattr__('v', door_n.v + 1) %}{% else %}{% set _ = panel_n.__setattr__('v', panel_n.v + 1) %}{% endif %}
+                                        {# Jinja2 sandbox rejects __setattr__ on Namespace since 3.1.x. Use the direct-set form. #}
+                                        {% if is_door %}{% set door_n.v = door_n.v + 1 %}{% else %}{% set panel_n.v = panel_n.v + 1 %}{% endif %}
                                         <span class="badge bg-light text-dark me-1">
                                             {{ 'Door' if is_door else 'Panel' }} {{ door_n.v if is_door else panel_n.v }}:
                                             {{ p.get('widthFt') }} × {{ p.get('heightFt') }} {{ it.dimension_unit or 'ft' }}{% if p.get('qty', 1) > 1 %} × {{ p.get('qty') }}{% endif %}
