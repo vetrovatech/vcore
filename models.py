@@ -2517,9 +2517,9 @@ VETROVA_STAGE_LABELS = {
 # the three current railings-family categories first.
 VETROVA_CATEGORIES = (
     ('balcony',           'Balcony'),
-    ('staircase',         'Staircase'),
-    ('pergola',           'Pergola'),
-    ('railings',          'Railings'),
+    ('staircase',         'Staircase Railing'),
+    ('pergola',           'Pergolas'),
+    ('railings',          'Balcony Railings'),
     ('partitions',        'Partitions'),
     ('office-cubicles',   'Office Cubicles'),
     ('doors-and-windows', 'Doors & Windows'),
@@ -2528,11 +2528,18 @@ VETROVA_CATEGORIES = (
     ('backsplash',        'Backsplash'),
     ('feature-walls',     'Feature Walls'),
     ('storage',           'Storage'),
-    ('smartglass',        'Smart Glass'),
+    ('smartglass',        'Switchable/Smart Glass'),
     ('pool-mosaics',      'Pool Mosaics'),
     ('wardrobes',         'Wardrobes'),
     ('folding-glass',     'Folding Glass'),
-    ('upvc',              'UPVC'),
+    ('upvc',              'UPVC Windows & Doors'),
+    # 2026-07-31: sync with vetrova.in's canonical VI_CATEGORIES —
+    # BD hit a Save crash on VQ-SHO-3121 because vcore's dropdown
+    # didn't include 'showers'. Also added mirrors. Labels mirror
+    # glassyplatform's CATEGORY_LABEL_OVERRIDES so the /revise
+    # dropdown matches what customers see on the storefront.
+    ('showers',           'Bathroom Partitions'),
+    ('mirrors',           'Mirrors'),
 )
 VETROVA_CATEGORY_LABELS = dict(VETROVA_CATEGORIES)
 
