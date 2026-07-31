@@ -322,7 +322,19 @@
     function renderItem(item) {
         const node = tpl.content.cloneNode(true).querySelector('.vq-item');
         node.querySelector('.vq-id').value       = item.id || '';
-        node.querySelector('.vq-cat').value      = item.categorySlug || 'unknown';
+        const catEl = node.querySelector('.vq-cat');
+        catEl.value = item.categorySlug || 'unknown';
+        // vetrova.in occasionally sends slugs vcore's VETROVA_CATEGORIES
+        // doesn't list (showers, mirrors, pergolas). Without this fallback
+        // option the select's selectedIndex is -1, then collectItems()
+        // crashes on cat.options[-1].text when BD hits Save.
+        if (catEl.selectedIndex === -1 && item.categorySlug) {
+            const opt = document.createElement('option');
+            opt.value = item.categorySlug;
+            opt.textContent = item.categoryLabel || item.categorySlug;
+            catEl.insertBefore(opt, catEl.firstChild);
+            catEl.value = item.categorySlug;
+        }
         node.querySelector('.vq-label').value    = item.label || '';
         node.querySelector('.vq-unit').value     = item.dimensionUnit || 'ft';
         node.querySelector('.vq-kind').value     = item.dimensionKind || 'square_feet';
@@ -349,7 +361,8 @@
 
         node.querySelector('.vq-title').textContent = item.categoryLabel || item.categorySlug || 'Item';
         node.querySelector('.vq-cat').addEventListener('change', (e) => {
-            node.querySelector('.vq-title').textContent = e.target.options[e.target.selectedIndex].text;
+            const t = e.target;
+            node.querySelector('.vq-title').textContent = (t.selectedIndex >= 0 && t.options[t.selectedIndex]) ? t.options[t.selectedIndex].text : (t.value || 'Item');
             recomputeTotals();
         });
         node.querySelector('.vq-unit').addEventListener('change', () => updatePanelUnitLabels(node));
@@ -442,11 +455,12 @@
                 if (panels.length === 0) panels = null;
             }
             const cat = node.querySelector('.vq-cat');
+            const catLabel = (cat.selectedIndex >= 0 && cat.options[cat.selectedIndex]) ? cat.options[cat.selectedIndex].text : (cat.value || 'Item');
             items.push({
                 id:             parseInt(node.querySelector('.vq-id').value) || null,
                 sortOrder:      items.length + 1,
                 categorySlug:   cat.value,
-                categoryLabel:  cat.options[cat.selectedIndex].text,
+                categoryLabel:  catLabel,
                 label:          node.querySelector('.vq-label').value.trim(),
                 selections:     parseSelections(node.querySelector('.vq-sel').value),
                 dimensionKind:  node.querySelector('.vq-kind').value,
