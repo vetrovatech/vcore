@@ -2558,8 +2558,16 @@ class VetrovaQuote(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
 
-    # Compact reference minted by glassyplatform (VQ-BAL-1234).
+    # Compact reference minted by glassyplatform (VQ-BAL-1234) OR the
+    # BD-side new-quote flow (VQ-BD-NNNNN — see mint_bd_vetrova_quote_ref
+    # in app.py). Uniqueness is enforced across both sources.
     quote_ref = db.Column(db.String(32), unique=True, nullable=False, index=True)
+
+    # Provenance — 'ingest' for storefront submissions from vetrova.in,
+    # 'bd' for quotes created via /quotes/vetrova/new. Matches the
+    # startup migration in app.py:_run_startup_migrations.
+    source = db.Column(db.String(20), nullable=False, default='ingest',
+                       server_default='ingest')
     # Distinct from quote_ref so future glassyplatform-side persistence can
     # link back independently. Optional today (glassyplatform's endpoint is
     # still stateless), so it may equal quote_ref for now.

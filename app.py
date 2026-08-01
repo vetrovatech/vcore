@@ -69,6 +69,11 @@ def _run_startup_migrations():
         "CREATE INDEX IF NOT EXISTS idx_wa_meeting_id ON whatsapp_messages(meeting_id)",
         "CREATE INDEX IF NOT EXISTS idx_wa_to_number  ON whatsapp_messages(to_number)",
         "CREATE INDEX IF NOT EXISTS idx_wa_status     ON whatsapp_messages(status)",
+        # Vetrova BD-creator project (2026-08-01): distinguish quotes
+        # ingested from vetrova.in vs those created by BD in vcore's
+        # own /quotes/vetrova/new flow. 'ingest' matches every existing
+        # row's provenance so back-fill is implicit via the default.
+        "ALTER TABLE vetrova_quotes ADD COLUMN source VARCHAR(20) NOT NULL DEFAULT 'ingest'",
     ]
     # Each statement runs in its own transaction. Required because Postgres
     # puts the connection into an "aborted transaction" state after ANY
