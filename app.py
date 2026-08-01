@@ -9104,6 +9104,91 @@ def bathqube_bulk_send_whatsapp():
 # Ingested from glassyplatform's /api/vetrova/quote-request via the same
 # HMAC-signed webhook pattern as Bathqube. BD works the funnel here.
 
+# ─── BD-side Vetrova quote creator helpers (2026-08-01) ──────────────────────
+# Vcore-native form at /quotes/vetrova/new lets BD build a Vetrova quote
+# from scratch. Reads the same Payload configurator globals that the
+# storefront reads, via three read-only glassyplatform endpoints:
+#   /api/vetrova/categories               → dropdown list
+#   /api/vetrova/configurator-schema/<slug> → steps + options for one category
+#   /api/vetrova/price                    → live subtotal (single source of truth)
+#
+# In-process caches keep the categories + per-slug schema for 90s so a BD
+# refreshing the form doesn't hammer glassyplatform. Pricing is never cached
+# — every change fires a fresh POST so BD sees the latest per-category rates.
+
+_VETROVA_CATEGORIES_CACHE = {'data': None, 'expires_at': 0}
+_VETROVA_SCHEMA_CACHE = {}  # slug → {'data': …, 'expires_at': …}
+
+
+def _fetch_vetrova_categories():
+    """Read-only category list for the BD form's dropdown. Cached 90s.
+    Raises RuntimeError on upstream failure so the form GET handler
+    can flash a proper error instead of rendering a blank dropdown."""
+    import time, requests as req_lib
+    now = time.time()
+    if _VETROVA_CATEGORIES_CACHE.get('data') is not None and \
+       _VETROVA_CATEGORIES_CACHE.get('expires_at', 0) > now:
+        return _VETROVA_CATEGORIES_CACHE['data']
+    url = f'{_glassyplatform_base_url()}/api/vetrova/categories'
+    try:
+        resp = req_lib.get(url, timeout=10)
+    except Exception as e:
+        raise RuntimeError(f'Could not reach glassyplatform: {e}') from e
+    if resp.status_code != 200:
+        raise RuntimeError(f'glassyplatform returned HTTP {resp.status_code} for {url}')
+    try:
+        data = resp.json()
+    except ValueError as e:
+        raise RuntimeError(f'glassyplatform returned non-JSON: {e}') from e
+    if not isinstance(data, dict) or not isinstance(data.get('categories'), list):
+        raise RuntimeError('glassyplatform returned malformed categories payload')
+    _VETROVA_CATEGORIES_CACHE['data'] = data
+    _VETROVA_CATEGORIES_CACHE['expires_at'] = now + 90
+    return data
+
+
+def _fetch_vetrova_schema(slug):
+    """Per-category configurator schema. Cached per-slug for 90s so
+    switching between categories in the same form session doesn't
+    re-hit glassyplatform every click."""
+    import time, requests as req_lib
+    now = time.time()
+    entry = _VETROVA_SCHEMA_CACHE.get(slug)
+    if entry and entry.get('data') is not None and entry.get('expires_at', 0) > now:
+        return entry['data']
+    url = f'{_glassyplatform_base_url()}/api/vetrova/configurator-schema/{slug}'
+    try:
+        resp = req_lib.get(url, timeout=10)
+    except Exception as e:
+        raise RuntimeError(f'Could not reach glassyplatform: {e}') from e
+    if resp.status_code == 404:
+        raise RuntimeError(f'Unknown Vetrova category: {slug}')
+    if resp.status_code != 200:
+        raise RuntimeError(f'glassyplatform returned HTTP {resp.status_code} for {url}')
+    try:
+        data = resp.json()
+    except ValueError as e:
+        raise RuntimeError(f'glassyplatform returned non-JSON: {e}') from e
+    if not isinstance(data, dict) or 'steps' not in data:
+        raise RuntimeError('glassyplatform returned malformed schema payload')
+    _VETROVA_SCHEMA_CACHE[slug] = {'data': data, 'expires_at': now + 90}
+    return data
+
+
+def _mint_bd_vetrova_quote_ref():
+    """Mint a unique VQ-BD-NNNNN reference for a BD-created quote.
+    Retries on collision (should be exceedingly rare given the 5-digit
+    random tail and vcore's row count, but the DB unique index will
+    catch any repeat and we resample rather than crash the request)."""
+    import random
+    for _ in range(10):
+        candidate = f'VQ-BD-{random.randint(10000, 99999)}'
+        exists = VetrovaQuote.query.filter_by(quote_ref=candidate).first()
+        if exists is None:
+            return candidate
+    # Astronomically unlikely; escalate rather than hand back a duplicate.
+    raise RuntimeError('Could not mint a unique VQ-BD-NNNNN ref after 10 tries')
+
 @app.route('/api/vetrova/quotes/ingest', methods=['POST'])
 @limiter.limit("60 per minute")
 def vetrova_ingest():
@@ -9260,6 +9345,73 @@ def vetrova_ingest():
 
     return jsonify({'ok': True, 'id': quote.id, 'created': is_new,
                     'itemCount': len(runs_raw)}), 200
+
+
+@app.route('/quotes/vetrova/new', methods=['GET', 'POST'])
+@login_required
+def vetrova_quote_create():
+    """BD-driven Vetrova quote create. GET renders the form; POST persists
+    a VetrovaQuote + items with source='bd' and redirects to the view page.
+
+    The form is schema-driven — the category dropdown fetches
+    /api/vetrova/categories on load; picking a category fetches
+    /api/vetrova/configurator-schema/<slug> and renders the correct
+    step selects + dimensions grid via /quotes/vetrova/new/api/schema/<slug>
+    and /quotes/vetrova/new/api/price (JS-fronted proxies that keep this
+    session-authenticated and CORS-free).
+    """
+    if request.method == 'GET':
+        try:
+            cats = _fetch_vetrova_categories()
+        except RuntimeError as e:
+            app.logger.error(f'[vetrova/new GET] categories fetch failed: {e}')
+            flash(
+                'Could not load Vetrova categories from glassyplatform. '
+                f'Reason: {e}. Try again in a minute, or check that '
+                'platform.glassy.in is reachable.',
+                'danger',
+            )
+            return redirect(url_for('vetrova_quotes_list'))
+        return render_template(
+            'quotes/vetrova_new.html',
+            categories=cats.get('categories', []),
+            meta=cats.get('meta', {}),
+        )
+
+    # POST — save handler lands in a later commit (Phase 2e).
+    flash('Save is not wired yet — Phase 2e.', 'warning')
+    return redirect(url_for('vetrova_quote_create'))
+
+
+# JS-fronted proxies so the browser talks only to vcore (same origin,
+# session-authenticated). vcore's cached wrappers pass through to
+# glassyplatform. Keeps CORS out of the equation and gives us one
+# place to add rate-limiting / auth checks if the endpoints ever
+# stop being public on the glassyplatform side.
+
+@app.route('/quotes/vetrova/new/api/schema/<slug>', methods=['GET'])
+@login_required
+def vetrova_new_api_schema(slug):
+    try:
+        return jsonify(_fetch_vetrova_schema(slug))
+    except RuntimeError as e:
+        code = 404 if 'Unknown Vetrova category' in str(e) else 502
+        return jsonify({'error': str(e)}), code
+
+
+@app.route('/quotes/vetrova/new/api/price', methods=['POST'])
+@login_required
+def vetrova_new_api_price():
+    import requests as req_lib
+    try:
+        resp = req_lib.post(
+            f'{_glassyplatform_base_url()}/api/vetrova/price',
+            json=request.get_json(silent=True) or {},
+            timeout=10,
+        )
+    except Exception as e:
+        return jsonify({'error': f'upstream unreachable: {e}'}), 502
+    return (resp.text, resp.status_code, {'Content-Type': 'application/json'})
 
 
 @app.route('/quotes/vetrova')

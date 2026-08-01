@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}New Vetrova quote - VCore{% endblock %}
+{% block content %}
+
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb small mb-0">
+        <li class="breadcrumb-item"><a href="{{ url_for('vetrova_quotes_list') }}">Vetrova Quotes</a></li>
+        <li class="breadcrumb-item active">New</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+    <h2 class="mb-0"><i class="bi bi-plus-circle"></i> New Vetrova quote</h2>
+    <a href="{{ url_for('vetrova_quotes_list') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-x-circle"></i> Cancel
+    </a>
+</div>
+
+<div id="alertBox"></div>
+
+<form id="vqNewForm" method="POST" action="{{ url_for('vetrova_quote_create') }}" novalidate>
+  <div class="row g-4">
+    <div class="col-lg-7">
+      {# ── Customer ─────────────────────────────────────────────── #}
+      <div class="card mb-4">
+        <div class="card-header"><strong>Customer</strong></div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small text-muted">Name *</label>
+              <input class="form-control" name="customer_name" required maxlength="200">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-muted">Phone *</label>
+              <input class="form-control" name="phone" required maxlength="32">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-muted">Email</label>
+              <input class="form-control" type="email" name="email" maxlength="200">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-muted">Pincode</label>
+              <input class="form-control" name="pincode" maxlength="12">
+            </div>
+            <div class="col-md-12">
+              <label class="form-label small text-muted">Site address</label>
+              <textarea class="form-control" name="site_address" rows="2"></textarea>
+            </div>
+            <div class="col-md-12">
+              <label class="form-label small text-muted">Notes</label>
+              <textarea class="form-control" name="notes" rows="2" placeholder="Anything BD wants to remember about this deal"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Category picker ──────────────────────────────────────── #}
+      <div class="card mb-4">
+        <div class="card-header"><strong>Category</strong></div>
+        <div class="card-body">
+          <label class="form-label small text-muted">Vetrova category *</label>
+          <select class="form-select" id="vqCategory" name="category_slug" required>
+            <option value="">— Choose category —</option>
+            {% for c in categories %}
+              <option value="{{ c.slug }}"
+                      data-mode="{{ c.dimensionMode }}"
+                      data-persqft="{{ c.basePerSqft }}"
+                      data-install="{{ c.installFlat }}">
+                {{ c.name }}
+                {%- if c.hasSpecificPricing %} — from ₹{{ c.basePerSqft }}/sqft{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          <div class="form-text small mt-2">
+            Vetrova.in shows customers 17 configurable categories. Pick the same one
+            they're asking about — the form below will populate with the same
+            selection axes and pricing the storefront uses.
+          </div>
+        </div>
+      </div>
+
+      {# ── Schema-driven form (populated in Phase 2c) ───────────── #}
+      <div id="vqSchemaHost" class="mb-4" hidden>
+        <div class="card">
+          <div class="card-header"><strong id="vqSchemaTitle">Configuration</strong></div>
+          <div class="card-body">
+            <div id="vqSchemaBody" class="row g-3"></div>
+            <div class="text-muted small mt-3">
+              <em>Dimension inputs + live subtotal wire up in the next iteration.</em>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Summary sidebar (populated in Phase 2d) ────────────────── #}
+    <div class="col-lg-5">
+      <div class="card">
+        <div class="card-header"><strong>Summary</strong></div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Server-side subtotal from vetrova.in's pricing engine appears
+            here once a category is picked and dimensions are entered.
+          </p>
+          <dl class="row mb-0">
+            <dt class="col-6 text-muted small">Subtotal</dt>
+            <dd class="col-6 text-end fw-bold" id="vqSubtotal">—</dd>
+            <dt class="col-6 text-muted small">GST ({{ meta.gstPercent or 18 }}%)</dt>
+            <dd class="col-6 text-end" id="vqGst">—</dd>
+            <dt class="col-6 mt-2">Grand total</dt>
+            <dd class="col-6 text-end mt-2 fs-5 fw-bold" id="vqGrand">—</dd>
+          </dl>
+          <button type="submit" class="btn btn-primary w-100 mt-4" id="vqSaveBtn" disabled>
+            <i class="bi bi-check2-circle"></i> Save quote
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</form>
+
+<script>
+(function () {
+  const catSel = document.getElementById('vqCategory');
+  const host   = document.getElementById('vqSchemaHost');
+  const body   = document.getElementById('vqSchemaBody');
+  const title  = document.getElementById('vqSchemaTitle');
+
+  catSel.addEventListener('change', async () => {
+    const slug = catSel.value;
+    if (!slug) { host.hidden = true; return; }
+    // Schema-driven form + live subtotal come in Phase 2c/2d.
+    // Placeholder for now — proves the round-trip works end-to-end.
+    body.innerHTML = '<div class="col-12 text-muted small">Loading schema…</div>';
+    host.hidden = false;
+    title.textContent = catSel.options[catSel.selectedIndex].text.split('—')[0].trim();
+    try {
+      const r = await fetch(`{{ url_for('vetrova_new_api_schema', slug='__SLUG__') }}`.replace('__SLUG__', encodeURIComponent(slug)));
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const schema = await r.json();
+      body.innerHTML = `<div class="col-12 text-muted small">
+        Schema loaded — <strong>${schema.steps.length} step${schema.steps.length === 1 ? '' : 's'}</strong>,
+        mode <code>${schema.dimensionMode}</code>, base ₹${schema.base.perSqft}/sqft.
+        Full form renders in Phase 2c.
+      </div>`;
+    } catch (e) {
+      body.innerHTML = `<div class="col-12 text-danger small">Failed to load schema: ${e.message}</div>`;
+    }
+  });
+})();
+</script>
+
+{% endblock %}
