@@ -19,6 +19,12 @@
 <div id="alertBox"></div>
 
 <form id="vqNewForm" method="POST" action="{{ url_for('vetrova_quote_create') }}" novalidate>
+  {# The complete quote state is JSON-serialized into this hidden field
+     on submit — the server rebuilds selections/panels/dimensions from it.
+     Individual form fields above are unchanged for BD-familiar UX
+     (name/phone/email visible) and copied into the payload too. #}
+  <input type="hidden" name="state_json" id="vqStateJson">
+
   <div class="row g-4">
     <div class="col-lg-7">
       {# ── Customer ─────────────────────────────────────────────── #}
@@ -47,7 +53,7 @@
               <textarea class="form-control" name="site_address" rows="2"></textarea>
             </div>
             <div class="col-md-12">
-              <label class="form-label small text-muted">Notes</label>
+              <label class="form-label small text-muted">Notes (internal)</label>
               <textarea class="form-control" name="notes" rows="2" placeholder="Anything BD wants to remember about this deal"></textarea>
             </div>
           </div>
@@ -59,94 +65,398 @@
         <div class="card-header"><strong>Category</strong></div>
         <div class="card-body">
           <label class="form-label small text-muted">Vetrova category *</label>
-          <select class="form-select" id="vqCategory" name="category_slug" required>
+          <select class="form-select" id="vqCategory" required>
             <option value="">— Choose category —</option>
             {% for c in categories %}
-              <option value="{{ c.slug }}"
-                      data-mode="{{ c.dimensionMode }}"
-                      data-persqft="{{ c.basePerSqft }}"
-                      data-install="{{ c.installFlat }}">
+              <option value="{{ c.slug }}">
                 {{ c.name }}
                 {%- if c.hasSpecificPricing %} — from ₹{{ c.basePerSqft }}/sqft{% endif %}
               </option>
             {% endfor %}
           </select>
           <div class="form-text small mt-2">
-            Vetrova.in shows customers 17 configurable categories. Pick the same one
-            they're asking about — the form below will populate with the same
-            selection axes and pricing the storefront uses.
+            Vetrova.in offers 17 configurable categories. Pick the same one
+            the customer is asking about — the form below will populate with
+            the exact selection axes + pricing the storefront uses.
           </div>
         </div>
       </div>
 
-      {# ── Schema-driven form (populated in Phase 2c) ───────────── #}
+      {# ── Schema-driven configurator (populated by JS) ─────────── #}
       <div id="vqSchemaHost" class="mb-4" hidden>
         <div class="card">
-          <div class="card-header"><strong id="vqSchemaTitle">Configuration</strong></div>
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <strong id="vqSchemaTitle">Configuration</strong>
+            <span class="small text-muted" id="vqDimBadge"></span>
+          </div>
           <div class="card-body">
-            <div id="vqSchemaBody" class="row g-3"></div>
-            <div class="text-muted small mt-3">
-              <em>Dimension inputs + live subtotal wire up in the next iteration.</em>
+            <div id="vqStepsBox" class="row g-3 mb-3"></div>
+            <hr class="my-3">
+            <div id="vqDimBox"></div>
+            <div class="row g-3 mt-1">
+              <div class="col-md-6">
+                <label class="form-label small text-muted">Fabric code (optional)</label>
+                <input class="form-control form-control-sm" id="vqFabric" placeholder="e.g. FAB-042 — customer-supplied print/pattern">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small text-muted">Line-item notes (optional)</label>
+                <input class="form-control form-control-sm" id="vqLineNotes" placeholder="Anything BD wants to note about this configuration">
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    {# ── Summary sidebar (populated in Phase 2d) ────────────────── #}
+    {# ── Summary sidebar ──────────────────────────────────────────── #}
     <div class="col-lg-5">
-      <div class="card">
-        <div class="card-header"><strong>Summary</strong></div>
+      <div class="card sticky-top" style="top: 12px">
+        <div class="card-header"><strong>Live estimate</strong></div>
         <div class="card-body">
-          <p class="text-muted small mb-3">
+          <p class="text-muted small mb-3" id="vqSummaryHint">
             Server-side subtotal from vetrova.in's pricing engine appears
             here once a category is picked and dimensions are entered.
           </p>
-          <dl class="row mb-0">
-            <dt class="col-6 text-muted small">Subtotal</dt>
-            <dd class="col-6 text-end fw-bold" id="vqSubtotal">—</dd>
+          <dl class="row mb-0" id="vqSummaryTable" hidden>
+            <dt class="col-6 text-muted small">Total area</dt>
+            <dd class="col-6 text-end" id="vqSqft">—</dd>
+            <dt class="col-6 text-muted small">Rate</dt>
+            <dd class="col-6 text-end" id="vqRate">—</dd>
+            <dt class="col-6 text-muted small">Material</dt>
+            <dd class="col-6 text-end" id="vqMaterial">—</dd>
+            <dt class="col-6 text-muted small">Install</dt>
+            <dd class="col-6 text-end" id="vqInstall">—</dd>
+            <dt class="col-6 text-muted small">Surcharges</dt>
+            <dd class="col-6 text-end" id="vqSurcharge">—</dd>
+            <dt class="col-6 mt-2">Subtotal</dt>
+            <dd class="col-6 text-end mt-2 fw-bold" id="vqSubtotal">—</dd>
             <dt class="col-6 text-muted small">GST ({{ meta.gstPercent or 18 }}%)</dt>
             <dd class="col-6 text-end" id="vqGst">—</dd>
             <dt class="col-6 mt-2">Grand total</dt>
-            <dd class="col-6 text-end mt-2 fs-5 fw-bold" id="vqGrand">—</dd>
+            <dd class="col-6 text-end mt-2 fs-5 fw-bold text-primary" id="vqGrand">—</dd>
           </dl>
           <button type="submit" class="btn btn-primary w-100 mt-4" id="vqSaveBtn" disabled>
             <i class="bi bi-check2-circle"></i> Save quote
           </button>
+          <div class="small text-muted mt-2 text-center" id="vqSaveHint">
+            Pick a category + enter dimensions to enable Save.
+          </div>
         </div>
       </div>
     </div>
   </div>
 </form>
 
+{# ── Templates for JS-cloned rows ──────────────────────────────── #}
+<template id="vqPanelRowTpl">
+  <div class="row g-2 mb-2 vq-prow align-items-end">
+    <div class="col-3">
+      <label class="form-label small text-muted mb-0">Width (ft)</label>
+      <input type="number" step="0.01" min="0" class="form-control form-control-sm vq-pw" placeholder="e.g. 4.5">
+    </div>
+    <div class="col-3">
+      <label class="form-label small text-muted mb-0">Height (ft)</label>
+      <input type="number" step="0.01" min="0" class="form-control form-control-sm vq-ph" placeholder="e.g. 6">
+    </div>
+    <div class="col-3">
+      <label class="form-label small text-muted mb-0">Qty</label>
+      <input type="number" step="1" min="1" value="1" class="form-control form-control-sm vq-pq">
+    </div>
+    <div class="col-3">
+      <button type="button" class="btn btn-outline-danger btn-sm vq-prow-del w-100">
+        <i class="bi bi-x-circle"></i> Remove
+      </button>
+    </div>
+  </div>
+</template>
+
 <script>
 (function () {
-  const catSel = document.getElementById('vqCategory');
-  const host   = document.getElementById('vqSchemaHost');
-  const body   = document.getElementById('vqSchemaBody');
-  const title  = document.getElementById('vqSchemaTitle');
+  // ── Endpoint URLs — placeholders swapped at fetch time ──
+  const SCHEMA_URL = "{{ url_for('vetrova_new_api_schema', slug='__SLUG__') }}";
+  const PRICE_URL  = "{{ url_for('vetrova_new_api_price') }}";
 
+  const $ = (id) => document.getElementById(id);
+  const catSel  = $('vqCategory');
+  const host    = $('vqSchemaHost');
+  const title   = $('vqSchemaTitle');
+  const dimBadge= $('vqDimBadge');
+  const stepsBox= $('vqStepsBox');
+  const dimBox  = $('vqDimBox');
+  const fabricI = $('vqFabric');
+  const notesI  = $('vqLineNotes');
+  const saveBtn = $('vqSaveBtn');
+  const saveHint= $('vqSaveHint');
+  const sumHint = $('vqSummaryHint');
+  const sumTable= $('vqSummaryTable');
+  const stateJsonI = $('vqStateJson');
+
+  // ── State — single source of truth for the whole form ──
+  const state = {
+    schema:     null,   // full schema response from Phase 1b
+    slug:       '',     // current category slug
+    selections: {},     // stepKey → optionValue
+    panels:     [],     // [{widthFt, heightFt, qty}] when mode=panels
+    totalSqft:  '',
+    runningFt:  '',
+    qty:        1,
+    fabricCode: '',
+    lineNotes:  '',
+    lastPrice:  null,   // last successful /price response.breakdown
+  };
+
+  // ── Schema fetch ───────────────────────────────────────
   catSel.addEventListener('change', async () => {
     const slug = catSel.value;
-    if (!slug) { host.hidden = true; return; }
-    // Schema-driven form + live subtotal come in Phase 2c/2d.
-    // Placeholder for now — proves the round-trip works end-to-end.
-    body.innerHTML = '<div class="col-12 text-muted small">Loading schema…</div>';
+    if (!slug) {
+      state.schema = null; state.slug = '';
+      host.hidden = true;
+      saveBtn.disabled = true;
+      saveHint.textContent = 'Pick a category + enter dimensions to enable Save.';
+      return;
+    }
+    state.slug = slug;
+    state.selections = {};
+    state.panels = [{ widthFt: '', heightFt: '', qty: 1 }];
+    state.totalSqft = '';
+    state.runningFt = '';
+    stepsBox.innerHTML = '<div class="col-12 text-muted small">Loading schema…</div>';
+    dimBox.innerHTML = '';
     host.hidden = false;
-    title.textContent = catSel.options[catSel.selectedIndex].text.split('—')[0].trim();
     try {
-      const r = await fetch(`{{ url_for('vetrova_new_api_schema', slug='__SLUG__') }}`.replace('__SLUG__', encodeURIComponent(slug)));
+      const r = await fetch(SCHEMA_URL.replace('__SLUG__', encodeURIComponent(slug)));
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const schema = await r.json();
-      body.innerHTML = `<div class="col-12 text-muted small">
-        Schema loaded — <strong>${schema.steps.length} step${schema.steps.length === 1 ? '' : 's'}</strong>,
-        mode <code>${schema.dimensionMode}</code>, base ₹${schema.base.perSqft}/sqft.
-        Full form renders in Phase 2c.
-      </div>`;
+      state.schema = await r.json();
+      title.textContent = state.schema.name || slug;
+      dimBadge.textContent = `${state.schema.dimensionMode} · ₹${state.schema.base.perSqft}/sqft base`;
+      renderSteps();
+      renderDimensions();
+      schedulePrice();
     } catch (e) {
-      body.innerHTML = `<div class="col-12 text-danger small">Failed to load schema: ${e.message}</div>`;
+      stepsBox.innerHTML = `<div class="col-12 text-danger small">Failed to load schema: ${e.message}</div>`;
+      dimBadge.textContent = '';
     }
   });
+
+  // ── Steps render ───────────────────────────────────────
+  function renderSteps() {
+    const steps = state.schema.steps || [];
+    if (!steps.length) {
+      stepsBox.innerHTML = `<div class="col-12">
+        <div class="alert alert-info small mb-0">
+          This category doesn't have any option axes configured — enter
+          the dimensions below and the quote will use the category's
+          base rate directly.
+        </div></div>`;
+      return;
+    }
+    const html = steps.map((s) => `
+      <div class="col-md-6">
+        <label class="form-label small text-muted">${escapeHtml(s.label)}</label>
+        <select class="form-select form-select-sm vq-step" data-key="${escapeHtml(s.key)}">
+          <option value="">— None —</option>
+          ${s.options.map((o) => {
+            const surchargeLabel = o.surcharge > 0 ? ` (+₹${o.surcharge})` : '';
+            return `<option value="${escapeHtml(o.value)}" data-label="${escapeHtml(o.label)}">${escapeHtml(o.label)}${surchargeLabel}</option>`;
+          }).join('')}
+        </select>
+      </div>
+    `).join('');
+    stepsBox.innerHTML = html;
+    stepsBox.querySelectorAll('.vq-step').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const key = sel.dataset.key;
+        state.selections[key] = sel.value || null;
+        schedulePrice();
+      });
+    });
+  }
+
+  // ── Dimensions render ──────────────────────────────────
+  function renderDimensions() {
+    const mode = state.schema.dimensionMode;
+    if (mode === 'panels') {
+      dimBox.innerHTML = `
+        <label class="form-label small text-muted mb-2">Panels *</label>
+        <div id="vqPanels"></div>
+        <button type="button" class="btn btn-outline-primary btn-sm mt-2" id="vqAddPanel">
+          <i class="bi bi-plus-circle"></i> Add panel
+        </button>`;
+      renderPanels();
+      $('vqAddPanel').addEventListener('click', () => {
+        state.panels.push({ widthFt: '', heightFt: '', qty: 1 });
+        renderPanels();
+      });
+    } else if (mode === 'runningFt') {
+      dimBox.innerHTML = `
+        <label class="form-label small text-muted">Running feet *</label>
+        <div class="row g-2">
+          <div class="col-6"><input type="number" step="0.01" min="0" class="form-control" id="vqRft" placeholder="e.g. 22"></div>
+          <div class="col-6">
+            <label class="form-label small text-muted mb-0">Runs (qty)</label>
+            <input type="number" step="1" min="1" value="1" class="form-control form-control-sm" id="vqQty">
+          </div>
+        </div>`;
+      $('vqRft').addEventListener('input', (e) => { state.runningFt = e.target.value; schedulePrice(); });
+      $('vqQty').addEventListener('input', (e) => { state.qty = e.target.value; schedulePrice(); });
+    } else {
+      // 'sqft' and 'openingType' both reduce to a plain area entry.
+      const isOpening = mode === 'openingType';
+      dimBox.innerHTML = `
+        <label class="form-label small text-muted">${isOpening ? 'Total window area (sqft) *' : 'Total area (sqft) *'}</label>
+        <div class="row g-2">
+          <div class="col-6"><input type="number" step="0.01" min="0" class="form-control" id="vqSqftIn" placeholder="e.g. 32"></div>
+          <div class="col-6">
+            <label class="form-label small text-muted mb-0">Qty (units)</label>
+            <input type="number" step="1" min="1" value="1" class="form-control form-control-sm" id="vqQty">
+          </div>
+        </div>`;
+      $('vqSqftIn').addEventListener('input', (e) => { state.totalSqft = e.target.value; schedulePrice(); });
+      $('vqQty').addEventListener('input', (e) => { state.qty = e.target.value; schedulePrice(); });
+    }
+  }
+
+  function renderPanels() {
+    const panelsHost = $('vqPanels');
+    panelsHost.innerHTML = '';
+    const tpl = $('vqPanelRowTpl').content;
+    state.panels.forEach((p, idx) => {
+      const row = tpl.cloneNode(true).querySelector('.vq-prow');
+      row.querySelector('.vq-pw').value = p.widthFt;
+      row.querySelector('.vq-ph').value = p.heightFt;
+      row.querySelector('.vq-pq').value = p.qty;
+      row.querySelector('.vq-pw').addEventListener('input', (e) => { state.panels[idx].widthFt  = e.target.value; schedulePrice(); });
+      row.querySelector('.vq-ph').addEventListener('input', (e) => { state.panels[idx].heightFt = e.target.value; schedulePrice(); });
+      row.querySelector('.vq-pq').addEventListener('input', (e) => { state.panels[idx].qty     = e.target.value; schedulePrice(); });
+      row.querySelector('.vq-prow-del').addEventListener('click', () => {
+        if (state.panels.length <= 1) { alert('Keep at least one panel.'); return; }
+        state.panels.splice(idx, 1);
+        renderPanels();
+        schedulePrice();
+      });
+      panelsHost.appendChild(row);
+    });
+  }
+
+  fabricI.addEventListener('input', (e) => { state.fabricCode = e.target.value; });
+  notesI.addEventListener('input',  (e) => { state.lineNotes  = e.target.value; });
+
+  // ── Live price (debounced 250ms) ──────────────────────
+  let priceTimer = null;
+  function schedulePrice() {
+    if (!state.schema) return;
+    clearTimeout(priceTimer);
+    priceTimer = setTimeout(fetchPrice, 250);
+  }
+
+  async function fetchPrice() {
+    if (!state.schema) return;
+    // Only price when there's at least SOMETHING to price.
+    const mode = state.schema.dimensionMode;
+    const nothingEntered = (
+      (mode === 'panels' && !state.panels.some((p) => Number(p.widthFt) > 0 && Number(p.heightFt) > 0)) ||
+      (mode === 'sqft' && !(Number(state.totalSqft) > 0)) ||
+      (mode === 'runningFt' && !(Number(state.runningFt) > 0)) ||
+      (mode === 'openingType' && !(Number(state.totalSqft) > 0))
+    );
+    if (nothingEntered) {
+      sumTable.hidden = true;
+      sumHint.hidden = false;
+      saveBtn.disabled = true;
+      saveHint.textContent = 'Enter dimensions to see live estimate.';
+      return;
+    }
+
+    const selections = Object.entries(state.selections)
+      .filter(([, v]) => v)
+      .map(([stepId, optionId]) => {
+        const step = state.schema.steps.find((s) => s.key === stepId);
+        const opt  = step ? step.options.find((o) => o.value === optionId) : null;
+        return {
+          stepId,
+          stepLabel:   step ? step.label : stepId,
+          optionId,
+          optionLabel: opt ? opt.label : optionId,
+        };
+      });
+
+    const body = {
+      categorySlug:  state.slug,
+      dimensionMode: mode,
+      panels:        mode === 'panels' ? state.panels.map((p) => ({
+                       widthFt: Number(p.widthFt) || 0,
+                       heightFt: Number(p.heightFt) || 0,
+                       qty: Math.max(1, Number(p.qty) || 1),
+                     })).filter((p) => p.widthFt > 0 && p.heightFt > 0) : [],
+      totalSqft:     Number(state.totalSqft) || 0,
+      runningFt:     Number(state.runningFt) || 0,
+      qty:           Math.max(1, Number(state.qty) || 1),
+      selections,
+    };
+
+    try {
+      const r = await fetch(PRICE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      state.lastPrice = data.breakdown;
+      updateSummary(data);
+    } catch (e) {
+      sumHint.textContent = `Live pricing failed: ${e.message}. Enter values again to retry.`;
+      sumHint.hidden = false;
+      sumTable.hidden = true;
+      saveBtn.disabled = true;
+    }
+  }
+
+  function updateSummary(data) {
+    const b = data.breakdown;
+    $('vqSqft').textContent      = `${b.sqft.toFixed(2)} sqft`;
+    $('vqRate').textContent      = `₹${b.perSqft.toLocaleString('en-IN')}/sqft`;
+    $('vqMaterial').textContent  = `₹${b.materialTotal.toLocaleString('en-IN')}`;
+    $('vqInstall').textContent   = `₹${b.installTotal.toLocaleString('en-IN')}`;
+    $('vqSurcharge').textContent = `₹${b.surchargeTotal.toLocaleString('en-IN')}`;
+    $('vqSubtotal').textContent  = data.display.subtotal;
+    $('vqGst').textContent       = data.display.gst;
+    $('vqGrand').textContent     = data.display.grandTotal;
+    sumTable.hidden = false;
+    sumHint.hidden  = true;
+    saveBtn.disabled = false;
+    saveHint.textContent = 'Save creates a Vetrova quote in vcore with this configuration.';
+  }
+
+  // ── Submit — serialize entire state into hidden field ──
+  $('vqNewForm').addEventListener('submit', (e) => {
+    if (!state.lastPrice || !state.schema) {
+      e.preventDefault();
+      alert('Pick a category + enter dimensions before saving.');
+      return;
+    }
+    stateJsonI.value = JSON.stringify({
+      slug:          state.slug,
+      categoryName:  state.schema.name,
+      dimensionMode: state.schema.dimensionMode,
+      selections:    state.selections,
+      panels:        state.panels,
+      totalSqft:     state.totalSqft,
+      runningFt:     state.runningFt,
+      qty:           state.qty,
+      fabricCode:    state.fabricCode,
+      lineNotes:     state.lineNotes,
+      breakdown:     state.lastPrice,   // server verifies by re-pricing; this is BD's snapshot
+    });
+  });
+
+  function escapeHtml(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
 })();
 </script>
 

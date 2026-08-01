@@ -9378,9 +9378,143 @@ def vetrova_quote_create():
             meta=cats.get('meta', {}),
         )
 
-    # POST — save handler lands in a later commit (Phase 2e).
-    flash('Save is not wired yet — Phase 2e.', 'warning')
-    return redirect(url_for('vetrova_quote_create'))
+    # ── POST — persist the BD-built quote ──
+    form = request.form
+    customer_name = (form.get('customer_name') or '').strip()
+    phone = (form.get('phone') or '').strip()
+    if not customer_name or not phone:
+        flash('Customer name and phone are required.', 'danger')
+        return redirect(url_for('vetrova_quote_create'))
+
+    raw_state = (form.get('state_json') or '').strip()
+    if not raw_state:
+        flash('Configuration missing — pick a category and enter dimensions first.', 'danger')
+        return redirect(url_for('vetrova_quote_create'))
+    try:
+        state = json.loads(raw_state)
+    except Exception:
+        flash('Form payload was malformed — refresh and try again.', 'danger')
+        return redirect(url_for('vetrova_quote_create'))
+
+    slug = (state.get('slug') or '').strip().lower()
+    if not slug:
+        flash('Category missing from configuration.', 'danger')
+        return redirect(url_for('vetrova_quote_create'))
+
+    # ── Server-side re-price via the same /api/vetrova/price endpoint the
+    # JS uses, so the stored subtotal is canonical even if BD's browser
+    # was tampered / stale. The client sends its own snapshot in
+    # state.breakdown; we ignore it entirely and use what the server
+    # returns here as truth.
+    import requests as req_lib
+    price_body = {
+        'categorySlug':  slug,
+        'dimensionMode': state.get('dimensionMode') or 'sqft',
+        'panels':        state.get('panels') or [],
+        'totalSqft':     state.get('totalSqft') or 0,
+        'runningFt':     state.get('runningFt') or 0,
+        'qty':           state.get('qty') or 1,
+        'selections': [
+            {
+                'stepId':      k,
+                'stepLabel':   k,
+                'optionId':    v,
+                'optionLabel': v,
+            } for k, v in (state.get('selections') or {}).items() if v
+        ],
+    }
+    try:
+        pr = req_lib.post(
+            f'{_glassyplatform_base_url()}/api/vetrova/price',
+            json=price_body, timeout=15,
+        )
+        pr.raise_for_status()
+        priced = pr.json()
+    except Exception as e:
+        app.logger.error(f'[vetrova/new POST] price fetch failed: {e}')
+        flash(f'Could not re-verify pricing with vetrova.in: {e}. Quote NOT saved.', 'danger')
+        return redirect(url_for('vetrova_quote_create'))
+
+    breakdown = priced.get('breakdown') or {}
+    subtotal = float(breakdown.get('subtotal') or 0)
+    if subtotal <= 0:
+        flash('Priced subtotal is ₹0 — dimensions may be empty. Fix and re-save.', 'danger')
+        return redirect(url_for('vetrova_quote_create'))
+
+    # ── Build DB rows ──
+    try:
+        quote_ref = _mint_bd_vetrova_quote_ref()
+    except RuntimeError as e:
+        flash(f'Could not mint quote ref: {e}. Try again.', 'danger')
+        return redirect(url_for('vetrova_quote_create'))
+
+    category_label = (state.get('categoryName') or slug).strip()
+    dimension_mode = state.get('dimensionMode') or 'sqft'
+    dimension_kind = ('square_feet' if dimension_mode != 'runningFt' else 'running_feet')
+    total_units = float(breakdown.get('sqft') or 0)
+    per_unit = float(breakdown.get('perSqft') or 0)
+
+    quote = VetrovaQuote(
+        quote_ref=quote_ref,
+        external_id=quote_ref,   # BD-created → no external system, mirror ref
+        source='bd',
+        stage='in_pipeline',     # BD is already working it; skip quote_generated
+        category_slug=slug,
+        category_label=category_label,
+        customer_name=customer_name,
+        phone=phone,
+        email=(form.get('email') or '').strip() or None,
+        pincode=(form.get('pincode') or '').strip() or None,
+        site_address=(form.get('site_address') or '').strip() or None,
+        notes=(form.get('notes') or '').strip() or None,
+        selections=json.dumps(state.get('selections') or {}) if state.get('selections') else None,
+        running_ft=total_units,
+        quantity=int(state.get('qty') or 1),
+        total=subtotal,
+    )
+    db.session.add(quote)
+    db.session.flush()  # get quote.id for item
+
+    item = VetrovaQuoteItem(
+        quote_id=quote.id,
+        sort_order=1,
+        category_slug=slug,
+        category_label=category_label,
+        selections=json.dumps(state.get('selections') or {}) if state.get('selections') else None,
+        dimension_kind=dimension_kind,
+        dimension_unit='ft',
+        running_ft=total_units,
+        quantity=int(state.get('qty') or 1),
+        panels=json.dumps(state.get('panels') or []) if state.get('panels') else None,
+        fabric_code=(state.get('fabricCode') or None),
+        rate_per_unit=per_unit,
+        subtotal=subtotal,
+        notes=(state.get('lineNotes') or None),
+    )
+    db.session.add(item)
+
+    # Audit event so the view page's timeline shows who created the quote.
+    db.session.add(VetrovaStatusEvent(
+        quote_id=quote.id,
+        from_stage=None,
+        to_stage='in_pipeline',
+        note=f'BD-created via /quotes/vetrova/new (₹{subtotal:,.2f} subtotal).',
+        channel='none',
+        send_status='skipped',
+        triggered_by=current_user.id,
+    ))
+
+    try:
+        quote.recompute_totals()
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'[vetrova/new POST] commit failed: {e}')
+        flash(f'Save failed: {e}', 'danger')
+        return redirect(url_for('vetrova_quote_create'))
+
+    flash(f'Created {quote_ref} for {customer_name}.', 'success')
+    return redirect(url_for('vetrova_quote_view', id=quote.id))
 
 
 # JS-fronted proxies so the browser talks only to vcore (same origin,
