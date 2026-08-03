@@ -98,6 +98,19 @@ def _first_name_only(recipient) -> list[str]:
     return [first]
 
 
+def _glassy_reminder_vars(recipient) -> list[str]:
+    """Body-variable builder for the 4-days-no-reply reminder template
+    (`glassy_onboarding_reminder`). Same var shape as
+    `glassy_onboarding_yes_reply`: {{1}} = listing_url. Fired by the
+    `bulk_send_glassy_reminders_run` admin route (send-once
+    enforcement is in the eligibility query, not here)."""
+    rid = getattr(recipient, 'id', None)
+    url = (getattr(recipient, 'listing_url', None) or '').strip()
+    if not url:
+        raise MissingVariable('listing_url', rid)
+    return [url]
+
+
 def _glassy_yes_reply_vars(recipient) -> list[str]:
     """Body-variable builder for the auto-response fired when a bulk
     contact taps YES on `glassy_onboarding_invite`. Template body:
@@ -203,6 +216,19 @@ LEAD_TEMPLATES: list[LeadTemplate] = [
         needs_document=False,
         body_var_count=1,
         var_builder=_glassy_yes_reply_vars,
+    ),
+    LeadTemplate(
+        # 4-days-no-reply nudge. Fired by /bulk-send/glassy-reminders/run
+        # (admin-only). Send-once guaranteed by the eligibility query
+        # itself — the SQL NOT EXISTS clauses ensure this template is
+        # never sent twice to the same contact. Registered here for
+        # reporting completeness.
+        name="glassy_onboarding_reminder",
+        label="Glassy Directory 4-day nudge (auto)",
+        language="en",
+        needs_document=False,
+        body_var_count=1,
+        var_builder=_glassy_reminder_vars,
     ),
 ]
 

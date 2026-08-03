@@ -4796,6 +4796,135 @@ def bulk_send_toggle_opt_out(id):
     return redirect(url_for('bulk_send_view', id=id))
 
 
+@app.route('/bulk-send/glassy-reminders/run', methods=['POST'])
+@admin_required
+def bulk_send_glassy_reminders_run():
+    """Fire the 4-day-no-reply reminder to Glassy directory contacts.
+
+    Sends `glassy_onboarding_reminder` (template on the Vtspl WABA) to
+    every BulkContact that:
+      - received `glassy_onboarding_invite` at least 4 days ago
+      - has never replied to us
+      - has NOT already received the reminder (send-once guarantee)
+      - is not opted out
+      - has a non-empty listing_url
+
+    Intended to run daily from an external scheduler (EventBridge cron,
+    Zapier, or a curl loop). BD can also click it manually from the
+    Bulk Send screen — the sends and skips are itemised in the JSON
+    response so it's obvious what happened.
+
+    Response shape:
+        {
+          "success": true,
+          "eligible": <int>,
+          "sent": <int>,
+          "failed": <int>,
+          "skipped_missing_url": <int>,
+          "failures": [{contact_id, name, error}]
+        }
+    """
+    from models import BulkContact, WhatsAppMessage
+    from utils.whatsapp import send_template, normalize_phone
+    from datetime import datetime as _dt, timedelta as _td
+
+    cutoff = _dt.utcnow() - _td(days=4)
+
+    # 4+ days old outbound invites that had no reply AND no reminder yet.
+    # Two NOT EXISTS clauses stay in SQL so the whole eligibility check
+    # is one query — the 300-contact scale doesn't need optimisation
+    # gymnastics, but the pattern generalises if the list grows.
+    invite_alias = db.aliased(WhatsAppMessage)
+    reply_alias  = db.aliased(WhatsAppMessage)
+    reminder_alias = db.aliased(WhatsAppMessage)
+
+    eligible = (
+        db.session.query(BulkContact, invite_alias.sent_at.label('invite_sent_at'))
+        .join(invite_alias, invite_alias.bulk_contact_id == BulkContact.id)
+        .filter(invite_alias.template_name == 'glassy_onboarding_invite')
+        .filter(invite_alias.direction == 'out')
+        .filter(invite_alias.sent_at <= cutoff)
+        .filter(BulkContact.is_opted_out == False)  # noqa: E712
+        .filter(~db.exists().where(
+            (reply_alias.bulk_contact_id == BulkContact.id) &
+            (reply_alias.direction == 'in')
+        ))
+        .filter(~db.exists().where(
+            (reminder_alias.bulk_contact_id == BulkContact.id) &
+            (reminder_alias.template_name == 'glassy_onboarding_reminder') &
+            (reminder_alias.direction == 'out')
+        ))
+        .all()
+    )
+
+    sent = 0
+    failed = 0
+    skipped_missing_url = 0
+    failures = []
+
+    for contact, invite_sent_at in eligible:
+        listing_url = (getattr(contact, 'listing_url', '') or '').strip()
+        if not listing_url:
+            skipped_missing_url += 1
+            continue
+
+        to_number = normalize_phone(contact.phone) or contact.phone
+        variables = [listing_url]
+
+        msg_row = WhatsAppMessage(
+            bulk_contact_id=contact.id,
+            direction='out',
+            to_number=to_number,
+            template_name='glassy_onboarding_reminder',
+            language='en',
+            variables_json=json.dumps(variables),
+            sent_by=current_user.id,
+            status='queued',
+        )
+        db.session.add(msg_row)
+        db.session.flush()
+
+        result = send_template(
+            to=contact.phone,
+            template_name='glassy_onboarding_reminder',
+            language='en',
+            variables=variables,
+        )
+        if result.get('success'):
+            msg_row.wamid = result.get('wamid')
+            msg_row.status = 'sent'
+            sent += 1
+        else:
+            msg_row.status = 'failed'
+            msg_row.error_message = (result.get('error') or 'unknown')[:1000]
+            failed += 1
+            failures.append({
+                'contact_id': contact.id,
+                'name': contact.name,
+                'error': result.get('error') or 'unknown',
+            })
+
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'[glassy-reminders] commit failed: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+    app.logger.info(
+        f'[glassy-reminders] eligible={len(eligible)} sent={sent} '
+        f'failed={failed} skipped_missing_url={skipped_missing_url}'
+    )
+    return jsonify({
+        'success': True,
+        'eligible': len(eligible),
+        'sent': sent,
+        'failed': failed,
+        'skipped_missing_url': skipped_missing_url,
+        'failures': failures[:50],
+    })
+
+
 @app.route('/bulk-send/bulk-send-template', methods=['POST'])
 @login_required
 def bulk_send_bulk_template():
