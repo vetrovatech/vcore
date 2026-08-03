@@ -4801,7 +4801,7 @@ def bulk_send_toggle_opt_out(id):
 def bulk_send_glassy_reminders_run():
     """Fire the 4-day-no-reply reminder to Glassy directory contacts.
 
-    Sends `glassy_onboarding_reminder` (template on the Vtspl WABA) to
+    Sends `glassy_directory_reminder` (template on the Vtspl WABA) to
     every BulkContact that:
       - received `glassy_onboarding_invite` at least 4 days ago
       - has never replied to us
@@ -4851,7 +4851,7 @@ def bulk_send_glassy_reminders_run():
         ))
         .filter(~db.exists().where(
             (reminder_alias.bulk_contact_id == BulkContact.id) &
-            (reminder_alias.template_name == 'glassy_onboarding_reminder') &
+            (reminder_alias.template_name == 'glassy_directory_reminder') &
             (reminder_alias.direction == 'out')
         ))
         .all()
@@ -4875,7 +4875,7 @@ def bulk_send_glassy_reminders_run():
             bulk_contact_id=contact.id,
             direction='out',
             to_number=to_number,
-            template_name='glassy_onboarding_reminder',
+            template_name='glassy_directory_reminder',
             language='en',
             variables_json=json.dumps(variables),
             sent_by=current_user.id,
@@ -4886,7 +4886,7 @@ def bulk_send_glassy_reminders_run():
 
         result = send_template(
             to=contact.phone,
-            template_name='glassy_onboarding_reminder',
+            template_name='glassy_directory_reminder',
             language='en',
             variables=variables,
         )
@@ -5358,7 +5358,13 @@ def _maybe_auto_reply_glassy_yes(msg: dict, body_text: str, bulk_contact) -> Non
     if not context_wamid:
         return
     parent = WhatsAppMessage.query.filter_by(wamid=context_wamid, direction='out').first()
-    if not parent or parent.template_name != 'glassy_onboarding_invite':
+    # Accept YES taps on either the invite (Day 0) OR the reminder
+    # (Day 4+) — both templates carry the same Yes/Not-Interested
+    # buttons, and the contact might act on either.
+    if not parent or parent.template_name not in (
+        'glassy_onboarding_invite',
+        'glassy_directory_reminder',
+    ):
         return
 
     # Guard against double-sends — if we already fired the follow-up to

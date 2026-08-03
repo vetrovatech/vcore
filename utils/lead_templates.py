@@ -100,7 +100,7 @@ def _first_name_only(recipient) -> list[str]:
 
 def _glassy_reminder_vars(recipient) -> list[str]:
     """Body-variable builder for the 4-days-no-reply reminder template
-    (`glassy_onboarding_reminder`). Same var shape as
+    (`glassy_directory_reminder`). Same var shape as
     `glassy_onboarding_yes_reply`: {{1}} = listing_url. Fired by the
     `bulk_send_glassy_reminders_run` admin route (send-once
     enforcement is in the eligibility query, not here)."""
@@ -223,7 +223,7 @@ LEAD_TEMPLATES: list[LeadTemplate] = [
         # itself — the SQL NOT EXISTS clauses ensure this template is
         # never sent twice to the same contact. Registered here for
         # reporting completeness.
-        name="glassy_onboarding_reminder",
+        name="glassy_directory_reminder",
         label="Glassy Directory 4-day nudge (auto)",
         language="en",
         needs_document=False,
