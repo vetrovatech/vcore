@@ -5193,6 +5193,108 @@ def _handle_inbound_message(msg: dict, meta_from: str, contact_name: str = None)
     )
     db.session.add(row)
 
+    # ── Auto-response: Glassy directory "Yes" quick-reply ─────────────
+    # When an imported bulk contact taps "Yes" on the
+    # glassy_onboarding_invite template, fire the follow-up
+    # glassy_onboarding_yes_reply carrying their personalised website
+    # snippet (listing_url as {{1}}). Fires once per inbound "Yes";
+    # subsequent taps by the same contact are ignored (any prior
+    # outbound of the same template_name to them counts as "already
+    # responded"). Failures are logged, never raised — the primary
+    # inbound persistence must not depend on the reply landing.
+    try:
+        _maybe_auto_reply_glassy_yes(msg, body_text, bulk_contact)
+    except Exception as e:
+        app.logger.error(f'[whatsapp-webhook] glassy auto-reply failed: {e}')
+
+
+def _maybe_auto_reply_glassy_yes(msg: dict, body_text: str, bulk_contact) -> None:
+    """Send glassy_onboarding_yes_reply if the inbound is a `Yes` button
+    tap on a glassy_onboarding_invite send. No-op otherwise."""
+    from models import WhatsAppMessage, BulkContact  # noqa: F401
+    from utils.whatsapp import send_template, normalize_phone
+
+    if bulk_contact is None or not body_text:
+        return
+    # Only fire on button-tap-style replies with title "Yes" (Meta packs
+    # the tap under interactive.button_reply.title; the parent handler
+    # already lifts it into body_text).
+    if body_text.strip().lower() != 'yes':
+        return
+    # Confirm the reply is CONTEXTUAL to a previous glassy_onboarding_invite
+    # send — otherwise a naked "Yes" from a contact who never got the
+    # invite could trigger a phantom follow-up. Meta gives us the source
+    # wamid on msg.context.id.
+    context_wamid = ((msg.get('context') or {}).get('id') or '').strip()
+    if not context_wamid:
+        return
+    parent = WhatsAppMessage.query.filter_by(wamid=context_wamid, direction='out').first()
+    if not parent or parent.template_name != 'glassy_onboarding_invite':
+        return
+
+    # Guard against double-sends — if we already fired the follow-up to
+    # this contact, don't fire again (they may tap Yes twice).
+    already = (WhatsAppMessage.query
+               .filter_by(bulk_contact_id=bulk_contact.id,
+                          template_name='glassy_onboarding_yes_reply',
+                          direction='out')
+               .first())
+    if already:
+        app.logger.info(
+            f'[whatsapp-webhook] glassy Yes-reply already sent to bulk_contact '
+            f'{bulk_contact.id}; skipping duplicate'
+        )
+        return
+
+    listing_url = (getattr(bulk_contact, 'listing_url', '') or '').strip()
+    if not listing_url:
+        app.logger.warning(
+            f'[whatsapp-webhook] bulk_contact {bulk_contact.id} tapped Yes but '
+            f'has no listing_url — cannot personalise the reply, skipping'
+        )
+        return
+
+    to_number = normalize_phone(bulk_contact.phone) or bulk_contact.phone
+    variables = [listing_url]
+
+    # Log-first so the row exists even if send_template raises. The
+    # outer webhook route commits after we return; a failed send just
+    # leaves a 'failed' status.
+    out_row = WhatsAppMessage(
+        bulk_contact_id=bulk_contact.id,
+        direction='out',
+        to_number=to_number,
+        template_name='glassy_onboarding_yes_reply',
+        language='en',
+        variables_json=json.dumps(variables),
+        # sent_by is nullable — this is a system-triggered send, not
+        # attributable to any specific BD user.
+        status='queued',
+    )
+    db.session.add(out_row)
+    db.session.flush()
+
+    result = send_template(
+        to=bulk_contact.phone,
+        template_name='glassy_onboarding_yes_reply',
+        language='en',
+        variables=variables,
+    )
+    if result.get('success'):
+        out_row.wamid = result.get('wamid')
+        out_row.status = 'sent'
+        app.logger.info(
+            f'[whatsapp-webhook] auto-sent glassy_onboarding_yes_reply to '
+            f'bulk_contact {bulk_contact.id} ({to_number})'
+        )
+    else:
+        out_row.status = 'failed'
+        out_row.error_message = (result.get('error') or 'unknown')[:1000]
+        app.logger.error(
+            f'[whatsapp-webhook] glassy_onboarding_yes_reply send failed for '
+            f'bulk_contact {bulk_contact.id}: {result.get("error")}'
+        )
+
 
 def _handle_status_update(st: dict):
     """Update an outbound row's status from a Meta status event."""

@@ -98,6 +98,29 @@ def _first_name_only(recipient) -> list[str]:
     return [first]
 
 
+def _glassy_yes_reply_vars(recipient) -> list[str]:
+    """Body-variable builder for the auto-response fired when a bulk
+    contact taps YES on `glassy_onboarding_invite`. Template body:
+
+        Wonderful! 🎉 Just add this code anywhere on your website … :
+        <a href="{{1}}">⭐ See our verified listing on Glassy India</a>
+
+    Vars:
+        {{1}} = the BulkContact's listing_url
+
+    Raises MissingVariable when listing_url is empty so the caller can
+    skip cleanly. The auto-response path (see _maybe_auto_reply_glassy_yes
+    in app.py) also short-circuits before calling send_template, but
+    keeping the builder strict means the same template can be triggered
+    from the BD dropdown one day without accidentally sending a broken
+    <a href=""> tag."""
+    rid = getattr(recipient, 'id', None)
+    url = (getattr(recipient, 'listing_url', None) or '').strip()
+    if not url:
+        raise MissingVariable('listing_url', rid)
+    return [url]
+
+
 def _glassy_onboarding_invite_vars(recipient) -> list[str]:
     """Body-variable builder for the Glassy India onboarding invite.
     Template text (as approved on Meta):
@@ -166,6 +189,20 @@ LEAD_TEMPLATES: list[LeadTemplate] = [
         needs_document=False,
         body_var_count=3,
         var_builder=_glassy_onboarding_invite_vars,
+    ),
+    LeadTemplate(
+        # Auto-response fired when a BulkContact taps YES on
+        # `glassy_onboarding_invite`. See _maybe_auto_reply_glassy_yes in
+        # app.py — this template is triggered by the inbound webhook,
+        # not from the BD dropdown. Registered here anyway so the
+        # dropdown listing + WhatsAppMessage.template_name lookups
+        # succeed for reporting purposes.
+        name="glassy_onboarding_yes_reply",
+        label="Glassy Directory YES follow-up (auto)",
+        language="en",
+        needs_document=False,
+        body_var_count=1,
+        var_builder=_glassy_yes_reply_vars,
     ),
 ]
 
