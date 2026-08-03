@@ -4030,6 +4030,16 @@ def _do_indiamart_sync(owner_id, created_by_id):
                 stage='New Lead',
                 indiamart_id=im_id,
                 owner_id=effective_owner_id,
+                # 2026-08-03 fix: the default-owner rule (2026-07-26)
+                # set owner_id but forgot assigned_to_id, so new
+                # IndiaMart leads landed with assigned_to_id NULL. The
+                # /leads list filter for Promotors gates on assigned_to_id
+                # (see _build_leads_query:3049), so Sirin (Promotor
+                # default owner) couldn't see her own new leads —
+                # 81 accumulated between Jul 26 and Aug 3 before Ansar
+                # spotted it. Pinning both fields to the same user at
+                # import time keeps ownership + queue visibility aligned.
+                assigned_to_id=effective_owner_id,
                 created_by=created_by_id,
                 created_at=im_added or datetime.utcnow(),
             )
