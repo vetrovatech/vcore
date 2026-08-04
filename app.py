@@ -75,6 +75,41 @@ def _run_startup_migrations():
         # row's provenance so back-fill is implicit via the default.
         "ALTER TABLE vetrova_quotes ADD COLUMN source VARCHAR(20) NOT NULL DEFAULT 'ingest'",
     ]
+    # ── WhatsApp brand seeding (2026-08-04) ─────────────────────────
+    # Populate the Brand table with the two live WABAs we run today:
+    # Bathqube (Bathqube brand) + Vtspl (Vetrova.in brand). Uses the
+    # env-var token as the seed — the same permanent System User token
+    # was used to register both phones. Token can be rotated later via
+    # a one-off UPDATE (no ORM migration needed) OR by rotating the env
+    # var and restarting the Lambda (fresh cold start re-seeds if the
+    # row is absent, and NEVER overwrites an existing wa_access_token
+    # so an admin-side rotation isn't clobbered on next cold start).
+    _seed_token = os.getenv('WHATSAPP_TOKEN', '')
+    if _seed_token:
+        brand_seed_sql = (
+            "INSERT INTO brands (slug, name, wa_phone_number_id, wa_access_token, wa_api_version, is_active) "
+            "VALUES (:slug, :name, :phone_id, :token, 'v21.0', TRUE) "
+            "ON CONFLICT (slug) DO UPDATE SET "
+            "  wa_phone_number_id = EXCLUDED.wa_phone_number_id, "
+            "  name               = EXCLUDED.name, "
+            "  is_active          = TRUE, "
+            "  updated_at         = NOW()"
+        )
+        brand_rows = [
+            {'slug': 'bathqube', 'name': 'Bathqube',
+             'phone_id': '1085829787956144', 'token': _seed_token},
+            {'slug': 'vtspl',    'name': 'Vtspl (Vetrova.in)',
+             'phone_id': '1178418082026510', 'token': _seed_token},
+        ]
+        try:
+            for row in brand_rows:
+                try:
+                    with db.engine.begin() as conn:
+                        conn.execute(text(brand_seed_sql), row)
+                except Exception:
+                    pass  # e.g. brands table doesn't exist yet on a brand-new prod
+        except Exception:
+            pass
     # Each statement runs in its own transaction. Required because Postgres
     # puts the connection into an "aborted transaction" state after ANY
     # failed statement (e.g. ALTER TABLE on a column that already exists),
@@ -4149,7 +4184,44 @@ def lead_set_customer_type(id):
     return jsonify({'success': True, 'customer_type': lead.customer_type})
 
 
-def _send_lead_template(lead, template, cached_media_id=None):
+# ─── WhatsApp brand routing (2026-08-04) ────────────────────────────────────
+# vcore runs TWO live WABAs — Bathqube (leads work) and Vtspl for Vetrova.in
+# (bulk-import outreach + Vetrova quote sends). Every send helper is called
+# with an explicit brand=<Brand>; there is NO env-var fallback anymore
+# (utils/whatsapp.py raises BrandRequired instead). The two helpers below
+# are the ONLY thing routes should reach for when they need a brand.
+
+_BRAND_CACHE = {'data': {}, 'expires_at': 0}
+
+
+def _resolve_brand(slug):
+    """Return the Brand row for `slug`, cached 60s in-process. Returns
+    None if the row is missing OR is_active=False — caller decides
+    whether to flash an error or 500 the request."""
+    import time
+    from models import Brand
+    now = time.time()
+    if _BRAND_CACHE['expires_at'] <= now:
+        _BRAND_CACHE['data'] = {b.slug: b for b in Brand.query.filter_by(is_active=True).all()}
+        _BRAND_CACHE['expires_at'] = now + 60
+    return _BRAND_CACHE['data'].get(slug)
+
+
+def _lead_is_bathqube_campaign(lead):
+    """True when a Lead came in via a Facebook Ads campaign whose name
+    contains 'bathqube' (case-insensitive). This is the routing predicate
+    for Leadfy sends — non-matching leads REFUSE to send (the Send button
+    greys out client-side too so BD doesn't bounce off a server-side
+    error). Match on `fb_campaign_name` since it's populated for every FB
+    lead and stable across renames within a run — `fb_campaign_id` would
+    be tighter but requires knowing the specific id BD wants us to route
+    on. Substring match keeps the door open for campaigns named e.g.
+    'Bathqube Bangalore Q3 2026' without further wiring."""
+    name = getattr(lead, 'fb_campaign_name', None) or ''
+    return 'bathqube' in name.lower()
+
+
+def _send_lead_template(lead, template, cached_media_id=None, brand=None):
     """Send one approved WhatsApp template to one lead. Return (msg, ok).
 
     Handles the branching between plain-body templates and document-header
@@ -4165,6 +4237,9 @@ def _send_lead_template(lead, template, cached_media_id=None):
             request — pass through in bulk sends so we don't re-upload the
             catalogue N times. When None and the template needs a document,
             we upload here.
+        brand: REQUIRED. Brand instance for the WABA to send from.
+            Leadfy resolves this to 'bathqube' when the lead is from a
+            Bathqube Facebook campaign, else refuses at the route level.
 
     Returns:
         (WhatsAppMessage row, ok:bool). Row is db.session.added AND
@@ -4178,6 +4253,23 @@ def _send_lead_template(lead, template, cached_media_id=None):
         normalize_phone,
     )
     from utils.lead_templates import build_body_variables, MissingVariable
+
+    if brand is None:
+        # Defensive — the route should have caught this. Fail closed
+        # rather than silently routing through the (removed) env
+        # fallback which used to send from the dead 1133856083153068.
+        msg = WhatsAppMessage(
+            lead_id=lead.id,
+            to_number=normalize_phone(lead.contact) or lead.contact,
+            template_name=template.name,
+            language=template.language,
+            variables_json=None,
+            sent_by=current_user.id,
+            status='failed',
+            error_message='no brand resolved — refusing to send',
+        )
+        db.session.add(msg); db.session.flush()
+        return msg, False
 
     try:
         variables = build_body_variables(template, lead)
@@ -4202,6 +4294,7 @@ def _send_lead_template(lead, template, cached_media_id=None):
 
     msg = WhatsAppMessage(
         lead_id=lead.id,
+        brand_id=brand.id,
         to_number=normalize_phone(lead.contact) or lead.contact,
         template_name=template.name,
         language=template.language,
@@ -4223,7 +4316,7 @@ def _send_lead_template(lead, template, cached_media_id=None):
                 msg.status = 'failed'
                 msg.error_message = f'Catalogue file missing: {e}'
                 return msg, False
-            up = upload_media(pdf_bytes, template.document_filename, mime_type='application/pdf')
+            up = upload_media(pdf_bytes, template.document_filename, mime_type='application/pdf', brand=brand)
             if not up.get('success'):
                 msg.status = 'failed'
                 msg.error_message = f'Media upload failed: {up.get("error", "unknown")}'
@@ -4237,6 +4330,7 @@ def _send_lead_template(lead, template, cached_media_id=None):
             filename=template.document_filename,
             language=template.language,
             body_variables=variables if variables else None,
+            brand=brand,
         )
     else:
         result = send_template(
@@ -4244,6 +4338,7 @@ def _send_lead_template(lead, template, cached_media_id=None):
             template_name=template.name,
             language=template.language,
             variables=variables,
+            brand=brand,
         )
         # Body-only templates: retry without vars if Meta complains the
         # template has no {{1}} slot. Only meaningful for the plain-body
@@ -4255,6 +4350,7 @@ def _send_lead_template(lead, template, cached_media_id=None):
                 template_name=template.name,
                 language=template.language,
                 variables=None,
+                brand=brand,
             )
             if result.get('success'):
                 msg.variables_json = json.dumps([])
@@ -4296,7 +4392,24 @@ def lead_send_template(id):
     if not template:
         return jsonify({'success': False, 'error': f'Unknown template: {template_name!r}'}), 400
 
-    msg, ok = _send_lead_template(lead, template)
+    # Leadfy sends go from Bathqube — but ONLY when the lead came in
+    # via a Bathqube FB campaign. BD spec 2026-08-04. Non-Bathqube
+    # leads must not be messaged from the Bathqube sender (their
+    # first-touch would land branded 'Bathqube', hurting trust);
+    # BD should use the Bulk Import screen (routes via Vtspl) for
+    # those instead.
+    if not _lead_is_bathqube_campaign(lead):
+        return jsonify({
+            'success': False,
+            'error': ('This lead is not from a Bathqube Facebook campaign — '
+                      'Leadfy sends only fire from the Bathqube number. '
+                      'Use Bulk Import (Vtspl) to reach non-Bathqube leads.'),
+        }), 400
+    brand = _resolve_brand('bathqube')
+    if brand is None:
+        return jsonify({'success': False, 'error': 'Bathqube brand row missing/inactive.'}), 500
+
+    msg, ok = _send_lead_template(lead, template, brand=brand)
     db.session.commit()
 
     if ok:
@@ -4325,7 +4438,17 @@ def lead_send_welcome(id):
     if not template:
         return jsonify({'success': False, 'error': 'Welcome template not configured'}), 500
 
-    msg, ok = _send_lead_template(lead, template)
+    if not _lead_is_bathqube_campaign(lead):
+        return jsonify({
+            'success': False,
+            'error': ('This lead is not from a Bathqube Facebook campaign — '
+                      'send-welcome only fires from the Bathqube number.'),
+        }), 400
+    brand = _resolve_brand('bathqube')
+    if brand is None:
+        return jsonify({'success': False, 'error': 'Bathqube brand row missing/inactive.'}), 500
+
+    msg, ok = _send_lead_template(lead, template, brand=brand)
     db.session.commit()
 
     if ok:
@@ -4384,15 +4507,28 @@ def leads_bulk_send_template():
     truncated = len(leads) > MAX_BULK_WA_LEADS
     leads = leads[:MAX_BULK_WA_LEADS]
 
+    # Bathqube-campaign gate. Split the selection into eligible (leads
+    # from a Bathqube FB campaign, will send) and skipped (everything
+    # else — reported back so BD sees exactly which rows were dropped).
+    # Same rule as single-lead send. The UI greys the button when the
+    # selection contains any non-eligible row (see leads/list.html)
+    # so this server-side skip is the final safety net.
+    eligible_leads = [l for l in leads if _lead_is_bathqube_campaign(l)]
+    ineligible_count = len(leads) - len(eligible_leads)
+
+    brand = _resolve_brand('bathqube') if eligible_leads else None
+    if eligible_leads and brand is None:
+        return jsonify({'success': False, 'error': 'Bathqube brand row missing/inactive.'}), 500
+
     # Upload the catalogue once per batch (document templates only).
     cached_media_id = None
-    if template.needs_document:
+    if template.needs_document and eligible_leads:
         try:
             with open(template.document_path, 'rb') as f:
                 pdf_bytes = f.read()
         except OSError as e:
             return jsonify({'success': False, 'error': f'Catalogue file missing: {e}'}), 500
-        up = upload_media(pdf_bytes, template.document_filename, mime_type='application/pdf')
+        up = upload_media(pdf_bytes, template.document_filename, mime_type='application/pdf', brand=brand)
         if not up.get('success'):
             return jsonify({'success': False, 'error': f'Media upload failed: {up.get("error", "unknown")}'}), 502
         cached_media_id = up['media_id']
@@ -4402,12 +4538,21 @@ def leads_bulk_send_template():
     skipped = 0
     failures = []
 
-    for lead in leads:
+    # Report the ineligible ones as skipped up-front so BD sees them
+    # in the failures list next to the phone-less skips.
+    for l in leads:
+        if _lead_is_bathqube_campaign(l):
+            continue
+        skipped += 1
+        failures.append({'lead_id': l.id, 'name': l.name,
+                         'error': 'not from a Bathqube campaign — use Bulk Import (Vtspl)'})
+
+    for lead in eligible_leads:
         if not lead.contact:
             skipped += 1
             failures.append({'lead_id': lead.id, 'name': lead.name, 'error': 'no phone number'})
             continue
-        msg, ok = _send_lead_template(lead, template, cached_media_id=cached_media_id)
+        msg, ok = _send_lead_template(lead, template, cached_media_id=cached_media_id, brand=brand)
         if ok:
             sent += 1
         else:
@@ -4421,6 +4566,7 @@ def leads_bulk_send_template():
         'sent': sent,
         'failed': failed,
         'skipped': skipped,
+        'skipped_non_bathqube': ineligible_count,
         'attempted': len(leads),
         'truncated': truncated,
         'cap': MAX_BULK_WA_LEADS,
@@ -4872,6 +5018,14 @@ def bulk_send_glassy_reminders_run():
     skipped_missing_url = 0
     failures = []
 
+    # Glassy directory outreach lives on the Vtspl WABA (Vetrova.in),
+    # same brand as the initial invite + auto-YES-reply. See
+    # bulk_send_bulk_template for the rationale on splitting Bulk
+    # Import off Bathqube.
+    brand = _resolve_brand('vtspl') if eligible else None
+    if eligible and brand is None:
+        return jsonify({'success': False, 'error': 'Vtspl brand row missing/inactive.'}), 500
+
     for contact, invite_sent_at in eligible:
         listing_url = (getattr(contact, 'listing_url', '') or '').strip()
         if not listing_url:
@@ -4883,6 +5037,7 @@ def bulk_send_glassy_reminders_run():
 
         msg_row = WhatsAppMessage(
             bulk_contact_id=contact.id,
+            brand_id=brand.id,
             direction='out',
             to_number=to_number,
             template_name='glassy_directory_reminder',
@@ -4899,6 +5054,7 @@ def bulk_send_glassy_reminders_run():
             template_name='glassy_directory_reminder',
             language='en',
             variables=variables,
+            brand=brand,
         )
         if result.get('success'):
             msg_row.wamid = result.get('wamid')
@@ -4968,6 +5124,14 @@ def bulk_send_bulk_template():
     truncated = len(contacts) > MAX_BULK_CONTACTS_SEND
     contacts = contacts[:MAX_BULK_CONTACTS_SEND]
 
+    # Bulk Import always goes through the Vtspl WABA (Vetrova.in phone).
+    # BD spec 2026-08-04: keep Bathqube reserved for Leadfy campaign
+    # sends so the marketing blast on Glassy directory contacts doesn't
+    # burn our Bathqube number's rate limits or brand trust.
+    brand = _resolve_brand('vtspl')
+    if brand is None:
+        return jsonify({'success': False, 'error': 'Vtspl brand row missing/inactive.'}), 500
+
     # If the template needs a document header, upload once per batch.
     cached_media_id = None
     if template.needs_document:
@@ -4976,7 +5140,7 @@ def bulk_send_bulk_template():
                 pdf_bytes = fh.read()
         except OSError as e:
             return jsonify({'success': False, 'error': f'Document missing: {e}'}), 500
-        up = upload_media(pdf_bytes, template.document_filename, mime_type='application/pdf')
+        up = upload_media(pdf_bytes, template.document_filename, mime_type='application/pdf', brand=brand)
         if not up.get('success'):
             return jsonify({'success': False, 'error': f'Media upload failed: {up.get("error", "unknown")}'}), 502
         cached_media_id = up['media_id']
@@ -5006,6 +5170,7 @@ def bulk_send_bulk_template():
 
         msg_row = WhatsAppMessage(
             bulk_contact_id=contact.id,
+            brand_id=brand.id,
             direction='out',
             to_number=normalize_phone(contact.phone) or contact.phone,
             template_name=template.name,
@@ -5023,11 +5188,13 @@ def bulk_send_bulk_template():
                 media_id=cached_media_id, filename=template.document_filename,
                 language=template.language,
                 body_variables=variables if variables else None,
+                brand=brand,
             )
         else:
             result = send_template(
                 to=contact.phone, template_name=template.name,
                 language=template.language, variables=variables,
+                brand=brand,
             )
             # Retry sans-vars when Meta rejects with a param mismatch —
             # same pattern as _send_lead_template.
@@ -5035,6 +5202,7 @@ def bulk_send_bulk_template():
                 result = send_template(
                     to=contact.phone, template_name=template.name,
                     language=template.language, variables=None,
+                    brand=brand,
                 )
                 if result.get('success'):
                     msg_row.variables_json = json.dumps([])
@@ -5402,11 +5570,23 @@ def _maybe_auto_reply_glassy_yes(msg: dict, body_text: str, bulk_contact) -> Non
     to_number = normalize_phone(bulk_contact.phone) or bulk_contact.phone
     variables = [listing_url]
 
+    # Auto-reply lives on Vtspl WABA — same brand the invite + the
+    # 4-day reminder go through. Refuse to fire if the brand row is
+    # missing so a silent send from the wrong WABA can't happen.
+    brand = _resolve_brand('vtspl')
+    if brand is None:
+        app.logger.error(
+            f'[whatsapp-webhook] Vtspl brand row missing/inactive — '
+            f'cannot auto-reply to bulk_contact {bulk_contact.id}'
+        )
+        return
+
     # Log-first so the row exists even if send_template raises. The
     # outer webhook route commits after we return; a failed send just
     # leaves a 'failed' status.
     out_row = WhatsAppMessage(
         bulk_contact_id=bulk_contact.id,
+        brand_id=brand.id,
         direction='out',
         to_number=to_number,
         template_name='glassy_onboarding_yes_reply',
@@ -5424,6 +5604,7 @@ def _maybe_auto_reply_glassy_yes(msg: dict, body_text: str, bulk_contact) -> Non
         template_name='glassy_onboarding_yes_reply',
         language='en',
         variables=variables,
+        brand=brand,
     )
     if result.get('success'):
         out_row.wamid = result.get('wamid')
@@ -10215,8 +10396,15 @@ def vetrova_send_first_quote(id):
 
     filename = f'{quote.quote_ref or ("Vetrova-Q" + str(quote.id))}.pdf'
 
+    # Vetrova brand — quotes originate on vetrova.in and go out under
+    # the Vtspl display name on the Vetrova.in WABA. Not the Bathqube
+    # WABA (was the case pre-multi-tenancy).
+    brand = _resolve_brand('vtspl')
+    if brand is None:
+        return jsonify({'success': False, 'error': 'Vtspl brand row missing/inactive.'}), 500
+
     # 2) Upload to Meta media store (media_id valid ~30 days)
-    upload = upload_media(pdf_bytes, filename=filename, mime_type='application/pdf')
+    upload = upload_media(pdf_bytes, filename=filename, mime_type='application/pdf', brand=brand)
     if not upload.get('success'):
         # Persist the failure so BD can see it in Stage history.
         db.session.add(VetrovaStatusEvent(
@@ -10243,6 +10431,7 @@ def vetrova_send_first_quote(id):
 
     msg = WhatsAppMessage(
         lead_id=None,
+        brand_id=brand.id,
         to_number=to_number,
         template_name='first_quote_generated',
         language='en',
@@ -10263,6 +10452,7 @@ def vetrova_send_first_quote(id):
         filename=filename,
         language='en',
         body_variables=body_variables,
+        brand=brand,
     )
 
     # 5) Persist WhatsAppMessage + VetrovaStatusEvent audit trail
@@ -10529,8 +10719,14 @@ def bathqube_send_first_quote(id):
 
     filename = f'{quote.estimate_number or ("Bathqube-Q" + str(quote.id))}.pdf'
 
+    # Bathqube brand — this quote flow belongs to the Bathqube product
+    # line, sends from the Bathqube WABA (+91 94808 28361).
+    brand = _resolve_brand('bathqube')
+    if brand is None:
+        return jsonify({'success': False, 'error': 'Bathqube brand row missing/inactive.'}), 500
+
     # 2) Upload to Meta media store (media_id valid ~30 days)
-    upload = upload_media(pdf_bytes, filename=filename, mime_type='application/pdf')
+    upload = upload_media(pdf_bytes, filename=filename, mime_type='application/pdf', brand=brand)
     if not upload.get('success'):
         return jsonify({'success': False, 'error': f'Media upload failed: {upload.get("error")}'}), 502
     media_id = upload['media_id']
@@ -10548,6 +10744,7 @@ def bathqube_send_first_quote(id):
 
     msg = WhatsAppMessage(
         lead_id=None,
+        brand_id=brand.id,
         to_number=to_number,
         template_name='first_quote_generated',
         language='en',
@@ -10568,6 +10765,7 @@ def bathqube_send_first_quote(id):
         filename=filename,
         language='en',
         body_variables=body_variables,
+        brand=brand,
     )
 
     if not result.get('success'):

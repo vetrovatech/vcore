@@ -1,10 +1,16 @@
 """
 WhatsApp Cloud API helper.
 
-Env vars (set on Lambda):
-  WHATSAPP_TOKEN            — permanent System User access token from Meta
-  WHATSAPP_PHONE_NUMBER_ID  — Phone Number ID from API Setup page
-  WHATSAPP_API_VERSION      — optional, defaults to v21.0
+Every send now requires a `brand` argument (Brand ORM instance from
+models.py). The env-var single-tenant fallback was removed on
+2026-08-04 — vcore runs multiple WABAs (Bathqube for Leadfy sends
+to bathqube_campaign leads, Vtspl for every Bulk Import send and
+Vetrova quotes), and letting callers omit the brand meant everything
+silently routed through whatever WHATSAPP_PHONE_NUMBER_ID pointed
+at. That was a real footgun: /leads bulk sends to non-Bathqube
+leads landed with Bathqube branding, and non-migrated code paths
+kept sending from the DEAD 1133856083153068 phone ID for weeks
+without anyone noticing.
 
 Phone-number normalization mirrors templates/leads/view.html: strip
 spaces/dashes/parens/dots/+, prepend '91' if exactly 10 digits (Indian
@@ -12,12 +18,39 @@ number with no country code), otherwise use as-is.
 """
 
 import io
-import os
+import os  # kept for GRAPH_BASE override if we ever need one
 import re
 import requests
 
 
 GRAPH_BASE = "https://graph.facebook.com"
+
+
+class BrandRequired(RuntimeError):
+    """Raised when a WhatsApp send helper is called without a brand.
+    Kept as a distinct type so route handlers can catch it and 500
+    with a specific message instead of the generic ValueError blob."""
+
+
+def _brand_creds(brand):
+    """Return (token, phone_id, api_ver) for a Brand or raise
+    BrandRequired. Central so every send helper reports the same
+    "which brand?" error text if a caller forgets to pass one."""
+    if brand is None:
+        raise BrandRequired(
+            'WhatsApp send helper called without a brand — every callsite '
+            'must resolve a Brand from models.Brand before sending.'
+        )
+    token    = getattr(brand, 'wa_access_token', '') or ''
+    phone_id = getattr(brand, 'wa_phone_number_id', '') or ''
+    api_ver  = getattr(brand, 'wa_api_version', 'v21.0') or 'v21.0'
+    if not token or not phone_id:
+        raise BrandRequired(
+            f'Brand {getattr(brand, "slug", "?")!r} has empty '
+            'wa_access_token or wa_phone_number_id — seed the row in '
+            'models.Brand or update via SQL.'
+        )
+    return token, phone_id, api_ver
 
 
 def normalize_phone(raw):
@@ -39,9 +72,8 @@ def send_template(to, template_name, language="en", variables=None, brand=None):
         template_name: exact template name as approved by Meta
         language: language code matching the approved template (e.g. 'en', 'en_US', 'hi')
         variables: list of strings for {{1}}, {{2}}, ... in the template body
-        brand: optional Brand instance whose WABA credentials should be used.
-               When None, falls back to WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID
-               env vars (single-tenant legacy path — kept for back-compat).
+        brand: REQUIRED. Brand instance whose WABA credentials to use.
+               Passing None raises BrandRequired (never falls back to env).
 
     Returns:
         dict with keys:
@@ -50,17 +82,7 @@ def send_template(to, template_name, language="en", variables=None, brand=None):
           error   (str, when failed)
           status  (HTTP status code from Graph API)
     """
-    if brand is not None:
-        token = brand.wa_access_token or ""
-        phone_id = brand.wa_phone_number_id or ""
-        api_ver = brand.wa_api_version or "v21.0"
-    else:
-        token = os.getenv("WHATSAPP_TOKEN", "")
-        phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
-        api_ver = os.getenv("WHATSAPP_API_VERSION", "v21.0")
-
-    if not token or not phone_id:
-        return {"success": False, "error": "WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID not configured"}
+    token, phone_id, api_ver = _brand_creds(brand)
 
     normalised = normalize_phone(to)
     if not normalised:
@@ -113,26 +135,23 @@ def send_template(to, template_name, language="en", variables=None, brand=None):
     return {"success": False, "error": msg, "status": resp.status_code}
 
 
-def send_document(to, media_id, filename, caption=None):
+def send_document(to, media_id, filename, caption=None, brand=None):
     """Send a plain document (PDF) message referencing a media_id.
     Used when a template has no document-header slot — we send the
     document as a separate follow-up message right after the template.
 
     Args:
         to: recipient phone
-        media_id: value from upload_media()
+        media_id: value from upload_media(brand=<same_brand>)
         filename: name shown to recipient
         caption: optional short caption printed under the document
+        brand: REQUIRED. Brand instance — MUST match the brand used
+               to upload the media_id (Meta media IDs are WABA-scoped).
 
     Returns:
         dict with success/wamid/error/status (same shape as send_template).
     """
-    token = os.getenv("WHATSAPP_TOKEN", "")
-    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
-    api_ver = os.getenv("WHATSAPP_API_VERSION", "v21.0")
-
-    if not token or not phone_id:
-        return {"success": False, "error": "WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID not configured"}
+    token, phone_id, api_ver = _brand_creds(brand)
 
     normalised = normalize_phone(to)
     if not normalised:
@@ -172,12 +191,21 @@ def send_document(to, media_id, filename, caption=None):
     return {"success": False, "error": msg, "status": resp.status_code}
 
 
-def upload_media(file_bytes, filename, mime_type="application/pdf"):
+def upload_media(file_bytes, filename, mime_type="application/pdf", brand=None):
     """Upload a file to Meta's media store. Returns a media_id we can
     then reference from a template's document/image header.
 
     Media IDs are valid for 30 days on Meta's side — plenty for a one-shot
     template send that fires seconds after upload.
+
+    Args:
+        file_bytes / filename / mime_type — the payload.
+        brand: REQUIRED. Brand instance whose WABA to upload against.
+               Media IDs are WABA-scoped; a media_id uploaded via Bathqube
+               cannot be referenced from a Vtspl template send. Uploading
+               under the WRONG brand silently fails at send time later,
+               so we require the caller to pass the intended brand
+               up-front.
 
     Returns:
         dict:
@@ -186,12 +214,7 @@ def upload_media(file_bytes, filename, mime_type="application/pdf"):
             error (str, when failed)
             status (HTTP status code)
     """
-    token = os.getenv("WHATSAPP_TOKEN", "")
-    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
-    api_ver = os.getenv("WHATSAPP_API_VERSION", "v21.0")
-
-    if not token or not phone_id:
-        return {"success": False, "error": "WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID not configured"}
+    token, phone_id, api_ver = _brand_creds(brand)
 
     url = f"{GRAPH_BASE}/{api_ver}/{phone_id}/media"
     try:
@@ -219,28 +242,25 @@ def upload_media(file_bytes, filename, mime_type="application/pdf"):
 
 
 def send_template_with_document(to, template_name, media_id, filename,
-                                 language="en", body_variables=None):
+                                 language="en", body_variables=None, brand=None):
     """Send an approved template that has a DOCUMENT header slot,
     referencing a media_id from `upload_media`.
 
     Args:
         to: recipient phone (any common format — normalised internally)
         template_name: exact template name as approved by Meta
-        media_id: value returned from upload_media()
+        media_id: value returned from upload_media(brand=<same_brand>)
         filename: name shown to the recipient (e.g. "Bathqube-Quote.pdf")
         language: language code matching the approved template
         body_variables: list of strings for {{1}}, {{2}}, ... in the body
                         (pass None if the template body has no placeholders)
+        brand: REQUIRED. Brand instance — MUST match the brand the media
+               was uploaded under (Meta media IDs are WABA-scoped).
 
     Returns:
         Same shape as send_template().
     """
-    token = os.getenv("WHATSAPP_TOKEN", "")
-    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
-    api_ver = os.getenv("WHATSAPP_API_VERSION", "v21.0")
-
-    if not token or not phone_id:
-        return {"success": False, "error": "WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID not configured"}
+    token, phone_id, api_ver = _brand_creds(brand)
 
     normalised = normalize_phone(to)
     if not normalised:
