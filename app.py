@@ -4207,20 +4207,6 @@ def _resolve_brand(slug):
     return _BRAND_CACHE['data'].get(slug)
 
 
-def _lead_is_bathqube_campaign(lead):
-    """True when a Lead came in via a Facebook Ads campaign whose name
-    contains 'bathqube' (case-insensitive). This is the routing predicate
-    for Leadfy sends — non-matching leads REFUSE to send (the Send button
-    greys out client-side too so BD doesn't bounce off a server-side
-    error). Match on `fb_campaign_name` since it's populated for every FB
-    lead and stable across renames within a run — `fb_campaign_id` would
-    be tighter but requires knowing the specific id BD wants us to route
-    on. Substring match keeps the door open for campaigns named e.g.
-    'Bathqube Bangalore Q3 2026' without further wiring."""
-    name = getattr(lead, 'fb_campaign_name', None) or ''
-    return 'bathqube' in name.lower()
-
-
 def _send_lead_template(lead, template, cached_media_id=None, brand=None):
     """Send one approved WhatsApp template to one lead. Return (msg, ok).
 
@@ -4392,19 +4378,8 @@ def lead_send_template(id):
     if not template:
         return jsonify({'success': False, 'error': f'Unknown template: {template_name!r}'}), 400
 
-    # Leadfy sends go from Bathqube — but ONLY when the lead came in
-    # via a Bathqube FB campaign. BD spec 2026-08-04. Non-Bathqube
-    # leads must not be messaged from the Bathqube sender (their
-    # first-touch would land branded 'Bathqube', hurting trust);
-    # BD should use the Bulk Import screen (routes via Vtspl) for
-    # those instead.
-    if not _lead_is_bathqube_campaign(lead):
-        return jsonify({
-            'success': False,
-            'error': ('This lead is not from a Bathqube Facebook campaign — '
-                      'Leadfy sends only fire from the Bathqube number. '
-                      'Use Bulk Import (Vtspl) to reach non-Bathqube leads.'),
-        }), 400
+    # Leadfy sends go from Bathqube. Filter on fb_campaign_name was
+    # removed 2026-08-06 (BD) — any lead is eligible now.
     brand = _resolve_brand('bathqube')
     if brand is None:
         return jsonify({'success': False, 'error': 'Bathqube brand row missing/inactive.'}), 500
@@ -4438,12 +4413,6 @@ def lead_send_welcome(id):
     if not template:
         return jsonify({'success': False, 'error': 'Welcome template not configured'}), 500
 
-    if not _lead_is_bathqube_campaign(lead):
-        return jsonify({
-            'success': False,
-            'error': ('This lead is not from a Bathqube Facebook campaign — '
-                      'send-welcome only fires from the Bathqube number.'),
-        }), 400
     brand = _resolve_brand('bathqube')
     if brand is None:
         return jsonify({'success': False, 'error': 'Bathqube brand row missing/inactive.'}), 500
@@ -4507,22 +4476,15 @@ def leads_bulk_send_template():
     truncated = len(leads) > MAX_BULK_WA_LEADS
     leads = leads[:MAX_BULK_WA_LEADS]
 
-    # Bathqube-campaign gate. Split the selection into eligible (leads
-    # from a Bathqube FB campaign, will send) and skipped (everything
-    # else — reported back so BD sees exactly which rows were dropped).
-    # Same rule as single-lead send. The UI greys the button when the
-    # selection contains any non-eligible row (see leads/list.html)
-    # so this server-side skip is the final safety net.
-    eligible_leads = [l for l in leads if _lead_is_bathqube_campaign(l)]
-    ineligible_count = len(leads) - len(eligible_leads)
-
-    brand = _resolve_brand('bathqube') if eligible_leads else None
-    if eligible_leads and brand is None:
+    # Leadfy bulk sends go from Bathqube. Filter on fb_campaign_name
+    # was removed 2026-08-06 (BD) — any lead is eligible now.
+    brand = _resolve_brand('bathqube')
+    if brand is None:
         return jsonify({'success': False, 'error': 'Bathqube brand row missing/inactive.'}), 500
 
     # Upload the catalogue once per batch (document templates only).
     cached_media_id = None
-    if template.needs_document and eligible_leads:
+    if template.needs_document:
         try:
             with open(template.document_path, 'rb') as f:
                 pdf_bytes = f.read()
@@ -4538,16 +4500,7 @@ def leads_bulk_send_template():
     skipped = 0
     failures = []
 
-    # Report the ineligible ones as skipped up-front so BD sees them
-    # in the failures list next to the phone-less skips.
-    for l in leads:
-        if _lead_is_bathqube_campaign(l):
-            continue
-        skipped += 1
-        failures.append({'lead_id': l.id, 'name': l.name,
-                         'error': 'not from a Bathqube campaign — use Bulk Import (Vtspl)'})
-
-    for lead in eligible_leads:
+    for lead in leads:
         if not lead.contact:
             skipped += 1
             failures.append({'lead_id': lead.id, 'name': lead.name, 'error': 'no phone number'})
@@ -4566,7 +4519,6 @@ def leads_bulk_send_template():
         'sent': sent,
         'failed': failed,
         'skipped': skipped,
-        'skipped_non_bathqube': ineligible_count,
         'attempted': len(leads),
         'truncated': truncated,
         'cap': MAX_BULK_WA_LEADS,

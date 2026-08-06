@@ -210,12 +210,9 @@
                `lead_templates` (injected via context processor from
                utils/lead_templates.py). The `data-needs-document` attr
                triggers a "with catalogue" hint on the button label.
-               BD spec 2026-08-04: Leadfy sends only fire on leads from
-               a Bathqube FB campaign. When the current lead isn't from
-               one, the Send button greys out with a tooltip pointing BD
-               to Bulk Import for non-Bathqube reachouts. Server-side
-               gate in lead_send_template is the final safety net. #}
-            {%- set _is_bathqube_campaign = (lead.fb_campaign_name and 'bathqube' in lead.fb_campaign_name|lower) -%}
+               The bathqube-campaign gate was removed 2026-08-06 (BD) —
+               Leadfy sends fire from Bathqube regardless of the lead's
+               FB campaign. #}
             <div class="d-inline-flex align-items-stretch gap-0" style="margin:0;">
                 <select class="form-select form-select-sm" id="templatePicker"
                         style="max-width:220px; border-top-right-radius:0; border-bottom-right-radius:0;">
@@ -227,17 +224,10 @@
                 </select>
                 <button type="button" class="action-btn btn-wa-send" id="sendTemplateBtn"
                         onclick="sendTemplate()"
-                        {% if not _is_bathqube_campaign %}disabled
-                           title="This lead isn’t from a Bathqube Facebook campaign — Leadfy sends only fire from the Bathqube number. Use Bulk Import (Vtspl) to reach non-Bathqube leads."{% endif %}
                         style="border-top-left-radius:0; border-bottom-left-radius:0;">
                     <i class="bi bi-send-fill"></i> Send
                 </button>
             </div>
-            {% if not _is_bathqube_campaign %}
-            <div class="small text-muted mt-1" style="max-width:360px;">
-                <i class="bi bi-info-circle"></i> Not a Bathqube campaign lead — Leadfy send disabled. Use Bulk Import for outreach.
-            </div>
-            {% endif %}
             {% endif %}
             {% if lead.email %}
             <a href="mailto:{{ lead.email }}" class="action-btn btn-email">

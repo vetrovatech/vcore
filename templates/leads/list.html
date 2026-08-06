@@ -540,15 +540,6 @@
         <span class="bulk-wa-text"><i class="bi bi-whatsapp"></i> Send WhatsApp</span>
         <span class="bulk-wa-spinner" style="display:none;"><span class="spinner-border spinner-border-sm"></span> Sending...</span>
     </button>
-    {# Grey-out hint for non-Bathqube-campaign selections. updateBulkBar()
-       toggles the disabled state + tooltip based on the current
-       selection's data-bathqube-campaign flags. #}
-    <span id="bulkSendWaHint"
-          class="small text-muted ms-2"
-          style="display:none;"
-          title="Leadfy sends only fire on leads from a Bathqube Facebook campaign. Use Bulk Import for the rest.">
-        <i class="bi bi-info-circle"></i> some selections not from a Bathqube campaign
-    </span>
     <button type="button" class="btn btn-link btn-sm text-muted" id="bulkClearBtn">Clear</button>
 </div>
 {% endif %}
@@ -575,18 +566,13 @@
                 <tbody>
                     {% set avatar_bg = ['#6366f1','#8b5cf6','#ec4899','#f59e0b','#10b981','#3b82f6','#ef4444'] %}
                     {% for lead in leads %}
-                    {# Leadfy sends fire ONLY on leads from a Bathqube FB campaign.
-                       Stamp `data-bathqube-campaign` on the row + checkbox so the
-                       bulk-send button can grey out client-side when the selection
-                       contains any non-Bathqube row. Server-side gate in
-                       leads_bulk_send_template is the final safety net. #}
-                    {% set is_bathqube_campaign = (lead.fb_campaign_name and 'bathqube' in lead.fb_campaign_name|lower) %}
-                    <tr {% if lead.is_untouched %}class="untouched-row"{% endif %}
-                        data-bathqube-campaign="{{ '1' if is_bathqube_campaign else '0' }}">
+                    {# bathqube-campaign gate on Leadfy sends removed 2026-08-06 (BD).
+                       Every checked lead is now eligible; server always sends via
+                       Bathqube regardless of the lead's FB campaign. #}
+                    <tr {% if lead.is_untouched %}class="untouched-row"{% endif %}>
                         <td><input type="checkbox"
                                    class="form-check-input lead-check"
-                                   data-lead-id="{{ lead.id }}"
-                                   data-bathqube-campaign="{{ '1' if is_bathqube_campaign else '0' }}"></td>
+                                   data-lead-id="{{ lead.id }}"></td>
 
                         <!-- Name + Stage + Type -->
                         <td>
@@ -1044,7 +1030,6 @@
                 bannerActive.style.display = 'inline';
                 bannerActiveCount.textContent = totalCount;
             }
-            applyBathqubeCampaignGuard();
             return;
         }
 
@@ -1062,40 +1047,6 @@
             banner.style.display = (allOnPageSelected && totalCount > pageCount) ? 'inline' : 'none';
         }
         syncMasterCheckbox();
-        applyBathqubeCampaignGuard();
-    }
-
-    // BD spec 2026-08-04: Leadfy sends fire only on leads from a
-    // Bathqube FB campaign. Grey out the Send WhatsApp button and
-    // show a hint whenever the selection contains a non-Bathqube
-    // row (visible on this page — the persisted cross-page set is
-    // opaque to the client, so BD sees the hint only when they can
-    // see the offending row; server rechecks + skips regardless).
-    // Select-all-matching bypasses the client check entirely since
-    // we can't inspect every matching row from here — the server
-    // still filters + reports the skipped count.
-    function applyBathqubeCampaignGuard() {
-        const btn  = document.getElementById('bulkSendWaBtn');
-        const hint = document.getElementById('bulkSendWaHint');
-        if (!btn) return;
-
-        if (selectAllMatching) {
-            btn.disabled = false;
-            btn.title    = '';
-            if (hint) hint.style.display = 'none';
-            return;
-        }
-
-        const checkedRows = Array.from(document.querySelectorAll('.lead-check'))
-            .filter(cb => cb.checked);
-        const anyNonBathqube = checkedRows.some(
-            cb => cb.dataset.bathqubeCampaign !== '1'
-        );
-        btn.disabled = anyNonBathqube;
-        btn.title    = anyNonBathqube
-            ? 'Some selections aren’t from a Bathqube Facebook campaign. Deselect them or use Bulk Import.'
-            : '';
-        if (hint) hint.style.display = anyNonBathqube ? 'inline' : 'none';
     }
 
     document.getElementById('selectAll').addEventListener('change', function () {

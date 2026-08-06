@@ -13,6 +13,20 @@ services:
       # DATABASE_URL and SECRET_KEY come from .env (loaded above).
       # Do NOT hardcode credentials here — this file is committed to git.
       - ENVIRONMENT=development
+      # BD Vetrova quote creator smoke-testing:
+      #   - The .env carries GLASSYPLATFORM_URL=http://host.docker.internal:3000
+      #     for local Next-dev iteration. Override it here to point at
+      #     prod when Next isn't running locally, so the BD-creator form
+      #     still loads.
+      #   - Comment this line out when iterating on glassyplatform
+      #     locally (needs `npm run dev` on the host).
+      - GLASSYPLATFORM_URL=http://host.docker.internal:3000
+    # Local-dev override: bump gunicorn workers from 2 → 6 + access log to
+    # stdout so slow endpoints (IndiaMart sync — hits paginated API,
+    # 30-120s+) don't starve the other request paths. Prod runs the
+    # Lambda-adapter Dockerfile (single worker but requests are isolated
+    # per Lambda invocation) so this stays local-only. 2026-07-26.
+    command: ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "6", "--timeout", "180", "--access-logfile", "-", "app:app"]
     volumes:
       - ./templates:/app/templates
       - ./static:/app/static
