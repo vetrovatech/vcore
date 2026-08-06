@@ -4191,18 +4191,50 @@ def lead_set_customer_type(id):
 # (utils/whatsapp.py raises BrandRequired instead). The two helpers below
 # are the ONLY thing routes should reach for when they need a brand.
 
+class _CachedBrand:
+    """Detached snapshot of a models.Brand row, safe to hold across
+    Flask requests. Not a SQLAlchemy ORM instance — no session binding
+    required, so cache reads on warm Lambda invocations don't trigger
+    a lazy-load against a closed session.
+
+    History: the previous _BRAND_CACHE stored raw ORM instances with a
+    60s TTL. That worked on cold-start (session still open), then blew
+    up with DetachedInstanceError on the SECOND request within the TTL
+    window because the ORM instance's original session had committed
+    and expired the instance (see traceback 2026-08-06 10:08:49 UTC on
+    /bulk-send/bulk-send-template). Snapshotting to a plain object at
+    load time sidesteps the session lifecycle entirely.
+
+    Attributes mirror the columns the send helpers read via getattr
+    (see utils/whatsapp.py::_brand_creds)."""
+    __slots__ = ('id', 'slug', 'name', 'wa_phone_number_id',
+                 'wa_access_token', 'wa_api_version', 'is_active')
+
+    def __init__(self, row):
+        self.id                 = row.id
+        self.slug               = row.slug
+        self.name               = row.name
+        self.wa_phone_number_id = row.wa_phone_number_id
+        self.wa_access_token    = row.wa_access_token
+        self.wa_api_version     = row.wa_api_version
+        self.is_active          = row.is_active
+
+
 _BRAND_CACHE = {'data': {}, 'expires_at': 0}
 
 
 def _resolve_brand(slug):
-    """Return the Brand row for `slug`, cached 60s in-process. Returns
-    None if the row is missing OR is_active=False — caller decides
-    whether to flash an error or 500 the request."""
+    """Return the cached Brand snapshot for `slug`, cached 60s in-process.
+    Returns None if the row is missing OR is_active=False — caller
+    decides whether to flash an error or 500 the request."""
     import time
     from models import Brand
     now = time.time()
     if _BRAND_CACHE['expires_at'] <= now:
-        _BRAND_CACHE['data'] = {b.slug: b for b in Brand.query.filter_by(is_active=True).all()}
+        _BRAND_CACHE['data'] = {
+            b.slug: _CachedBrand(b)
+            for b in Brand.query.filter_by(is_active=True).all()
+        }
         _BRAND_CACHE['expires_at'] = now + 60
     return _BRAND_CACHE['data'].get(slug)
 
