@@ -26,6 +26,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT, TA_LEFT, TA_CENTER
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image,
     KeepTogether,
@@ -42,11 +44,67 @@ VI_MUTED      = colors.HexColor('#6B7280')
 VI_LIGHT      = colors.HexColor('#E5E7EB')
 
 
-def _inr(v):
+# ─── Unicode font registration (₹ glyph fix) ────────────────────────────────
+# ReportLab's default Helvetica lacks U+20B9 (₹) and every currency cell
+# rendered as a "missing glyph" black square (BD screenshot 2026-08-07).
+# Fix: register DejaVuSans / DejaVuSans-Bold — installed via the
+# Dockerfile's `fonts-dejavu-core` apt package — and use them as the PDF's
+# base fonts. Mirrors the pattern already proven on tax_invoice_pdf.py.
+# Falls back to Helvetica + 'Rs.' text prefix if the TTFs aren't on disk
+# (e.g. non-Debian dev box) so the PDF still renders cleanly.
+_BASE_FONT      = 'Helvetica'
+_BASE_FONT_BOLD = 'Helvetica-Bold'
+_RUPEE_GLYPH    = 'Rs.'   # fallback until DejaVu registers
+
+_DEJAVU_PATHS = [
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',           # Debian/Ubuntu
+    '/usr/share/fonts/dejavu/DejaVuSans.ttf',                    # Fedora/RHEL
+    '/Library/Fonts/DejaVuSans.ttf',                             # macOS
+]
+_DEJAVU_BOLD_PATHS = [
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
+    '/Library/Fonts/DejaVuSans-Bold.ttf',
+]
+
+
+def _first_existing(paths):
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _register_unicode_fonts_once():
+    """Register DejaVu Sans + Bold as VetrovaSans / VetrovaSans-Bold on
+    the first render. Upgrades _BASE_FONT / _BASE_FONT_BOLD / _RUPEE_GLYPH
+    in-place so subsequent renders use the Unicode-covered fonts. Safe
+    to call repeatedly — pdfmetrics.registerFont is idempotent for the
+    same font name."""
+    global _BASE_FONT, _BASE_FONT_BOLD, _RUPEE_GLYPH
+    if _BASE_FONT == 'VetrovaSans':   # already registered
+        return
+    p_regular = _first_existing(_DEJAVU_PATHS)
+    p_bold    = _first_existing(_DEJAVU_BOLD_PATHS)
+    if not (p_regular and p_bold):
+        return   # keep Helvetica + 'Rs.' fallback
     try:
-        return f"₹{int(round(float(v))):,}"
+        pdfmetrics.registerFont(TTFont('VetrovaSans',      p_regular))
+        pdfmetrics.registerFont(TTFont('VetrovaSans-Bold', p_bold))
+    except Exception:
+        return
+    _BASE_FONT      = 'VetrovaSans'
+    _BASE_FONT_BOLD = 'VetrovaSans-Bold'
+    _RUPEE_GLYPH    = '₹'
+
+
+def _inr(v):
+    """Format a value as an INR string using the current rupee glyph
+    (either '₹' or the safe 'Rs.' fallback if DejaVu didn't register)."""
+    try:
+        return f"{_RUPEE_GLYPH}{int(round(float(v))):,}"
     except (TypeError, ValueError):
-        return "₹0"
+        return f"{_RUPEE_GLYPH}0"
 
 
 def _fmt_ft(v):
@@ -122,9 +180,13 @@ def generate_vetrova_quote_pdf(quote):
         author='Vetrova Interni',
     )
 
+    # Lazy-register DejaVu on first render so paragraphs + table cells
+    # can print the ₹ glyph. No-op on subsequent renders.
+    _register_unicode_fonts_once()
+
     ss = getSampleStyleSheet()
-    base_font = 'Helvetica'
-    base_bold = 'Helvetica-Bold'
+    base_font = _BASE_FONT
+    base_bold = _BASE_FONT_BOLD
 
     s_h1 = ParagraphStyle('h1', parent=ss['Heading1'],
                           fontName=base_bold, fontSize=16, textColor=VI_FOREST,
@@ -224,11 +286,58 @@ def generate_vetrova_quote_pdf(quote):
         if it.fabric_code:
             desc_flow.append(Paragraph(f'Fabric: <b>{it.fabric_code}</b>', s_body_sm))
 
-        img_flow = _data_url_to_image_flowable(it.uploaded_image_data_url, 22, 22)
-        if img_flow is not None:
+        # Multi-artwork bucket (Printed Glass). Falls back to a
+        # single-thumbnail render when only the legacy single-image
+        # field is populated via uploaded_images_parsed's fallback.
+        imgs = it.uploaded_images_parsed
+        if imgs:
             desc_flow.append(Spacer(1, 2))
-            desc_flow.append(img_flow)
-            desc_flow.append(Paragraph('Customer-uploaded artwork', s_body_sm))
+            # Header line — "3 attached" style summary matches the BD
+            # view template so both surfaces read the same.
+            if len(imgs) == 1:
+                desc_flow.append(Paragraph('Customer-supplied design (attached)', s_body_sm))
+            else:
+                desc_flow.append(Paragraph(
+                    f'Customer-supplied designs ({len(imgs)} attached)',
+                    s_body_sm,
+                ))
+            # Lay out thumbnails in a horizontal strip: up to 4 per row,
+            # each 22×22 mm, labelled with gallery code (preferred) or
+            # filename (fallback) or a #N marker.
+            row_cells = []
+            for i, a in enumerate(imgs):
+                img_flow = _data_url_to_image_flowable(a.get('dataUrl'), 22, 22)
+                label = a.get('galleryCode') or a.get('filename') or f'#{i + 1}'
+                if len(label) > 22:
+                    label = label[:20] + '…'
+                if img_flow is not None:
+                    cell = [img_flow, Paragraph(label, s_body_sm)]
+                else:
+                    cell = [Paragraph(label, s_body_sm)]
+                row_cells.append(cell)
+            if row_cells:
+                # 4-column table so 3+ thumbs wrap neatly. Pad with blanks
+                # so ReportLab's Table doesn't complain about ragged rows.
+                cols_per_row = 4
+                rows = []
+                for j in range(0, len(row_cells), cols_per_row):
+                    chunk = row_cells[j:j + cols_per_row]
+                    while len(chunk) < cols_per_row:
+                        chunk.append('')
+                    rows.append(chunk)
+                thumb_tbl = Table(
+                    rows,
+                    colWidths=[26 * mm] * cols_per_row,
+                    hAlign='LEFT',
+                )
+                thumb_tbl.setStyle(TableStyle([
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('LEFTPADDING',  (0, 0), (-1, -1), 0),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+                    ('TOPPADDING',   (0, 0), (-1, -1), 0),
+                    ('BOTTOMPADDING',(0, 0), (-1, -1), 4),
+                ]))
+                desc_flow.append(thumb_tbl)
 
         if it.notes:
             desc_flow.append(Paragraph(f'<font color="#6B7280"><i>Note: {it.notes}</i></font>', s_body_sm))

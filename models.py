@@ -2783,9 +2783,19 @@ class VetrovaQuoteItem(db.Model):
 
     # Category-specific extras.
     fabric_code = db.Column(db.String(32), nullable=True)
-    # Full data URL (base64) as sent from the client. Persisted so BD can
-    # eyeball the customer's requested artwork; PDF regen embeds it.
+    # LEGACY single-image field (pre-2026-08-14). New quotes populate
+    # this with the FIRST entry of uploaded_images so pre-multi readers
+    # still see one artwork. New reads should prefer uploaded_images.
     uploaded_image_data_url = db.Column(db.Text, nullable=True)
+    # Multi-artwork bucket (2026-08-14). JSON array:
+    #   [{ dataUrl: 'data:image/jpeg;base64,…',
+    #      filename?: 'hallway.jpg',
+    #      source?: 'upload'|'gallery',
+    #      galleryCode?: 'V-PR-017' }, …]
+    # Populated by Printed Glass PDPs where the customer can attach
+    # several designs to ONE line item. The view + PDF renderer walk
+    # this array to draw one thumbnail per entry.
+    uploaded_images = db.Column(db.Text, nullable=True)
 
     # Money — BD-editable via revise.
     rate_per_unit = db.Column(db.Numeric(12, 2), default=0, nullable=False)  # ₹/sqft or ₹/ft
@@ -2821,6 +2831,31 @@ class VetrovaQuoteItem(db.Model):
             return v if isinstance(v, list) else []
         except Exception:
             return []
+
+    @property
+    def uploaded_images_parsed(self):
+        """List of {dataUrl, filename?, source?, galleryCode?} dicts. When
+        the new-style column is empty, falls back to wrapping the legacy
+        `uploaded_image_data_url` into a single-entry list so old rows
+        (pre-2026-08-14) still render as one thumbnail wherever the new
+        renderer walks this list."""
+        if self.uploaded_images:
+            try:
+                v = json.loads(self.uploaded_images)
+                if isinstance(v, list):
+                    # Only entries with a usable data URL survive.
+                    return [
+                        a for a in v
+                        if isinstance(a, dict)
+                        and isinstance(a.get('dataUrl'), str)
+                        and a['dataUrl'].startswith('data:image/')
+                    ]
+            except Exception:
+                pass
+        # Legacy fallback — one entry if we have the single-image field.
+        if self.uploaded_image_data_url and self.uploaded_image_data_url.startswith('data:image/'):
+            return [{'dataUrl': self.uploaded_image_data_url}]
+        return []
 
     @property
     def is_sqft(self):

@@ -257,6 +257,8 @@
                     <div>{{ quote.customer_city }}{% if quote.customer_city and quote.customer_state %}, {% endif %}{{
                         quote.customer_state }}</div>
                     {% endif %}
+                    {% if quote.customer_phone %}<div>Phone: {{ quote.customer_phone }}</div>{% endif %}
+                    {% if quote.customer_email %}<div>Email: {{ quote.customer_email }}</div>{% endif %}
                     {% if quote.customer_gst %}<div>GST: {{ quote.customer_gst }}</div>{% endif %}
                 </div>
                 <div class="info-cell" style="width: 50%;">

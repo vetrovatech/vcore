@@ -225,6 +225,9 @@
         </div>
         <input type="hidden" class="vq-id">
         <input type="hidden" class="vq-img">
+        <!-- JSON string of the uploadedImages array; echoed back on save
+             so BD's edits don't wipe the multi-artwork bucket. -->
+        <input type="hidden" class="vq-imgs">
     </div>
     <div class="vq-img-preview mt-2"></div>
 </div>
@@ -349,7 +352,25 @@
         node.querySelector('.vq-fabric').value = item.fabricCode || '';
         node.querySelector('.vq-notes').value  = item.notes || '';
         node.querySelector('.vq-img').value    = item.uploadedImageDataUrl || '';
-        if (item.uploadedImageDataUrl) {
+        // Multi-artwork bucket — echo the array back on save via a
+        // hidden JSON field; render each thumbnail in the preview strip.
+        const imgs = Array.isArray(item.uploadedImages) ? item.uploadedImages : [];
+        node.querySelector('.vq-imgs').value = imgs.length ? JSON.stringify(imgs) : '';
+        if (imgs.length > 0) {
+            const preview = node.querySelector('.vq-img-preview');
+            const header = imgs.length === 1
+                ? 'Customer-supplied design (attached):'
+                : `Customer-supplied designs (${imgs.length} attached):`;
+            const cells = imgs.map((a, i) => {
+                const label = a.galleryCode || a.filename || `#${i + 1}`;
+                return `<div style="width:100px">
+                  <img src="${a.dataUrl}" style="max-width:100px;max-height:100px;border:1px solid #ccc;border-radius:4px;object-fit:cover;display:block" />
+                  <div class="small text-muted text-truncate" title="${label}">${label}</div>
+                </div>`;
+            }).join('');
+            preview.innerHTML = `<span class="small text-muted">${header}</span><br>
+              <div class="d-flex flex-wrap" style="gap:8px;margin-top:4px">${cells}</div>`;
+        } else if (item.uploadedImageDataUrl) {
             const preview = node.querySelector('.vq-img-preview');
             preview.innerHTML = `<span class="small text-muted">Customer artwork:</span><br>
               <img src="${item.uploadedImageDataUrl}" style="max-height:100px;border:1px solid #ccc;border-radius:4px" />`;
@@ -473,6 +494,11 @@
                 subtotal:       parseFloat(node.querySelector('.vq-sub').value)  || 0,
                 notes:          node.querySelector('.vq-notes').value.trim(),
                 uploadedImageDataUrl: node.querySelector('.vq-img').value || null,
+                uploadedImages: (() => {
+                    const raw = node.querySelector('.vq-imgs').value;
+                    if (!raw) return null;
+                    try { return JSON.parse(raw); } catch { return null; }
+                })(),
             });
         }
         return items;

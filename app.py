@@ -9719,6 +9719,34 @@ def vetrova_ingest():
         if not (isinstance(img_data_url, str) and img_data_url.startswith('data:image/')):
             img_data_url = None
 
+        # Multi-artwork bucket (2026-08-14). Each entry must have a
+        # data:image/* URL; optional filename / source / galleryCode.
+        # Cap at 10 entries to bound row size (JSON base64 heavy).
+        images_raw = r.get('uploadedImages')
+        clean_images = []
+        if isinstance(images_raw, list):
+            for a in images_raw[:10]:
+                if not isinstance(a, dict):
+                    continue
+                du = a.get('dataUrl')
+                if not (isinstance(du, str) and du.startswith('data:image/')):
+                    continue
+                clean = {'dataUrl': du}
+                if isinstance(a.get('filename'), str) and a['filename']:
+                    clean['filename'] = a['filename'][:200]
+                if a.get('source') in ('upload', 'gallery'):
+                    clean['source'] = a['source']
+                gc = a.get('galleryCode')
+                if isinstance(gc, str) and gc:
+                    clean['galleryCode'] = gc[:32]
+                clean_images.append(clean)
+        images_json = json.dumps(clean_images) if clean_images else None
+
+        # Mirror the FIRST clean_images entry into the legacy single
+        # column so old readers still see one thumbnail.
+        if clean_images and not img_data_url:
+            img_data_url = clean_images[0]['dataUrl']
+
         item = VetrovaQuoteItem(
             quote_id=quote.id,
             sort_order=idx + 1,
@@ -9732,6 +9760,7 @@ def vetrova_ingest():
             panels=json.dumps(panels) if panels else None,
             fabric_code=(r.get('fabricCode') or None),
             uploaded_image_data_url=img_data_url,
+            uploaded_images=images_json,
             rate_per_unit=rate,
             subtotal=item_subtotal,
         )
@@ -10158,6 +10187,7 @@ def vetrova_quote_revise(id):
                     'panels': it.panels_parsed,
                     'fabricCode': it.fabric_code,
                     'uploadedImageDataUrl': it.uploaded_image_data_url,
+                    'uploadedImages': it.uploaded_images_parsed,
                     'ratePerUnit': float(it.rate_per_unit or 0),
                     'subtotal': float(it.subtotal or 0),
                     'isExtra': bool(getattr(it, 'is_extra', False)),
@@ -10212,6 +10242,32 @@ def vetrova_quote_revise(id):
             except (TypeError, ValueError):
                 return jsonify({'error': f'invalid numeric on item {idx + 1}'}), 400
 
+            # Multi-artwork bucket — same shape/rules as ingest above.
+            # BD isn't expected to re-upload during revise; the editor
+            # echoes back the existing array via a hidden JSON field.
+            images_raw = r.get('uploadedImages')
+            clean_images = []
+            if isinstance(images_raw, list):
+                for a in images_raw[:10]:
+                    if not isinstance(a, dict):
+                        continue
+                    du = a.get('dataUrl')
+                    if not (isinstance(du, str) and du.startswith('data:image/')):
+                        continue
+                    clean = {'dataUrl': du}
+                    if isinstance(a.get('filename'), str) and a['filename']:
+                        clean['filename'] = a['filename'][:200]
+                    if a.get('source') in ('upload', 'gallery'):
+                        clean['source'] = a['source']
+                    gc = a.get('galleryCode')
+                    if isinstance(gc, str) and gc:
+                        clean['galleryCode'] = gc[:32]
+                    clean_images.append(clean)
+            images_json = json.dumps(clean_images) if clean_images else None
+            legacy_img = r.get('uploadedImageDataUrl')
+            if clean_images and not legacy_img:
+                legacy_img = clean_images[0]['dataUrl']
+
             item = VetrovaQuoteItem(
                 quote_id=quote.id,
                 sort_order=int(r.get('sortOrder') or (idx + 1)),
@@ -10228,7 +10284,8 @@ def vetrova_quote_revise(id):
                 # Uploaded image data URL is preserved through revise —
                 # BD isn't expected to re-upload; the client just echoes back
                 # what was already there (form injects it hidden).
-                uploaded_image_data_url=(r.get('uploadedImageDataUrl') or None),
+                uploaded_image_data_url=(legacy_img or None),
+                uploaded_images=images_json,
                 rate_per_unit=rate,
                 subtotal=subtotal,
                 notes=(r.get('notes') or '').strip() or None,
@@ -10305,6 +10362,7 @@ def vetrova_quote_revise(id):
             'panels':         it.panels_parsed,
             'fabricCode':     it.fabric_code,
             'uploadedImageDataUrl': it.uploaded_image_data_url,
+            'uploadedImages':       it.uploaded_images_parsed,
             'ratePerUnit':    float(it.rate_per_unit or 0),
             'subtotal':       float(it.subtotal or 0),
             'notes':          it.notes,

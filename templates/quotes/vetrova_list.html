@@ -79,7 +79,13 @@
                         <td><span class="badge bg-secondary">{{ q.category_label }}</span></td>
                         <td>{{ q.customer_name }}</td>
                         <td>{{ q.phone }}</td>
-                        <td>₹{{ '{:,.0f}'.format(q.revised_total or q.total or 0) }}</td>
+                        {# Show the tax-inclusive grand total so the list column matches
+                           what BD sees on the view/revise pages. Precedence:
+                             1. revised_total   (BD's manual override, when set)
+                             2. grand_total     (subtotal + delivery + GST − discount, per recompute_totals)
+                             3. total           (legacy pre-tax subtotal — kept as fallback for very old rows
+                                                 that pre-date the grand_total column being backfilled) #}
+                        <td>₹{{ '{:,.0f}'.format(q.revised_total or q.grand_total or q.total or 0) }}</td>
                         <td><span class="badge bg-info text-dark">{{ stage_labels.get(q.stage, q.stage) }}</span></td>
                         <td class="d-flex gap-1">
                             <a href="{{ url_for('vetrova_quote_view', id=q.id) }}" class="btn btn-sm btn-outline-primary">

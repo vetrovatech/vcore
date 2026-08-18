@@ -158,10 +158,22 @@
                                 {% if it.fabric_code %}
                                 <div class="small mt-1"><span class="badge bg-warning text-dark">Fabric: {{ it.fabric_code }}</span></div>
                                 {% endif %}
-                                {% if it.uploaded_image_data_url %}
+                                {% set _imgs = it.uploaded_images_parsed %}
+                                {% if _imgs %}
                                 <div class="mt-2">
-                                    <img src="{{ it.uploaded_image_data_url }}" alt="Customer artwork" style="max-width:120px;max-height:120px;border:1px solid #ccc;border-radius:4px" />
-                                    <div class="small text-muted">Customer-uploaded artwork</div>
+                                    <div class="small text-muted mb-1">
+                                        {% if _imgs|length == 1 %}Customer-supplied design (1 attached){% else %}Customer-supplied designs ({{ _imgs|length }} attached){% endif %}
+                                    </div>
+                                    <div class="d-flex flex-wrap" style="gap:8px">
+                                        {% for a in _imgs %}
+                                        <div style="width:120px">
+                                            <img src="{{ a.dataUrl }}" alt="Customer artwork {{ loop.index }}" style="max-width:120px;max-height:120px;border:1px solid #ccc;border-radius:4px;object-fit:cover;display:block" />
+                                            <div class="small text-muted text-truncate" title="{{ a.galleryCode or a.filename or '' }}">
+                                                {% if a.galleryCode %}{{ a.galleryCode }}{% elif a.filename %}{{ a.filename }}{% else %}#{{ loop.index }}{% endif %}
+                                            </div>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
                                 </div>
                                 {% endif %}
                                 {% if it.notes %}
