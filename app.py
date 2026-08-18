@@ -5712,6 +5712,48 @@ def whatsapp_webhook():
     return '', 200
 
 
+# ── Campaign → default assignee ──────────────────────────────────────────────
+# Facebook leads normally arrive unassigned for a manager to triage. Some
+# campaigns are always worked by the same person, and triaging those by hand
+# is pure toil: of 63 Printed_glass leads, 61 had been bulk-assigned to Kashif
+# one batch at a time, and the two that slipped through sat unassigned for a
+# day. BD 2026-08-19: route them on arrival instead.
+#
+# Keyed on the Facebook CAMPAIGN name with separators and case stripped, so
+# 'Printed_glass', 'Printed Glass' and 'printed-glass' all match — Meta's
+# campaign names are hand-typed and drift.
+#
+# The value is a USERNAME, not a user id: ids differ between environments, and
+# resolving by name means a renamed or deactivated user leaves the lead
+# unassigned (visible to managers, the old behaviour) rather than silently
+# routing it to whoever inherited that id.
+FB_CAMPAIGN_DEFAULT_ASSIGNEE = {
+    'printedglass': 'Kashif',
+}
+
+
+def _campaign_assignee_id(campaign_name):
+    """User id to auto-assign a synced Facebook lead to, or None.
+
+    None means "leave unassigned" — the pre-existing behaviour for every
+    campaign without a rule.
+    """
+    if not campaign_name:
+        return None
+    key = re.sub(r'[^a-z0-9]', '', str(campaign_name).lower())
+    username = FB_CAMPAIGN_DEFAULT_ASSIGNEE.get(key)
+    if not username:
+        return None
+    from models import User
+    user = User.query.filter_by(username=username, is_active=True).first()
+    if not user:
+        app.logger.warning(
+            'FB campaign %r maps to user %r, who is missing or inactive — '
+            'leaving the lead unassigned', campaign_name, username)
+        return None
+    return user.id
+
+
 def _fb_page_tokens():
     """Return {page_id: page_access_token} for every Page vcore is wired to.
 
@@ -5884,7 +5926,8 @@ def _do_facebook_sync(created_by_id):
                         # off `notes` for filter use.
                         fb_form_name     = form_name or None,
                         owner_id=None,
-                        assigned_to_id=None,
+                        # Campaign-routed assignee, else unassigned for triage.
+                        assigned_to_id=_campaign_assignee_id(lead_entry.get('campaign_name')),
                         created_by=created_by_id,
                         created_at=fb_created or datetime.utcnow(),
                     )
@@ -6126,7 +6169,11 @@ def facebook_webhook_receive():
                 origin='Facebook',
                 stage=default_stage_for_origin('Facebook'),
                 lead_type='Enquiry',
-                facebook_lead_id=fb_lead_id, owner_id=None, assigned_to_id=None,
+                facebook_lead_id=fb_lead_id, owner_id=None,
+                # Same campaign routing as the 5-minute sync. The webhook has
+                # historically delivered ~none of our leads (the cron does the
+                # work), but the two paths must not disagree if it ever fires.
+                assigned_to_id=_campaign_assignee_id(fb_campaign_name),
                 created_by=creator_id,
                 created_at=fb_created or datetime.utcnow(),
                 fb_page_id=entry_page_id,
