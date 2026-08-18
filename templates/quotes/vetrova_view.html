@@ -151,9 +151,16 @@
                                         <span class="badge bg-light text-dark me-1">
                                             {{ 'Door' if is_door else 'Panel' }} {{ door_n.v if is_door else panel_n.v }}:
                                             {{ p.get('widthFt') }} × {{ p.get('heightFt') }} {{ it.dimension_unit or 'ft' }}{% if p.get('qty', 1) > 1 %} × {{ p.get('qty') }}{% endif %}
+                                            {# Per-panel customer comment (BD 2026-08-18). #}
+                                            {% if p.get('comment') %}<em class="text-primary">· {{ p.get('comment') }}</em>{% endif %}
                                         </span>
                                     {% endfor %}
                                 </div>
+                                {% endif %}
+                                {# Line-level customer comment — railings/staircase have no
+                                   panels to attach one to, so it lives on the item. #}
+                                {% if it.customer_comment %}
+                                <div class="small mt-1"><span class="badge bg-info text-dark">Note: {{ it.customer_comment }}</span></div>
                                 {% endif %}
                                 {% if it.fabric_code %}
                                 <div class="small mt-1"><span class="badge bg-warning text-dark">Fabric: {{ it.fabric_code }}</span></div>

@@ -3503,9 +3503,29 @@ def lead_new():
         origin = request.form.get('origin', '').strip() or None
         stage = request.form.get('stage') or default_stage_for_origin(origin)
 
+        # `assigned_to_id` is what decides whose list a lead appears in —
+        # leads_list() filters non-managers down to
+        # `Lead.assigned_to_id == current_user.id`. This route never read
+        # the field, so every manually-created lead was born unassigned:
+        # invisible to the Promotor who just created it, sitting in the
+        # manager's dashboard until someone assigned it back. The form has
+        # carried an "Assign To" dropdown the whole time (and even says
+        # "Only the assigned user will see this lead in their list") — the
+        # value was simply dropped on the floor here. Reported 2026-08-18.
+        assigned_raw = request.form.get('assigned_to_id') or None
+        assigned_to_id = int(assigned_raw) if assigned_raw else None
+
+        # A Promotor filing a lead means "this one is mine", so an empty
+        # dropdown defaults to them rather than to nobody. Managers and
+        # admins keep the old behaviour — they create leads in order to
+        # triage them out, so blank legitimately means unassigned there.
+        if assigned_to_id is None and not current_user.is_manager_or_admin():
+            assigned_to_id = current_user.id
+
         lead = Lead(
             name=name,
             owner_id=int(owner_id) if owner_id else None,
+            assigned_to_id=assigned_to_id,
             contact=contact,
             city=city,
             state=state,
@@ -9758,6 +9778,10 @@ def vetrova_ingest():
             running_ft=running_ft,
             quantity=qty,
             panels=json.dumps(panels) if panels else None,
+            # Line-level customer note (non-panel categories only). Trimmed
+            # and capped to the same 300 chars the website enforces, so a
+            # hand-rolled POST can't stuff the column.
+            customer_comment=((r.get('comment') or '').strip()[:300] or None),
             fabric_code=(r.get('fabricCode') or None),
             uploaded_image_data_url=img_data_url,
             uploaded_images=images_json,
@@ -10192,6 +10216,7 @@ def vetrova_quote_revise(id):
                     'subtotal': float(it.subtotal or 0),
                     'isExtra': bool(getattr(it, 'is_extra', False)),
                     'notes': it.notes,
+                    'customerComment': it.customer_comment,
                 } for it in quote.items
             ],
         })
@@ -10289,6 +10314,11 @@ def vetrova_quote_revise(id):
                 rate_per_unit=rate,
                 subtotal=subtotal,
                 notes=(r.get('notes') or '').strip() or None,
+                # Customer's line-level comment, round-tripped through the
+                # revise form so a BD save preserves (or corrects) it rather
+                # than silently dropping it. Per-panel comments ride along
+                # inside `panels` above.
+                customer_comment=(r.get('customerComment') or '').strip()[:300] or None,
                 # Phase 2: extras/discount marker.
                 is_extra=bool(r.get('isExtra')),
             )
@@ -10366,6 +10396,9 @@ def vetrova_quote_revise(id):
             'ratePerUnit':    float(it.rate_per_unit or 0),
             'subtotal':       float(it.subtotal or 0),
             'notes':          it.notes,
+            # Customer's line-level comment — distinct from `notes` (BD's
+            # private note). Round-tripped so BD's save doesn't wipe it.
+            'customerComment': it.customer_comment,
         })
     return render_template('quotes/vetrova_revise.html',
                            quote=quote,

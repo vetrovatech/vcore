@@ -133,6 +133,10 @@
     <input class="form-control form-control-sm vq-ph" type="number" step="0.01" min="0" placeholder="H" style="width:70px">
     <span class="text-muted small vq-unit-lbl">ft ·</span>
     <input class="form-control form-control-sm vq-pq" type="number" step="1" min="1" placeholder="Qty" value="1" style="width:60px">
+    {# Customer's per-panel comment (BD 2026-08-18). Editable here so BD can
+       tidy or correct what the customer typed before the quote goes out. #}
+    <input class="form-control form-control-sm vq-pc" type="text" maxlength="300"
+           placeholder="Comment" style="flex:1 1 140px; min-width:100px">
     <button type="button" class="btn btn-sm btn-outline-danger vq-prow-del" title="Remove">
         <i class="bi bi-x"></i>
     </button>
@@ -223,6 +227,17 @@
             <label class="form-label small text-muted">BD notes on this line (optional)</label>
             <input class="form-control vq-notes">
         </div>
+        {# Customer's own line-level comment. Separate from BD notes above:
+           this one the CUSTOMER wrote and it prints on the quote, whereas
+           BD notes stay internal. Only non-panel categories (railings,
+           staircase) populate it — panel categories comment per panel. #}
+        <div class="col-12">
+            <label class="form-label small text-muted">
+                Customer comment on this line
+                <span class="text-primary">· shown on the quote</span>
+            </label>
+            <input class="form-control vq-ccomment" maxlength="300">
+        </div>
         <input type="hidden" class="vq-id">
         <input type="hidden" class="vq-img">
         <!-- JSON string of the uploadedImages array; echoed back on save
@@ -305,6 +320,7 @@
         row.querySelector('.vq-pw').value = (panel && panel.widthFt)  != null ? panel.widthFt  : '';
         row.querySelector('.vq-ph').value = (panel && panel.heightFt) != null ? panel.heightFt : '';
         row.querySelector('.vq-pq').value = (panel && panel.qty)      != null ? panel.qty      : 1;
+        row.querySelector('.vq-pc').value = (panel && panel.comment)  != null ? panel.comment  : '';
         row.querySelector('.vq-prow-del').addEventListener('click', () => {
             row.remove();
             renumberPanels(itemNode);
@@ -351,6 +367,7 @@
         node.querySelector('.vq-sub').value    = item.subtotal || '';
         node.querySelector('.vq-fabric').value = item.fabricCode || '';
         node.querySelector('.vq-notes').value  = item.notes || '';
+        node.querySelector('.vq-ccomment').value = item.customerComment || '';
         node.querySelector('.vq-img').value    = item.uploadedImageDataUrl || '';
         // Multi-artwork bucket — echo the array back on save via a
         // hidden JSON field; render each thumbnail in the preview strip.
@@ -466,11 +483,15 @@
                     const h = parseFloat(row.querySelector('.vq-ph').value);
                     const q = parseFloat(row.querySelector('.vq-pq').value) || 1;
                     if (!(w > 0) || !(h > 0)) return; // skip incomplete rows
+                    const pc = (row.querySelector('.vq-pc').value || '').trim();
                     panels.push({
                         widthFt: w,
                         heightFt: h,
                         qty: q,
                         kind: row.dataset.kind === 'door' ? 'door' : 'panel',
+                        // Omit the key entirely when blank so panels saved
+                        // without a comment stay byte-identical to before.
+                        ...(pc ? { comment: pc.slice(0, 300) } : {}),
                     });
                 });
                 if (panels.length === 0) panels = null;
@@ -493,6 +514,7 @@
                 ratePerUnit:    parseFloat(node.querySelector('.vq-rate').value) || 0,
                 subtotal:       parseFloat(node.querySelector('.vq-sub').value)  || 0,
                 notes:          node.querySelector('.vq-notes').value.trim(),
+                customerComment: node.querySelector('.vq-ccomment').value.trim(),
                 uploadedImageDataUrl: node.querySelector('.vq-img').value || null,
                 uploadedImages: (() => {
                     const raw = node.querySelector('.vq-imgs').value;

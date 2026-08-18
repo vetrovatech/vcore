@@ -120,9 +120,21 @@
 <script>
 (function () {
     const STAGES_BY_ORIGIN = {
-        'facebook': {{ stage_options_facebook|default(['Untouched','Yet to connect','Quote 1 Shared','Quote 2 Shared','Quote 3 Shared','Not Interested','Awaiting Payment','Junk','Payment Rcvd','Lost'])|tojson }},
+        {# Both funnels are the SAME canonical list since the 2026-07-02
+           consolidation (LEAD_STAGES_BY_ORIGIN is empty), so this swap is a
+           no-op — kept only so the origin listener stays harmless.
+
+           The fallbacks below are `stage_options` (what the server actually
+           renders into the <select> above), NOT a second hardcoded copy. The
+           previous hardcoded defaults had drifted badly: they still listed a
+           long-dead 'PI Shared' and were missing Quote 1/2/3 Shared and
+           Awaiting Payment. Because the routes pass `stage_options` and not
+           `stage_options_default`, that stale list was what actually loaded —
+           so changing Origin silently rewrote the dropdown to the wrong
+           stages, and would have dropped 'To Follow up' too. #}
+        'facebook': {{ stage_options_facebook|default(stage_options)|tojson }},
     };
-    const STAGES_DEFAULT = {{ stage_options_default|default(['New Lead','Contacted','Not Connected','Qualified','PI Shared','Closed Won','Closed Lost','Junk'])|tojson }};
+    const STAGES_DEFAULT = {{ stage_options_default|default(stage_options)|tojson }};
 
     const originInput = document.getElementById('origin-input');
     const stageSelect = document.getElementById('stage-select');

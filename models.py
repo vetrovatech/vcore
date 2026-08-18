@@ -884,7 +884,7 @@ class SupplierPricing(db.Model):
 # ── Leadfy stage configuration ────────────────────────────────────────────────
 # `stage` is a free-form String(50) column with no DB enum. Consolidated on
 # 2026-07-02 from two per-origin funnels (Default + Facebook) into ONE
-# canonical 11-stage list. Rationale: BD couldn't cross-verify agent logs
+# canonical list (11 stages then; 12 since 'To Follow up' was added 2026-08-17). Rationale: BD couldn't cross-verify agent logs
 # across origins because the funnels used different vocabulary for the same
 # concept ("Untouched" vs "New Lead", "Payment Rcvd" vs "Closed Won", etc.).
 #
@@ -894,6 +894,7 @@ class SupplierPricing(db.Model):
 LEAD_STAGES = [
     'New Lead',        # untouched, needs first contact
     'Contacted',       # BD reached out, in conversation
+    'To Follow up',    # spoke to them, needs a deliberate callback (BD 2026-08-17)
     'Not Connected',   # tried but no response
     'Qualified',       # real interest confirmed
     'Quote 1 Shared',  # first PDF sent
@@ -907,7 +908,7 @@ LEAD_STAGES = [
 
 # Backwards-compat aliases — several routes still import these names.
 # All three now point at the same single canonical list so the templates
-# that render "default vs facebook" dropdowns just get the same 11 stages
+# that render "default vs facebook" dropdowns just get the same stages
 # regardless of which alias they consulted.
 LEAD_STAGES_DEFAULT  = LEAD_STAGES
 LEAD_STAGES_FACEBOOK = LEAD_STAGES
@@ -921,6 +922,7 @@ LEAD_STAGES_BY_ORIGIN = {}
 LEAD_STAGE_BADGE_CLASSES = {
     'New Lead':         'primary',     # blue — fresh
     'Contacted':        'info',        # light blue — engaged
+    'To Follow up':     'warning',     # yellow — owes an action, same as the other chase states
     'Not Connected':    'warning',     # yellow — chase
     'Qualified':        'warning',     # yellow — action needed
     'Quote 1 Shared':   'secondary',   # grey — quote out
@@ -934,7 +936,7 @@ LEAD_STAGE_BADGE_CLASSES = {
 
 
 def stages_for_origin(origin):
-    """Return the ordered list of allowed stages. Same 11-stage funnel for
+    """Return the ordered list of allowed stages. Same funnel for
     every origin now — argument kept for signature-compat with older
     callers, but the value is ignored."""
     return LEAD_STAGES
@@ -2796,6 +2798,15 @@ class VetrovaQuoteItem(db.Model):
     # several designs to ONE line item. The view + PDF renderer walk
     # this array to draw one thumbnail per entry.
     uploaded_images = db.Column(db.Text, nullable=True)
+
+    # Customer-written note for this whole line. Only categories WITHOUT
+    # panels use it (railings, staircase — priced per running foot); panel
+    # categories carry one comment per panel inside the `panels` JSON above.
+    # DELIBERATELY separate from `notes` below, which is BD's PRIVATE note —
+    # customer text must never land there or the two become
+    # indistinguishable in the revise form. BD 2026-08-18; column added by
+    # migrate_add_customer_comment.py.
+    customer_comment = db.Column(db.Text, nullable=True)
 
     # Money — BD-editable via revise.
     rate_per_unit = db.Column(db.Numeric(12, 2), default=0, nullable=False)  # ₹/sqft or ₹/ft

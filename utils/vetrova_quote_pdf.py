@@ -36,6 +36,13 @@ from reportlab.platypus import (
 
 # Vetrova brand palette — sourced from vetrova.in (`VIMark.tsx`) so the
 # PDF matches the site exactly.
+# Vetrova's own UPI QR — 8550011196@ibl. Distinct from Bathqube's
+# static/images/upi-qr.jpeg (@ybl); the two brands collect on different VPAs.
+_VETROVA_QR_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'static', 'images', 'vetrova-upi-qr.jpeg',
+)
+
 VI_FOREST     = colors.HexColor('#0F2A22')
 VI_BRASS      = colors.HexColor('#C19A4E')
 VI_BRASS_DEEP = colors.HexColor('#8A6A2E')
@@ -121,6 +128,25 @@ def _selections_summary(item_selections):
     return ' · '.join(f'{k}: {v}' for k, v in item_selections.items())
 
 
+def _esc(text):
+    """Escape customer-written text for ReportLab's Paragraph mini-markup.
+
+    Paragraph parses its input as XML-ish markup, so a bare '&' or '<' in
+    free text raises and takes the WHOLE PDF down with it — which for us
+    means the quote email never sends. Customer comments are the first
+    genuinely free-form strings to reach these Paragraphs, so they get
+    escaped here. (Pre-existing fields like customer_name are still
+    unescaped upstream; worth tightening separately rather than widening
+    this change.)
+    """
+    return (
+        str(text)
+        .replace('&', '&amp;')
+        .replace('<', '&lt;')
+        .replace('>', '&gt;')
+    )
+
+
 def _panels_summary(panels, dim_unit):
     """List of 'Panel 1: 4 × 6 ft' / 'Door 1: 3 × 7 ft × 2'."""
     if not panels:
@@ -141,7 +167,12 @@ def _panels_summary(panels, dim_unit):
         h = p.get('heightFt', 0)
         qty = p.get('qty', 1)
         sfx = f" × {qty}" if qty and int(qty) > 1 else ''
-        lines.append(f"{noun} {n}: {w} × {h} {dim_unit or 'ft'}{sfx}")
+        # Customer's per-panel comment (BD 2026-08-18). Escaped because
+        # these lines are rendered as ReportLab markup Paragraphs — an
+        # unescaped "&" or "<" in customer text would break the parse.
+        note = (p.get('comment') or '').strip()
+        note_sfx = f" — {_esc(note)}" if note else ''
+        lines.append(f"{noun} {n}: {w} × {h} {dim_unit or 'ft'}{sfx}{note_sfx}")
     return lines
 
 
@@ -282,6 +313,12 @@ def generate_vetrova_quote_pdf(quote):
         panels_lines = _panels_summary(it.panels_parsed, it.dimension_unit)
         if panels_lines:
             desc_flow.append(Paragraph('<br/>'.join(panels_lines), s_body_sm))
+
+        # Line-level customer comment — railings/staircase have no panels to
+        # hang a note off, so it prints against the whole line (BD 2026-08-18).
+        if it.customer_comment:
+            desc_flow.append(Paragraph(
+                f'<i>Note: {_esc(it.customer_comment)}</i>', s_body_sm))
 
         if it.fabric_code:
             desc_flow.append(Paragraph(f'Fabric: <b>{it.fabric_code}</b>', s_body_sm))
@@ -442,6 +479,53 @@ def generate_vetrova_quote_pdf(quote):
         '• GST is charged at prevailing rate; the split shown above assumes intra-state (CGST + SGST).'
     )
     story.append(Paragraph(tc, s_body_sm))
+    story.append(Spacer(1, 4 * mm))
+
+    # ── Account details + UPI QR ──────────────────────────────────────
+    # Printed after the T&Cs on every Vetrova quote (BD 2026-08-18).
+    #
+    # Vetrova collects on 8550011196@ibl; Bathqube stays on 8550011196@ybl.
+    # Hence the separate asset — do NOT repoint this at
+    # static/images/upi-qr.jpeg, that QR encodes Bathqube's handle and the
+    # money would land on the wrong VPA.
+    #
+    # Wrapped in KeepTogether so a page break can never separate the QR
+    # from the account number it belongs to.
+    story.append(Paragraph('Account details', s_h2))
+    s_bank_l = ParagraphStyle('bank_l', parent=s_body_sm, textColor=VI_MUTED)
+    s_bank_v = ParagraphStyle('bank_v', parent=s_body_sm,
+                              fontName=base_bold, textColor=VI_FOREST)
+    bank_rows = [
+        [Paragraph('Account Name', s_bank_l), Paragraph('Vetrova Tech Services Private Limited', s_bank_v)],
+        [Paragraph('Bank Name', s_bank_l),    Paragraph('IDFC First Bank', s_bank_v)],
+        [Paragraph('Account Number', s_bank_l), Paragraph('10249972220', s_bank_v)],
+        [Paragraph('IFSC Code', s_bank_l),    Paragraph('IDFB0080158', s_bank_v)],
+        [Paragraph('Account Type', s_bank_l), Paragraph('Current Account', s_bank_v)],
+    ]
+    bank_tbl = Table(bank_rows, colWidths=[30 * mm, 70 * mm])
+    bank_tbl.setStyle(TableStyle([
+        ('VALIGN',        (0, 0), (-1, -1), 'TOP'),
+        ('BACKGROUND',    (0, 0), (-1, -1), VI_CREAM),
+        ('TOPPADDING',    (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 8),
+    ]))
+
+    qr_cell = []
+    if os.path.exists(_VETROVA_QR_PATH):
+        qr_cell.append(Image(_VETROVA_QR_PATH, width=32 * mm, height=32 * mm))
+        qr_cell.append(Paragraph(
+            '<font color="#6B7280" size="7">Scan to pay via UPI</font>',
+            ParagraphStyle('qr_cap', parent=s_body_sm, alignment=TA_CENTER, spaceBefore=3),
+        ))
+
+    pay_block = Table([[bank_tbl, qr_cell]], colWidths=[100 * mm, 45 * mm])
+    pay_block.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN',  (1, 0), (1, 0), 'CENTER'),
+    ]))
+    story.append(KeepTogether(pay_block))
     story.append(Spacer(1, 4 * mm))
 
     story.append(Paragraph(
