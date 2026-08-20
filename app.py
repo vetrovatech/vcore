@@ -5712,6 +5712,99 @@ def whatsapp_webhook():
     return '', 200
 
 
+# ── vetrova.in quotes → Leadfy ───────────────────────────────────────────────
+# Every quotation generated on vetrova.in should also surface in Leadfy under
+# an Origin filter of 'vetrova.in' (BD 2026-08-19). The filter itself needs no
+# work — the leads list builds its Origin dropdown from
+# `SELECT DISTINCT origin`, so the option appears the moment the first such
+# lead exists.
+#
+# ONE LEAD PER CUSTOMER, not per quote. The numbers force this: 64 quotes came
+# from 20 distinct phone numbers, so a lead-per-quote would show BD 64 rows for
+# 20 people. Repeat quotes append a history row to the lead instead.
+#
+# An existing lead is never rewritten. 11 of those 20 numbers were already in
+# Leadfy from a Facebook or IndiaMart ad; flipping their origin to 'vetrova.in'
+# would destroy campaign attribution, and adding a second row would split the
+# conversation. They get a history note and keep their original origin — which
+# does mean they don't appear under the vetrova.in filter. That's the deliberate
+# trade (BD chose it): one truthful history per person beats a complete filter.
+LEAD_ORIGIN_VETROVA_SITE = 'vetrova.in'
+
+
+def _last10(phone):
+    """Last 10 digits of a phone, or '' — the comparable part of an Indian
+    number once +91 / 0 / spaces / hyphens are stripped."""
+    return re.sub(r'\D', '', str(phone or ''))[-10:]
+
+
+def _ensure_lead_for_vetrova_quote(quote, actor_id=None):
+    """Mirror a website Vetrova quote into Leadfy.
+
+    Returns (lead, created) — created=True when a new lead was inserted.
+    Returns (None, False) when there's nothing to key on or no admin to
+    attribute the row to.
+
+    Caller is responsible for the commit; this only stages.
+    """
+    from models import Lead, LeadHistory, User
+
+    digits = _last10(quote.phone)
+    if not digits:
+        return None, False
+
+    if actor_id is None:
+        admin = User.query.filter_by(role='Admin', is_active=True).first()
+        if not admin:
+            app.logger.warning('vetrova quote %s: no active Admin to own the '
+                               'Leadfy lead; skipping', quote.quote_ref)
+            return None, False
+        actor_id = admin.id
+
+    money = f'{float(quote.grand_total or quote.total or 0):,.0f}'
+    blurb = (f'Quote {quote.quote_ref} · {quote.category_label} · '
+             f'{_RUPEE_GLYPH_SAFE}{money}')
+
+    # Match on the last 10 digits so '+91 98765 43210' and '9876543210'
+    # are the same customer.
+    existing = Lead.query.filter(
+        db.func.right(db.func.regexp_replace(Lead.contact, r'[^0-9]', '', 'g'), 10) == digits
+    ).order_by(Lead.created_at.asc()).first()
+
+    if existing:
+        # Leave origin, stage and assignee alone — this person is already
+        # someone's lead. Just record that they quoted themselves.
+        db.session.add(LeadHistory(
+            lead_id=existing.id, user_id=actor_id, action='note',
+            description=f'Generated a quotation on vetrova.in — {blurb}'))
+        return existing, False
+
+    lead = Lead(
+        name=quote.customer_name or None,
+        contact=quote.phone or None,
+        email=quote.email or None,
+        origin=LEAD_ORIGIN_VETROVA_SITE,
+        stage='New Lead',
+        lead_type='Enquiry',
+        product_interest=quote.category_label or None,
+        notes=blurb,
+        owner_id=None,
+        assigned_to_id=None,     # unassigned — managers triage, as with other site leads
+        created_by=actor_id,
+    )
+    db.session.add(lead)
+    db.session.flush()           # need lead.id for the history row
+    db.session.add(LeadHistory(
+        lead_id=lead.id, user_id=actor_id, action='created',
+        description=f'Lead created from a vetrova.in quotation — {blurb}'))
+    return lead, True
+
+
+# Plain-ASCII rupee marker for lead notes. The PDF has a font-dependent
+# glyph fallback; lead notes are read in a browser, so '₹' is safe here.
+_RUPEE_GLYPH_SAFE = '₹'
+
+
 # ── Campaign → default assignee ──────────────────────────────────────────────
 # Facebook leads normally arrive unassigned for a manager to triage. Some
 # campaigns are always worked by the same person, and triaging those by hand
@@ -9855,7 +9948,25 @@ def vetrova_ingest():
         db.session.rollback()
         return jsonify({'error': 'db error', 'detail': str(e)}), 500
 
+    # Mirror the quote into Leadfy (BD 2026-08-19). Deliberately AFTER the
+    # quote has committed, and in its own try: the quote is the thing the
+    # customer is owed, so a Leadfy hiccup must never turn their submission
+    # into a 500. Worst case we log and the lead is picked up by the backfill.
+    #
+    # Only on first ingest — a re-POST of the same quoteRef (is_new False) is
+    # an update, not a new enquiry.
+    lead_created = False
+    if is_new:
+        try:
+            _lead, lead_created = _ensure_lead_for_vetrova_quote(quote)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception('vetrova quote %s: could not mirror into Leadfy',
+                                 quote.quote_ref)
+
     return jsonify({'ok': True, 'id': quote.id, 'created': is_new,
+                    'leadCreated': lead_created,
                     'itemCount': len(runs_raw)}), 200
 
 
